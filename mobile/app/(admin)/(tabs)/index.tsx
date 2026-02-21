@@ -12,6 +12,8 @@ import StockCard from "../../../components/stock/StockCard";
 import AddStockSheet from "../../../components/stock/AddStockSheet";
 import { StockItem } from "../../../types/stock";
 
+import { useAuth } from "../../../context/AuthContext";
+
 const INITIAL_ITEMS: StockItem[] = [
   { id: 1, name: "Sirup", quantity: 3, unit: "Botol", pricePerUnit: 8000 },
   { id: 2, name: "Marjan", quantity: 2, unit: "Liter", pricePerUnit: 8000 },
@@ -20,6 +22,13 @@ const INITIAL_ITEMS: StockItem[] = [
 export default function StockScreen() {
   const [items, setItems] = useState<StockItem[]>(INITIAL_ITEMS);
   const sheetRef = useRef<BottomSheet>(null) as React.RefObject<BottomSheet>;
+  const { signOut } = useAuth();
+
+  const handleSignOut = async () => {
+    console.log("signing out...");
+    await signOut();
+    console.log("signed out");
+  };
 
   const handleAdd = (incoming: Omit<StockItem, "id">) => {
     setItems((prev) => {
@@ -55,7 +64,7 @@ export default function StockScreen() {
             <Text className="text-blue-500 text-xl font-black">✛</Text>
             <Text className="text-2xl font-black text-gray-900">Papper</Text>
           </View>
-          <TouchableOpacity className="w-10 h-10 rounded-full bg-gray-900 items-center justify-center">
+          <TouchableOpacity onPress={handleSignOut} className="w-10 h-10 rounded-full bg-gray-900 items-center justify-center">
             <User size={18} color="white" />
           </TouchableOpacity>
         </View>
