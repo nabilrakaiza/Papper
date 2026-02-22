@@ -2,7 +2,7 @@ import { useState } from "react";
 import { View, Text, ScrollView, TouchableOpacity, Dimensions } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { User } from "lucide-react-native";
-import { VictoryBar, VictoryChart, VictoryAxis, VictoryTheme } from "victory-native";
+import { VictoryBar, VictoryChart, VictoryAxis} from "victory-native";
 import { SalesPeriod, SalesDataPoint, TopMenuItem } from "../../../types/sales";
 
 const { width } = Dimensions.get("window");
@@ -70,7 +70,7 @@ function PeriodToggle({
         <TouchableOpacity
           key={key}
           onPress={() => onChange(key)}
-          className={`px-3 py-1.5 rounded-xl ${period === key ? "bg-white shadow" : ""}`}
+          className={`px-3 py-1.5 rounded-xl ${period === key ? "bg-white" : ""}`}
         >
           <Text
             className={`text-xs font-extrabold ${
@@ -86,18 +86,19 @@ function PeriodToggle({
 }
 
 export default function SalesScreen() {
-  const [period, setPeriod] = useState<SalesPeriod>("daily");
+  const [salesPeriod, setSalesPeriod] = useState<SalesPeriod>("daily");
+  const [topSellingPeriod, setTopSellingPeriod] = useState<SalesPeriod>("daily");
 
-  const data =
-    period === "daily"
+  const salesData =
+    salesPeriod === "daily"
       ? DAILY_DATA
-      : period === "weekly"
+      : salesPeriod === "weekly"
       ? WEEKLY_DATA
       : MONTHLY_DATA;
 
-  const totalSales = data.reduce((sum, d) => sum + d.total, 0);
+  const totalSales = salesData.reduce((sum, d) => sum + d.total, 0);
 
-  const chartData = data.map((d, i) => ({ x: d.label, y: d.total, i }));
+  const chartData = salesData.map((d, i) => ({ x: d.label, y: d.total, i }));
 
   return (
     <SafeAreaView className="flex-1 bg-gray-100">
@@ -119,7 +120,7 @@ export default function SalesScreen() {
         {/* ── Sales Graph Card ─────────────────────────────── */}
         <View className="bg-yellow-100 rounded-3xl px-4 pt-4 pb-5 mb-4 shadow-sm shadow-yellow-300/30">
           <View className="flex-row items-center justify-between mb-4">
-            <PeriodToggle period={period} onChange={setPeriod} />
+            <PeriodToggle period={salesPeriod} onChange={setSalesPeriod} />
             <Text className="text-lg font-black text-gray-900">Total Sales</Text>
           </View>
 
@@ -128,7 +129,6 @@ export default function SalesScreen() {
             <VictoryChart
               width={width - 64}
               height={200}
-            //   theme={VictoryTheme.clean}
               domainPadding={{ x: 20 }}
               padding={{ top: 20, bottom: 40, left: 48, right: 16 }}
             >
@@ -174,7 +174,7 @@ export default function SalesScreen() {
         {/* ── Top Selling Menu Card ─────────────────────────── */}
         <View className="bg-yellow-100 rounded-3xl px-4 pt-4 pb-5 shadow-sm shadow-yellow-300/30">
           <View className="flex-row items-center justify-between mb-4">
-            <PeriodToggle period={period} onChange={setPeriod} />
+            <PeriodToggle period={topSellingPeriod} onChange={setTopSellingPeriod} />
             <Text className="text-lg font-black text-gray-900">Top Selling</Text>
           </View>
 
