@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useEffect } from "react";
 import {
   View,
   Text,
@@ -115,7 +115,22 @@ export default function CashierSalesScreen() {
     setLoading(false);
   };
 
-  useFocusEffect(useCallback(() => { fetchTodaySales(); }, []));
+    useEffect(() => {
+        fetchTodaySales();
+
+        const subscription = supabase
+            .channel("sales-channel")
+            .on(
+            "postgres_changes",
+            { event: "*", schema: "public", table: "orders" },
+            () => fetchTodaySales()
+            )
+            .subscribe();
+
+        return () => {
+            supabase.removeChannel(subscription);
+        };
+    }, []);
 
   if (loading) {
     return (

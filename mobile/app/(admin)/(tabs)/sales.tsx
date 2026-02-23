@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import {
   View,
   Text,
@@ -183,11 +183,22 @@ export default function AdminSalesScreen() {
     setLoading(false);
   };
 
-  useFocusEffect(
-    useCallback(() => {
-      fetchSales(period);
-    }, [period])
-  );
+  useEffect(() => {
+    fetchSales(period);
+
+    const subscription = supabase
+      .channel("sales-channel")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "orders" },
+        () => fetchSales(period)
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(subscription);
+    };
+  }, [period]);
 
   const handlePeriodChange = (p: SalesPeriod) => {
     setPeriod(p);

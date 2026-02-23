@@ -1,4 +1,4 @@
-export type OrderStatus = "unpaid" | "paid";
+export type OrderStatus = "unpaid" | "paid" | "cancelled";
 
 export type OrderItem = {
   menuId: number;

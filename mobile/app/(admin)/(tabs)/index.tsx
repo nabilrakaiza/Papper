@@ -17,18 +17,32 @@ export default function StockScreen() {
   const [items, setItems] = useState<StockItem[]>([]);
   const sheetRef = useRef<BottomSheet>(null) as React.RefObject<BottomSheet>;
 
+  const fetchStock = async () => {
+    const { data } = await supabase.from("stock").select("*");
+    if (data) setItems(data.map((s) => ({
+      id: s.id,
+      name: s.name,
+      quantity: s.quantity,
+      unit: s.unit,
+      pricePerUnit: s.price_per_unit,
+    })));
+  };
+
   useEffect(() => {
-    const fetchStock = async () => {
-      const { data } = await supabase.from("stock").select("*");
-      if (data) setItems(data.map((s) => ({
-        id: s.id,
-        name: s.name,
-        quantity: s.quantity,
-        unit: s.unit,
-        pricePerUnit: s.price_per_unit,
-      })));
-    };
     fetchStock();
+
+    const subscription = supabase
+      .channel("stock-channel")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "stock" },
+        () => fetchStock()
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(subscription);
+    };
   }, []);
 
   const handleAdd = async (incoming: Omit<StockItem, "id">) => {

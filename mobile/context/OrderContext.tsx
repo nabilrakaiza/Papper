@@ -18,38 +18,62 @@ export function OrderProvider({ children }: { children: ReactNode }) {
   const [menu, setMenu] = useState<MenuItem[]>([]);
   const [loading, setLoading] = useState(true);
 
+  const fetchMenu = async () => {
+    const { data } = await supabase.from("menus").select("*");
+    if (data) setMenu(data);
+    };
+  const fetchOrders = async () => {
+    const { data } = await supabase
+    .from("orders")
+    .select("*, order_items(*)")
+    .order("created_at", { ascending: false });
+    if (data) {
+      setOrders(data.map((o) => ({
+        id: o.id,
+        customerName: o.customer_name,  // ← make sure this line exists
+        seat: o.seat,
+        discount: o.discount,
+        status: o.status,
+        createdAt: new Date(o.created_at),
+        items: o.order_items.map((i: any) => ({
+        menuId: i.menu_id,
+        name: i.name,
+        price: i.price,
+        quantity: i.quantity,
+        })),
+    })));
+    }
+    setLoading(false);
+};
+
   // Fetch menu from Supabase on mount
   useEffect(() => {
-    const fetchMenu = async () => {
-      const { data } = await supabase.from("menus").select("*");
-      if (data) setMenu(data);
-    };
-    const fetchOrders = async () => {
-      const { data } = await supabase
-        .from("orders")
-        .select("*, order_items(*)")
-        .order("created_at", { ascending: false });
-      if (data) {
-        setOrders(data.map((o) => ({
-          id: o.id,
-          customerName: o.customer_name,  // ← make sure this line exists
-          seat: o.seat,
-          discount: o.discount,
-          status: o.status,
-          createdAt: new Date(o.created_at),
-          items: o.order_items.map((i: any) => ({
-            menuId: i.menu_id,
-            name: i.name,
-            price: i.price,
-            quantity: i.quantity,
-          })),
-        })));
-      }
-      setLoading(false);
-    };
-
     fetchMenu();
     fetchOrders();
+
+    // Subscribe to order changes
+    const subscription = supabase
+        .channel("orders-channel")
+        .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "orders" },
+        () => {
+            // Refetch orders whenever anything changes
+            fetchOrders();
+        }
+        )
+        .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "order_items" },
+        () => {
+            fetchOrders();
+        }
+        )
+        .subscribe();
+
+    return () => {
+        supabase.removeChannel(subscription);
+    };
   }, []);
 
   const addOrder = async (order: Omit<Order, "id" | "createdAt">) => {

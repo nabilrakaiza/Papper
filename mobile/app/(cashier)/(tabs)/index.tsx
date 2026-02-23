@@ -3,8 +3,9 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { router } from "expo-router";
 import { Printer, Check, X } from "lucide-react-native";
 import { useOrders } from "../../../context/OrderContext";
-// import { useAuth } from "../../../context/AuthContext";
+import ConfirmDialog from "@/components/ConfirmDialog";
 import { Order } from "../../../types/order";
+import { useState } from "react";
 
 function formatRupiah(amount: number): string {
   return "Rp " + Math.round(amount).toLocaleString("id-ID");
@@ -15,7 +16,7 @@ function orderTotal(order: Order): number {
   return subtotal * (1 - order.discount / 100);
 }
 
-function OrderCard({ order }: { order: Order }) {
+function OrderCard({ order, onCancel }: { order: Order, onCancel: (id: number) => void}) {
   const isPaid = order.status === "paid";
 
   return (
@@ -56,7 +57,7 @@ function OrderCard({ order }: { order: Order }) {
               >
                 <Check size={20} color="#22c55e" />
               </TouchableOpacity>
-              <TouchableOpacity>
+              <TouchableOpacity onPress={() => onCancel(order.id)}>
                 <X size={20} color="#ef4444" />
               </TouchableOpacity>
             </>
@@ -82,11 +83,21 @@ function OrderCard({ order }: { order: Order }) {
 }
 
 export default function CashierHomeScreen() {
-  const { orders } = useOrders();
-  // const { signOut } = useAuth();
+  const { orders, updateOrder } = useOrders();
+  const [cancelTargetId, setCancelTargetId] = useState<number | null>(null);
 
   const unpaid = orders.filter((o) => o.status === "unpaid");
   const paid = orders.filter((o) => o.status === "paid");
+
+  const handleSetCancelTargetId = (id: number) => {
+    setCancelTargetId(id)
+  }
+
+  const handleCancel = async () => {
+    if (!cancelTargetId) return;
+    await updateOrder(cancelTargetId, { status: "cancelled" });
+    setCancelTargetId(null);
+  };
 
   return (
     <SafeAreaView className="flex-1 bg-gray-100">
@@ -109,9 +120,9 @@ export default function CashierHomeScreen() {
         showsVerticalScrollIndicator={false}
       >
         {/* Unpaid first */}
-        {unpaid.map((o) => <OrderCard key={o.id} order={o} />)}
+        {unpaid.map((o) => <OrderCard key={o.id} order={o} onCancel={handleSetCancelTargetId}/>)}
         {/* Then paid */}
-        {paid.map((o) => <OrderCard key={o.id} order={o} />)}
+        {paid.map((o) => <OrderCard key={o.id} order={o} onCancel={handleSetCancelTargetId}/>)}
 
         {orders.length === 0 && (
           <View className="items-center mt-24">
@@ -129,6 +140,17 @@ export default function CashierHomeScreen() {
           <Text className="text-sm font-extrabold text-gray-600">Add New Order</Text>
         </TouchableOpacity>
       </View>
+
+      <ConfirmDialog
+        visible={cancelTargetId !== null}
+        title="Cancel Order"
+        message="Are you sure you want to cancel this order? This cannot be undone."
+        confirmLabel="Yes, Cancel"
+        cancelLabel="Keep"
+        destructive
+        onConfirm={handleCancel}
+        onCancel={() => setCancelTargetId(null)}
+      />
     </SafeAreaView>
   );
 }
