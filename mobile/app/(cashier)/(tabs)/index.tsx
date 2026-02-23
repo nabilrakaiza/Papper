@@ -3,7 +3,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { router } from "expo-router";
 import { Printer, Check, X } from "lucide-react-native";
 import { useOrders } from "../../../context/OrderContext";
-import { useAuth } from "../../../context/AuthContext";
+// import { useAuth } from "../../../context/AuthContext";
 import { Order } from "../../../types/order";
 
 function formatRupiah(amount: number): string {
@@ -83,7 +83,7 @@ function OrderCard({ order }: { order: Order }) {
 
 export default function CashierHomeScreen() {
   const { orders } = useOrders();
-  const { signOut } = useAuth();
+  // const { signOut } = useAuth();
 
   const unpaid = orders.filter((o) => o.status === "unpaid");
   const paid = orders.filter((o) => o.status === "paid");
