@@ -17,20 +17,20 @@ function RootNavigator() {
   useEffect(() => {
     if (!ready) return;
 
-    console.log("session:", session);
-    console.log("role:", role);
+    // console.log("session:", session);
+    // console.log("role:", role);
 
     if (!session) {
-      console.log("p1") 
+      // console.log("p1") 
       router.replace("/(auth)/login");
     } else if (role === "admin") {
-      console.log("p2")
+      // console.log("p2")
       router.replace("/(admin)/(tabs)");
     } else if (role === "cashier") {
-      console.log("p3")
+      // console.log("p3")
       router.replace("/(cashier)/(tabs)");
     } else {
-      console.log("p4")
+      // console.log("p4")
       router.replace("/(auth)/login");
     }
   }, [session, role, ready]);

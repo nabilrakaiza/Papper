@@ -1,13 +1,13 @@
 import { Tabs } from "expo-router";
-import { Package, TrendingDown, BarChart2 } from "lucide-react-native";
+import { Package, TrendingDown, BarChart2, UserCircle } from "lucide-react-native";
 
-export default function TabLayout() {
+export default function AdminTabLayout() {
   return (
     <Tabs
       screenOptions={{
         headerShown: false,
         tabBarActiveTintColor: "#3a7bd5",
-        tabBarInactiveTintColor: "#aaa",
+        tabBarInactiveTintColor: "#aaa", 
         tabBarStyle: {
           backgroundColor: "#f0f2f7",
           borderTopColor: "rgba(0,0,0,0.06)",
@@ -40,6 +40,13 @@ export default function TabLayout() {
         options={{
           title: "Sales",
           tabBarIcon: ({ color, size }) => <BarChart2 size={size} color={color} />,
+        }}
+      />
+      <Tabs.Screen
+        name="profile"
+        options={{
+          title: "Profile",
+          tabBarIcon: ({ color, size }) => <UserCircle size={size} color={color} />,
         }}
       />
     </Tabs>

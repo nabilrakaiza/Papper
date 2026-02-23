@@ -96,12 +96,12 @@ export default function CashierHomeScreen() {
           <Text className="text-blue-500 text-xl font-black">✛</Text>
           <Text className="text-2xl font-black text-gray-900">Orders</Text>
         </View>
-        <TouchableOpacity
+        {/* <TouchableOpacity
           onPress={signOut}
           className="w-10 h-10 rounded-full bg-gray-900 items-center justify-center"
         >
           <Text className="text-white text-xs font-bold">Out</Text>
-        </TouchableOpacity>
+        </TouchableOpacity> */}
       </View>
 
       <ScrollView

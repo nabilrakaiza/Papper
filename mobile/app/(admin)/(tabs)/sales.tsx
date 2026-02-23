@@ -1,51 +1,22 @@
-import { useState } from "react";
-import { View, Text, ScrollView, TouchableOpacity, Dimensions } from "react-native";
+import { useState, useCallback } from "react";
+import {
+  View,
+  Text,
+  ScrollView,
+  TouchableOpacity,
+  ActivityIndicator,
+  Dimensions,
+} from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { User } from "lucide-react-native";
-import { VictoryBar, VictoryChart, VictoryAxis} from "victory-native";
-import { SalesPeriod, SalesDataPoint, TopMenuItem } from "../../../types/sales";
+import { useFocusEffect } from "expo-router";
+import { VictoryBar, VictoryChart, VictoryAxis, VictoryTheme } from "victory-native";
+import { supabase } from "../../../lib/supabase";
+import { SalesPeriod } from "../../../types/sales";
 
 const { width } = Dimensions.get("window");
 
-// ── Dummy data ────────────────────────────────────────────────
-const DAILY_DATA: SalesDataPoint[] = [
-  { label: "Mon", total: 2800000 },
-  { label: "Tue", total: 3200000 },
-  { label: "Wed", total: 2100000 },
-  { label: "Thu", total: 4000000 },
-  { label: "Fri", total: 4800000 },
-  { label: "Sat", total: 5200000 },
-  { label: "Sun", total: 3800000 },
-];
-
-const WEEKLY_DATA: SalesDataPoint[] = [
-  { label: "Wk 1", total: 18000000 },
-  { label: "Wk 2", total: 22000000 },
-  { label: "Wk 3", total: 19500000 },
-  { label: "Wk 4", total: 25000000 },
-];
-
-const MONTHLY_DATA: SalesDataPoint[] = [
-  { label: "Oct", total: 72000000 },
-  { label: "Nov", total: 85000000 },
-  { label: "Dec", total: 98000000 },
-  { label: "Jan", total: 76000000 },
-  { label: "Feb", total: 20000000 },
-];
-
-const TOP_MENU: TopMenuItem[] = [
-  { id: 1, name: "Ayam Goreng", quantity: 23 },
-  { id: 2, name: "Chicken Rice", quantity: 22 },
-  { id: 3, name: "Laksa Mana", quantity: 21 },
-  { id: 4, name: "Rendang", quantity: 20 },
-  { id: 5, name: "Gulai Ayam", quantity: 19 },
-];
-
-const PERIOD_LABELS: { key: SalesPeriod; label: string }[] = [
-  { key: "daily", label: "Daily" },
-  { key: "weekly", label: "Weekly" },
-  { key: "monthly", label: "Monthly" },
-];
+type SalesDataPoint = { label: string; total: number };
+type TopMenuItem = { name: string; quantity: number };
 
 function formatRupiah(amount: number): string {
   if (amount >= 1_000_000) return "Rp " + (amount / 1_000_000).toFixed(1) + "M";
@@ -56,6 +27,12 @@ function formatRupiah(amount: number): string {
 function formatRupiahFull(amount: number): string {
   return "Rp " + Math.round(amount).toLocaleString("id-ID");
 }
+
+const PERIOD_LABELS: { key: SalesPeriod; label: string }[] = [
+  { key: "daily", label: "Daily" },
+  { key: "weekly", label: "Weekly" },
+  { key: "monthly", label: "Monthly" },
+];
 
 function PeriodToggle({
   period,
@@ -70,7 +47,7 @@ function PeriodToggle({
         <TouchableOpacity
           key={key}
           onPress={() => onChange(key)}
-          className={`px-3 py-1.5 rounded-xl ${period === key ? "bg-white" : ""}`}
+          className={`px-3 py-1.5 rounded-xl ${period === key ? "bg-white shadow" : ""}`}
         >
           <Text
             className={`text-xs font-extrabold ${
@@ -85,20 +62,137 @@ function PeriodToggle({
   );
 }
 
-export default function SalesScreen() {
-  const [salesPeriod, setSalesPeriod] = useState<SalesPeriod>("daily");
-  const [topSellingPeriod, setTopSellingPeriod] = useState<SalesPeriod>("daily");
+// Get date range based on period
+function getDateRange(period: SalesPeriod): { from: string; to: string } {
+  const now = new Date();
+  const to = now.toISOString();
 
-  const salesData =
-    salesPeriod === "daily"
-      ? DAILY_DATA
-      : salesPeriod === "weekly"
-      ? WEEKLY_DATA
-      : MONTHLY_DATA;
+  if (period === "daily") {
+    // Last 7 days
+    const from = new Date(now);
+    from.setDate(from.getDate() - 6);
+    from.setHours(0, 0, 0, 0);
+    return { from: from.toISOString(), to };
+  } else if (period === "weekly") {
+    // Last 4 weeks
+    const from = new Date(now);
+    from.setDate(from.getDate() - 27);
+    from.setHours(0, 0, 0, 0);
+    return { from: from.toISOString(), to };
+  } else {
+    // Last 5 months
+    const from = new Date(now);
+    from.setMonth(from.getMonth() - 4);
+    from.setDate(1);
+    from.setHours(0, 0, 0, 0);
+    return { from: from.toISOString(), to };
+  }
+}
 
-  const totalSales = salesData.reduce((sum, d) => sum + d.total, 0);
+// Group orders into chart data points
+function groupOrders(
+  orders: { created_at: string; total: number }[],
+  period: SalesPeriod
+): SalesDataPoint[] {
+  const map: Record<string, number> = {};
 
-  const chartData = salesData.map((d, i) => ({ x: d.label, y: d.total, i }));
+  orders.forEach(({ created_at, total }) => {
+    const date = new Date(created_at);
+    let key = "";
+
+    if (period === "daily") {
+      key = date.toLocaleDateString("en-US", { weekday: "short" });
+    } else if (period === "weekly") {
+      // Week number label
+      const weekStart = new Date(date);
+      weekStart.setDate(date.getDate() - date.getDay());
+      key = weekStart.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+    } else {
+      key = date.toLocaleDateString("en-US", { month: "short" });
+    }
+
+    map[key] = (map[key] ?? 0) + total;
+  });
+
+  return Object.entries(map).map(([label, total]) => ({ label, total }));
+}
+
+export default function AdminSalesScreen() {
+  const [period, setPeriod] = useState<SalesPeriod>("daily");
+  const [chartData, setChartData] = useState<SalesDataPoint[]>([]);
+  const [topMenu, setTopMenu] = useState<TopMenuItem[]>([]);
+  const [totalSales, setTotalSales] = useState(0);
+  const [loading, setLoading] = useState(true);
+
+  const fetchSales = async (p: SalesPeriod) => {
+    setLoading(true);
+    const { from, to } = getDateRange(p);
+
+    // Fetch paid orders in range
+    const { data: orders } = await supabase
+      .from("orders")
+      .select("id, created_at, discount")
+      .eq("status", "paid")
+      .gte("created_at", from)
+      .lte("created_at", to);
+
+    if (!orders || orders.length === 0) {
+      setChartData([]);
+      setTopMenu([]);
+      setTotalSales(0);
+      setLoading(false);
+      return;
+    }
+
+    // Fetch order items for those orders
+    const orderIds = orders.map((o) => o.id);
+    const { data: items } = await supabase
+      .from("order_items")
+      .select("order_id, name, price, quantity")
+      .in("order_id", orderIds);
+
+    // Calculate total per order (with discount)
+    const ordersWithTotal = orders.map((order) => {
+      const orderItems = (items ?? []).filter((i) => i.order_id === order.id);
+      const subtotal = orderItems.reduce((sum, i) => sum + i.price * i.quantity, 0);
+      const total = subtotal * (1 - order.discount / 100);
+      return { created_at: order.created_at, total };
+    });
+
+    // Total sales
+    const total = ordersWithTotal.reduce((sum, o) => sum + o.total, 0);
+    setTotalSales(total);
+
+    // Chart data
+    setChartData(groupOrders(ordersWithTotal, p));
+
+    // Top menu items
+    const itemCount: Record<string, { name: string; qty: number }> = {};
+    (items ?? []).forEach((item) => {
+      if (!itemCount[item.name]) {
+        itemCount[item.name] = { name: item.name, qty: 0 };
+      }
+      itemCount[item.name].qty += item.quantity;
+    });
+    const top = Object.values(itemCount)
+      .sort((a, b) => b.qty - a.qty)
+      .slice(0, 5)
+      .map((i) => ({ name: i.name, quantity: i.qty }));
+    setTopMenu(top);
+
+    setLoading(false);
+  };
+
+  useFocusEffect(
+    useCallback(() => {
+      fetchSales(period);
+    }, [period])
+  );
+
+  const handlePeriodChange = (p: SalesPeriod) => {
+    setPeriod(p);
+    fetchSales(p);
+  };
 
   return (
     <SafeAreaView className="flex-1 bg-gray-100">
@@ -108,99 +202,110 @@ export default function SalesScreen() {
           <Text className="text-blue-500 text-xl font-black">✛</Text>
           <Text className="text-2xl font-black text-gray-900">Papper</Text>
         </View>
-        <TouchableOpacity className="w-10 h-10 rounded-full bg-gray-900 items-center justify-center">
-          <User size={18} color="white" />
-        </TouchableOpacity>
       </View>
 
-      <ScrollView
-        contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 24 }}
-        showsVerticalScrollIndicator={false}
-      >
-        {/* ── Sales Graph Card ─────────────────────────────── */}
-        <View className="bg-yellow-100 rounded-3xl px-4 pt-4 pb-5 mb-4 shadow-sm shadow-yellow-300/30">
-          <View className="flex-row items-center justify-between mb-4">
-            <PeriodToggle period={salesPeriod} onChange={setSalesPeriod} />
-            <Text className="text-lg font-black text-gray-900">Total Sales</Text>
-          </View>
+      {loading ? (
+        <View className="flex-1 items-center justify-center">
+          <ActivityIndicator size="large" color="#3a7bd5" />
+        </View>
+      ) : (
+        <ScrollView
+          contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 24 }}
+          showsVerticalScrollIndicator={false}
+        >
+          {/* Sales Graph Card */}
+          <View className="bg-yellow-100 rounded-3xl px-4 pt-4 pb-5 mb-4 shadow-sm shadow-yellow-300/30">
+            <View className="flex-row items-center justify-between mb-4">
+              <PeriodToggle period={period} onChange={handlePeriodChange} />
+              <Text className="text-lg font-black text-gray-900">Total Sales</Text>
+            </View>
 
-          {/* Chart */}
-          <View className="bg-cyan-100 rounded-2xl overflow-hidden">
-            <VictoryChart
-              width={width - 64}
-              height={200}
-              domainPadding={{ x: 20 }}
-              padding={{ top: 20, bottom: 40, left: 48, right: 16 }}
-            >
-              <VictoryAxis
-                style={{
-                  tickLabels: { fontSize: 10, fontWeight: "600", fill: "#666" },
-                  axis: { stroke: "transparent" },
-                  grid: { stroke: "transparent" },
-                }}
-              />
-              <VictoryAxis
-                dependentAxis
-                tickFormat={(t) => formatRupiah(t)}
-                style={{
-                  tickLabels: { fontSize: 8, fontWeight: "600", fill: "#888" },
-                  axis: { stroke: "transparent" },
-                  grid: { stroke: "rgba(0,0,0,0.06)", strokeDasharray: "4" },
-                }}
-              />
-              <VictoryBar
-                data={chartData}
-                style={{
-                  data: {
-                    fill: "#4caf50",
-                    rx: 6,
-                  },
-                }}
-                animate={{ duration: 400, onLoad: { duration: 400 } }}
-              />
-            </VictoryChart>
+            <View className="bg-cyan-100 rounded-2xl overflow-hidden">
+              {chartData.length > 0 ? (
+                <View collapsable={false}>
+                  <VictoryChart
+                    key={period}
+                    width={width - 64}
+                    height={200}
+                    theme={VictoryTheme.material}
+                    domainPadding={{ x: 20 }}
+                    padding={{ top: 20, bottom: 40, left: 48, right: 16 }}
+                  >
+                    <VictoryAxis
+                      style={{
+                        tickLabels: { fontSize: 10, fontWeight: "600", fill: "#666" },
+                        axis: { stroke: "transparent" },
+                        grid: { stroke: "transparent" },
+                      }}
+                    />
+                    <VictoryAxis
+                      dependentAxis
+                      tickFormat={(t) => formatRupiah(t)}
+                      style={{
+                        tickLabels: { fontSize: 8, fontWeight: "600", fill: "#888" },
+                        axis: { stroke: "transparent" },
+                        grid: { stroke: "rgba(0,0,0,0.06)", strokeDasharray: "4" },
+                      }}
+                    />
+                    <VictoryBar
+                      data={chartData.map((d) => ({ x: d.label, y: d.total }))}
+                      style={{ data: { fill: "#4caf50", rx: 6 } }}
+                      animate={{ duration: 400, onLoad: { duration: 400 } }}
+                    />
+                  </VictoryChart>
+                </View>
+              ) : (
+                <View className="h-40 items-center justify-center">
+                  <Text className="text-gray-400 font-bold text-sm">No sales data for this period</Text>
+                </View>
+              )}
 
-            {/* Total label */}
-            <View className="mx-4 mb-4">
-              <View className="border border-gray-300 rounded-xl px-4 py-2 self-start bg-white/70">
-                <Text className="text-sm font-extrabold text-gray-800">
-                  Total Sales : {formatRupiahFull(totalSales)}
-                </Text>
+              <View className="mx-4 mb-4">
+                <View className="border border-gray-300 rounded-xl px-4 py-2 self-start bg-white/70">
+                  <Text className="text-sm font-extrabold text-gray-800">
+                    Total Sales : {formatRupiahFull(totalSales)}
+                  </Text>
+                </View>
               </View>
             </View>
           </View>
-        </View>
 
-        {/* ── Top Selling Menu Card ─────────────────────────── */}
-        <View className="bg-yellow-100 rounded-3xl px-4 pt-4 pb-5 shadow-sm shadow-yellow-300/30">
-          <View className="flex-row items-center justify-between mb-4">
-            <PeriodToggle period={topSellingPeriod} onChange={setTopSellingPeriod} />
-            <Text className="text-lg font-black text-gray-900">Top Selling</Text>
-          </View>
+          {/* Top Selling Menu Card */}
+          <View className="bg-yellow-100 rounded-3xl px-4 pt-4 pb-5 shadow-sm shadow-yellow-300/30">
+            <View className="flex-row items-center justify-between mb-4">
+              <PeriodToggle period={period} onChange={handlePeriodChange} />
+              <Text className="text-lg font-black text-gray-900">Top Selling</Text>
+            </View>
 
-          <View className="bg-cyan-100 rounded-2xl px-4 py-2">
-            {TOP_MENU.map((item, index) => (
-              <View key={item.id}>
-                <View className="flex-row items-center justify-between py-3">
-                  {/* Rank + name */}
-                  <View className="flex-row items-center gap-3">
-                    <View className="w-6 h-6 rounded-full bg-white/80 items-center justify-center">
-                      <Text className="text-xs font-black text-gray-500">{index + 1}</Text>
-                    </View>
-                    <Text className="text-sm font-bold text-gray-800">{item.name}</Text>
-                  </View>
-                  <Text className="text-sm font-extrabold text-gray-600">
-                    {item.quantity} pcs
-                  </Text>
+            <View className="bg-cyan-100 rounded-2xl px-4 py-2">
+              {topMenu.length === 0 ? (
+                <View className="py-6 items-center">
+                  <Text className="text-gray-400 font-bold text-sm">No data for this period</Text>
                 </View>
-                {index < TOP_MENU.length - 1 && (
-                  <View className="h-px bg-cyan-200" />
-                )}
-              </View>
-            ))}
+              ) : (
+                topMenu.map((item, index) => (
+                  <View key={item.name}>
+                    <View className="flex-row items-center justify-between py-3">
+                      <View className="flex-row items-center gap-3">
+                        <View className="w-6 h-6 rounded-full bg-white/80 items-center justify-center">
+                          <Text className="text-xs font-black text-gray-500">{index + 1}</Text>
+                        </View>
+                        <Text className="text-sm font-bold text-gray-800">{item.name}</Text>
+                      </View>
+                      <Text className="text-sm font-extrabold text-gray-600">
+                        {item.quantity} pcs
+                      </Text>
+                    </View>
+                    {index < topMenu.length - 1 && (
+                      <View className="h-px bg-cyan-200" />
+                    )}
+                  </View>
+                ))
+              )}
+            </View>
           </View>
-        </View>
-      </ScrollView>
+        </ScrollView>
+      )}
     </SafeAreaView>
   );
 }

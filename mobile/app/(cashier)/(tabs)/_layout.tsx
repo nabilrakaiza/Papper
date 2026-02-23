@@ -1,7 +1,7 @@
 import { Tabs } from "expo-router";
-import { ShoppingBag, ToggleLeft, BarChart2 } from "lucide-react-native";
+import { ShoppingBag, ToggleLeft, BarChart2, UserCircle } from "lucide-react-native";
 
-export default function CashierLayout() {
+export default function CashierTabLayout() {
   return (
     <Tabs
       screenOptions={{
@@ -40,6 +40,13 @@ export default function CashierLayout() {
         options={{
           title: "Sales",
           tabBarIcon: ({ color, size }) => <BarChart2 size={size} color={color} />,
+        }}
+      />
+      <Tabs.Screen
+        name="profile"
+        options={{
+          title: "Profile",
+          tabBarIcon: ({ color, size }) => <UserCircle size={size} color={color} />,
         }}
       />
     </Tabs>

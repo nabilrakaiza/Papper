@@ -17,7 +17,7 @@ export default function StockCard({ item }: Props) {
           <Text className="text-sm font-bold text-green-950">{item.name}</Text>
         </View>
         <View className="bg-white/90 rounded-xl px-3 py-1.5">
-          <Text className="text-sm font-bold text-green-950">
+          <Text className="text-sm font-bold text-green-950"> 
             {item.quantity} {item.unit}
           </Text>
         </View>

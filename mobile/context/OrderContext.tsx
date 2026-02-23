@@ -1,6 +1,6 @@
-import { createContext, useContext, useState, ReactNode } from "react";
+import { createContext, useContext, useState, ReactNode, useEffect } from "react";
 import { Order, MenuItem } from "../types/order";
-import { DUMMY_MENU } from "../data/menu";
+import { supabase } from "../lib/supabase";
 
 type OrderContextType = {
   orders: Order[];
@@ -13,68 +13,120 @@ type OrderContextType = {
 
 const OrderContext = createContext<OrderContextType>({} as OrderContextType);
 
-const DUMMY_ORDERS: Order[] = [
-  {
-    id: 1,
-    customerName: "Bu Aliyah",
-    seat: "A1",
-    items: [
-      { menuId: 1, name: "Ayam Goreng", price: 35000, quantity: 2, category: "Ayam" },
-      { menuId: 9, name: "Es Teh", price: 8000, quantity: 2, category: "Minuman" },
-    ],
-    discount: 0,
-    status: "paid",
-    createdAt: new Date(),
-  },
-  {
-    id: 2,
-    customerName: "Pak Poko",
-    seat: "B3",
-    items: [
-      { menuId: 7, name: "Rendang", price: 40000, quantity: 1, category: "Sapi" },
-    ],
-    discount: 0,
-    status: "paid",
-    createdAt: new Date(),
-  },
-  {
-    id: 3,
-    customerName: "Peperere",
-    seat: "C2",
-    items: [
-      { menuId: 4, name: "Nasi Goreng", price: 25000, quantity: 1, category: "Nasi" },
-      { menuId: 9, name: "Es Teh", price: 8000, quantity: 1, category: "Minuman" },
-    ],
-    discount: 0,
-    status: "unpaid",
-    createdAt: new Date(),
-  },
-];
-
 export function OrderProvider({ children }: { children: ReactNode }) {
-  const [orders, setOrders] = useState<Order[]>(DUMMY_ORDERS);
-  const [menu, setMenu] = useState<MenuItem[]>(DUMMY_MENU);
+  const [orders, setOrders] = useState<Order[]>([]);
+  const [menu, setMenu] = useState<MenuItem[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  const addOrder = (order: Omit<Order, "id" | "createdAt">) => {
+  // Fetch menu from Supabase on mount
+  useEffect(() => {
+    const fetchMenu = async () => {
+      const { data } = await supabase.from("menus").select("*");
+      if (data) setMenu(data);
+    };
+    const fetchOrders = async () => {
+      const { data } = await supabase
+        .from("orders")
+        .select("*, order_items(*)")
+        .order("created_at", { ascending: false });
+      if (data) {
+        setOrders(data.map((o) => ({
+          ...o,
+          items: o.order_items.map((i: any) => ({
+            menuId: i.menu_id,
+            name: i.name,
+            price: i.price,
+            quantity: i.quantity,
+          })),
+        })));
+      }
+      setLoading(false);
+    };
+
+    fetchMenu();
+    fetchOrders();
+  }, []);
+
+  const addOrder = async (order: Omit<Order, "id" | "createdAt">) => {
+    // Insert order
+    const { data: newOrder } = await supabase
+      .from("orders")
+      .insert({
+        customer_name: order.customerName,
+        seat: order.seat,
+        discount: order.discount,
+        status: order.status,
+      })
+      .select()
+      .single();
+
+    if (!newOrder) return;
+
+    // Insert order items
+    await supabase.from("order_items").insert(
+      order.items.map((item) => ({
+        order_id: newOrder.id,
+        menu_id: item.menuId,
+        name: item.name,
+        price: item.price,
+        quantity: item.quantity,
+      }))
+    );
+
+    // Refresh orders
     setOrders((prev) => [
+      { ...order, id: newOrder.id, createdAt: new Date(newOrder.created_at) },
       ...prev,
-      { ...order, id: Date.now(), createdAt: new Date() },
     ]);
   };
 
-  const updateOrder = (id: number, updated: Partial<Order>) => {
+  const updateOrder = async (id: number, updated: Partial<Order>) => {
+    await supabase.from("orders").update({
+      customer_name: updated.customerName,
+      seat: updated.seat,
+      discount: updated.discount,
+      status: updated.status,
+    }).eq("id", id);
+
+    if (updated.items) {
+      // Delete old items and reinsert
+      await supabase.from("order_items").delete().eq("order_id", id);
+      await supabase.from("order_items").insert(
+        updated.items.map((item) => ({
+          order_id: id,
+          menu_id: item.menuId,
+          name: item.name,
+          price: item.price,
+          quantity: item.quantity,
+        }))
+      );
+    }
+
     setOrders((prev) =>
       prev.map((o) => (o.id === id ? { ...o, ...updated } : o))
     );
   };
 
-  const markPaid = (id: number, discount: number) => {
+  const markPaid = async (id: number, discount: number) => {
+    await supabase
+      .from("orders")
+      .update({ status: "paid", discount })
+      .eq("id", id);
+
     setOrders((prev) =>
       prev.map((o) => (o.id === id ? { ...o, status: "paid", discount } : o))
     );
   };
 
-  const toggleMenuAvailability = (menuId: number) => {
+  const toggleMenuAvailability = async (menuId: number) => {
+    const item = menu.find((m) => m.id === menuId);
+    if (!item) return;
+
+    await supabase
+      .from("menus")
+      .update({ available: !item.available })
+      .eq("id", menuId);
+
     setMenu((prev) =>
       prev.map((m) => (m.id === menuId ? { ...m, available: !m.available } : m))
     );
@@ -82,7 +134,7 @@ export function OrderProvider({ children }: { children: ReactNode }) {
 
   return (
     <OrderContext.Provider
-      value={{ orders, menu, addOrder, updateOrder, markPaid, toggleMenuAvailability }}
+      value={{orders, menu, addOrder, updateOrder, markPaid, toggleMenuAvailability }}
     >
       {children}
     </OrderContext.Provider>

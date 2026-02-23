@@ -41,7 +41,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   });
 
   const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, s) => {
-    console.log("auth state changed:", _event, s);
+    // console.log("auth state changed:", _event, s);
     setSession(s);
     if (s) {
       setRole(await extractRole(s));
