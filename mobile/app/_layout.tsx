@@ -1,14 +1,21 @@
 import { useEffect, useState } from "react";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { Slot, router } from "expo-router";
-import { ActivityIndicator, View } from "react-native";
+import { ActivityIndicator, View, Platform } from "react-native";
 import { AuthProvider, useAuth } from "../context/AuthContext";
 import "../global.css";
+import SystemNavigationBar from 'react-native-system-navigation-bar';
 
 // app/_layout.tsx
 function RootNavigator() {
   const { session, role, loading } = useAuth();
   const [ready, setReady] = useState(false);
+
+  // useEffect(() => {
+  //   if (Platform.OS === 'android' && SystemNavigationBar?.navigationHide) {      
+  //     SystemNavigationBar.navigationHide();
+  //   }
+  // }, []);
 
   useEffect(() => {
     if (!loading) setReady(true);

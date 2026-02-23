@@ -31,7 +31,12 @@ export function OrderProvider({ children }: { children: ReactNode }) {
         .order("created_at", { ascending: false });
       if (data) {
         setOrders(data.map((o) => ({
-          ...o,
+          id: o.id,
+          customerName: o.customer_name,  // ← make sure this line exists
+          seat: o.seat,
+          discount: o.discount,
+          status: o.status,
+          createdAt: new Date(o.created_at),
           items: o.order_items.map((i: any) => ({
             menuId: i.menu_id,
             name: i.name,
