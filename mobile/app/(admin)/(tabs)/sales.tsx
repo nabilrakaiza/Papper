@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useEffect } from "react";
 import {
   View,
   Text,
@@ -8,7 +8,6 @@ import {
   Dimensions,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useFocusEffect } from "expo-router";
 import { VictoryBar, VictoryChart, VictoryAxis, VictoryTheme } from "victory-native";
 import { supabase } from "../../../lib/supabase";
 import { SalesPeriod } from "../../../types/sales";

@@ -7,7 +7,6 @@ import {
   ActivityIndicator,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useFocusEffect } from "expo-router";
 import { supabase } from "../../../lib/supabase";
 
 type OrderRow = {

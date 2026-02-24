@@ -11,7 +11,6 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { router } from "expo-router";
 import { Printer, Check, X, RefreshCw } from "lucide-react-native";
 import { useOrders } from "../../../context/OrderContext";
-import { useAuth } from "../../../context/AuthContext";
 import { Order } from "../../../types/order";
 import ConfirmDialog from "../../../components/ConfirmDialog";
 
@@ -95,7 +94,6 @@ function OrderCard({ order, onCancelPress }: OrderCardProps) {
 
 export default function CashierHomeScreen() {
   const { orders, loading, error, updateOrder, refetch } = useOrders(); 
-  const { signOut } = useAuth();
   const [cancelTargetId, setCancelTargetId] = useState<number | null>(null);
   const [cancelError, setCancelError] = useState<string | null>(null);
 

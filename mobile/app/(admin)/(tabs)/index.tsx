@@ -9,8 +9,7 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import BottomSheet from "@gorhom/bottom-sheet";
-import { User, RefreshCw } from "lucide-react-native";
-import { useAuth } from "../../../context/AuthContext";
+import { RefreshCw } from "lucide-react-native";
 import { supabase } from "../../../lib/supabase";
 import StockCard from "@/components/stock/StockCard";
 import AddStockSheet from "@/components/stock/AddStockSheet";
@@ -22,7 +21,6 @@ export default function StockScreen() {
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const sheetRef = useRef<BottomSheet>(null) as React.RefObject<BottomSheet>;
-  const { signOut } = useAuth();
 
   const fetchStock = useCallback(async () => {
     setLoading(true);
