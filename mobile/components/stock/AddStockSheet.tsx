@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   View,
   Text,
@@ -7,9 +7,18 @@ import {
   KeyboardAvoidingView,
   Platform,
   ActivityIndicator,
+  ScrollView,
 } from "react-native";
-import BottomSheet, { BottomSheetView } from "@gorhom/bottom-sheet";
+import BottomSheet, { BottomSheetView, BottomSheetScrollView } from "@gorhom/bottom-sheet";
+import { Check, ChevronDown } from "lucide-react-native";
+import { supabase } from "@/lib/supabase";
 import { StockItem } from "@/types/stock";
+
+type StockDefinition = {
+  id: number;
+  name: string;
+  unit: string;
+};
 
 type PriceMode = "total" | "per-unit";
 
@@ -19,13 +28,27 @@ type Props = {
 };
 
 export default function AddStockSheet({ onAdd, sheetRef }: Props) {
-  const [name, setName] = useState("");
+  const [definitions, setDefinitions] = useState<StockDefinition[]>([]);
+  const [loadingDefs, setLoadingDefs] = useState(true);
+  const [selected, setSelected] = useState<StockDefinition | null>(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
   const [quantity, setQuantity] = useState("");
-  const [unit, setUnit] = useState("");
   const [priceMode, setPriceMode] = useState<PriceMode>("total");
   const [priceInput, setPriceInput] = useState("");
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    const fetchDefinitions = async () => {
+      const { data } = await supabase
+        .from("stock_definitions")
+        .select("*")
+        .order("name", { ascending: true });
+      if (data) setDefinitions(data);
+      setLoadingDefs(false);
+    };
+    fetchDefinitions();
+  }, []);
 
   const qty = parseFloat(quantity);
   const rawPrice = parseFloat(priceInput);
@@ -39,9 +62,9 @@ export default function AddStockSheet({ onAdd, sheetRef }: Props) {
       : null;
 
   const reset = () => {
-    setName("");
+    setSelected(null);
+    setPickerOpen(false);
     setQuantity("");
-    setUnit("");
     setPriceInput("");
     setPriceMode("total");
     setError("");
@@ -49,9 +72,8 @@ export default function AddStockSheet({ onAdd, sheetRef }: Props) {
   };
 
   const handleSave = async () => {
-    if (!name.trim()) { setError("Item name is required"); return; }
+    if (!selected) { setError("Please select a stock item"); return; }
     if (isNaN(qty) || qty <= 0) { setError("Enter a valid quantity"); return; }
-    if (!unit.trim()) { setError("Unit is required"); return; }
     if (computedPricePerUnit === null || computedPricePerUnit < 0) {
       setError("Enter a valid price"); return;
     }
@@ -61,9 +83,9 @@ export default function AddStockSheet({ onAdd, sheetRef }: Props) {
 
     try {
       await onAdd({
-        name: name.trim(),
+        name: selected.name,
         quantity: qty,
-        unit: unit.trim(),
+        unit: selected.unit,
         pricePerUnit: Math.round(computedPricePerUnit),
       });
       reset();
@@ -83,64 +105,96 @@ export default function AddStockSheet({ onAdd, sheetRef }: Props) {
     <BottomSheet
       ref={sheetRef}
       index={-1}
-      snapPoints={["65%"]}
+      snapPoints={["70%"]}
       enablePanDownToClose
       onClose={reset}
       backgroundStyle={{ borderRadius: 24, backgroundColor: "white" }}
       handleIndicatorStyle={{ backgroundColor: "#ddd", width: 40 }}
     >
-      <BottomSheetView>
+      <BottomSheetScrollView>
         <KeyboardAvoidingView
           behavior={Platform.OS === "ios" ? "padding" : undefined}
         >
           <View className="px-5 pt-2 pb-8">
             <Text className="text-lg font-black text-center text-gray-900 mb-5">
-              New Stock Item
+              Add Stock
             </Text>
 
+            {/* Stock item picker */}
             <Text className="text-[10px] font-extrabold text-gray-400 uppercase tracking-widest mb-1">
-              Item Name
+              Stock Item
+            </Text>
+
+            {loadingDefs ? (
+              <View className="bg-gray-50 border-2 border-gray-100 rounded-xl px-3 py-3 mb-3 items-center">
+                <ActivityIndicator size="small" color="#aaa" />
+              </View>
+            ) : (
+              <TouchableOpacity
+                onPress={() => setPickerOpen((o) => !o)}
+                disabled={saving}
+                className="bg-gray-50 border-2 border-gray-100 rounded-xl px-3 py-3 mb-1 flex-row items-center justify-between"
+              >
+                <Text className={`text-sm font-bold ${selected ? "text-gray-900" : "text-gray-300"}`}>
+                  {selected ? `${selected.name}` : "Select an item..."}
+                </Text>
+                <ChevronDown size={16} color="#aaa" />
+              </TouchableOpacity>
+            )}
+
+            {/* Dropdown list */}
+            {pickerOpen && (
+              <View className="bg-white border-2 border-gray-100 rounded-xl mb-3 overflow-hidden shadow-sm">
+                {definitions.map((def, index) => (
+                  <TouchableOpacity
+                    key={def.id}
+                    onPress={() => {
+                      setSelected(def);
+                      setPickerOpen(false);
+                      setError("");
+                    }}
+                    className={`flex-row items-center justify-between px-4 py-3 ${
+                      index < definitions.length - 1 ? "border-b border-gray-50" : ""
+                    } ${selected?.id === def.id ? "bg-green-50" : ""}`}
+                  >
+                    <View className="flex-row items-center gap-2">
+                      <Text className="text-sm font-bold text-gray-800">{def.name}</Text>
+                      <View className="bg-gray-100 rounded-lg px-2 py-0.5">
+                        <Text className="text-xs font-bold text-gray-400">{def.unit}</Text>
+                      </View>
+                    </View>
+                    {selected?.id === def.id && (
+                      <Check size={16} color="#22c55e" />
+                    )}
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
+
+            {/* Unit display (locked) */}
+            {selected && (
+              <View className="bg-blue-50 border border-blue-100 rounded-xl px-3 py-2 mb-3 flex-row items-center gap-2">
+                <Text className="text-xs font-bold text-blue-400">Unit:</Text>
+                <Text className="text-xs font-extrabold text-blue-600">{selected.unit}</Text>
+                <Text className="text-xs text-blue-300 ml-1">(fixed)</Text>
+              </View>
+            )}
+
+            {/* Quantity */}
+            <Text className="text-[10px] font-extrabold text-gray-400 uppercase tracking-widest mb-1">
+              Quantity
             </Text>
             <TextInput
               className="w-full bg-gray-50 border-2 border-gray-100 rounded-xl px-3 py-2.5 font-bold text-sm text-gray-900 mb-3"
-              placeholder="e.g. Marjan"
-              value={name}
-              onChangeText={setName}
+              placeholder={`e.g. 3 ${selected?.unit ?? ""}`}
+              value={quantity}
+              onChangeText={setQuantity}
+              keyboardType="numeric"
               placeholderTextColor="#ccc"
-              autoFocus
               editable={!saving}
             />
 
-            <View className="flex-row gap-3 mb-3">
-              <View className="flex-1">
-                <Text className="text-[10px] font-extrabold text-gray-400 uppercase tracking-widest mb-1">
-                  Quantity
-                </Text>
-                <TextInput
-                  className="bg-gray-50 border-2 border-gray-100 rounded-xl px-3 py-2.5 font-bold text-sm text-gray-900"
-                  placeholder="e.g. 3"
-                  value={quantity}
-                  onChangeText={setQuantity}
-                  keyboardType="numeric"
-                  placeholderTextColor="#ccc"
-                  editable={!saving}
-                />
-              </View>
-              <View className="flex-1">
-                <Text className="text-[10px] font-extrabold text-gray-400 uppercase tracking-widest mb-1">
-                  Unit
-                </Text>
-                <TextInput
-                  className="bg-gray-50 border-2 border-gray-100 rounded-xl px-3 py-2.5 font-bold text-sm text-gray-900"
-                  placeholder="e.g. Liter"
-                  value={unit}
-                  onChangeText={setUnit}
-                  placeholderTextColor="#ccc"
-                  editable={!saving}
-                />
-              </View>
-            </View>
-
+            {/* Price mode toggle */}
             <Text className="text-[10px] font-extrabold text-gray-400 uppercase tracking-widest mb-1">
               Price Input
             </Text>
@@ -170,7 +224,7 @@ export default function AddStockSheet({ onAdd, sheetRef }: Props) {
               placeholder={
                 priceMode === "total"
                   ? "e.g. 25000 (total you paid)"
-                  : "e.g. 8333 (per unit)"
+                  : `e.g. 8333 (per ${selected?.unit ?? "unit"})`
               }
               value={priceInput}
               onChangeText={setPriceInput}
@@ -179,22 +233,25 @@ export default function AddStockSheet({ onAdd, sheetRef }: Props) {
               editable={!saving}
             />
 
+            {/* Price preview */}
             {computedPricePerUnit !== null && computedPricePerUnit > 0 && (
               <View className="bg-green-50 border border-dashed border-green-200 rounded-xl py-2 px-3 mb-3 items-center">
                 <Text className="text-xs font-extrabold text-green-600">
                   Stored as Rp{" "}
                   {Math.round(computedPricePerUnit).toLocaleString("id-ID")} /{" "}
-                  {unit || "unit"}
+                  {selected?.unit ?? "unit"}
                 </Text>
               </View>
             )}
 
+            {/* Error */}
             {!!error && (
               <Text className="text-xs font-bold text-red-500 text-center mb-2">
                 {error}
               </Text>
             )}
 
+            {/* Actions */}
             <View className="flex-row gap-3 mt-1">
               <TouchableOpacity
                 onPress={handleClose}
@@ -217,7 +274,7 @@ export default function AddStockSheet({ onAdd, sheetRef }: Props) {
             </View>
           </View>
         </KeyboardAvoidingView>
-      </BottomSheetView>
+      </BottomSheetScrollView>
     </BottomSheet>
   );
 }

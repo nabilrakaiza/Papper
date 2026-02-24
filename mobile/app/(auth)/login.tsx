@@ -12,12 +12,6 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { supabase } from "../../lib/supabase";
 
-// Maps plain username → email used in Supabase
-const USERNAME_MAP: Record<string, string> = {
-  admin: "admin@papper.com",
-  cashier: "cashier@papper.com",
-};
-
 export default function LoginScreen() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -26,7 +20,7 @@ export default function LoginScreen() {
 
   const handleLogin = async () => {
     setError("");
-    const email = USERNAME_MAP[username.trim().toLowerCase()];
+    const email = username.trim().toLowerCase();
 
     if (!email) {
       setError("Unknown username");
