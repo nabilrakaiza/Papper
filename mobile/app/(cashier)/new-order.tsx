@@ -8,6 +8,7 @@ import {
   TextInput,
   KeyboardAvoidingView,
   Platform,
+  ActivityIndicator,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { router } from "expo-router";
@@ -30,6 +31,7 @@ export default function NewOrderScreen() {
   const [summaryOpen, setSummaryOpen] = useState(false);
   const [step, setStep] = useState<"info" | "menu">("info");
   const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
 
   const currentCategory: MenuCategory = CATEGORIES[categoryIndex];
   const categoryItems = menu.filter(
@@ -61,15 +63,25 @@ export default function NewOrderScreen() {
     });
   }, []);
 
-  const handleConfirm = () => {
+  const handleConfirm = async () => {
     if (selectedItems.length === 0) return;
-    addOrder({
+    setSaving(true);
+    setError("");
+
+    const { error } = await addOrder({
       customerName,
       seat,
       items: selectedItems,
       discount: 0,
       status: "unpaid",
     });
+
+    if (error) {
+      setError(error);
+      setSaving(false);
+      return;
+    }
+
     router.back();
   };
 
@@ -81,7 +93,6 @@ export default function NewOrderScreen() {
           behavior={Platform.OS === "ios" ? "padding" : undefined}
           className="flex-1"
         >
-          {/* Header */}
           <View className="flex-row items-center gap-3 px-5 pt-4 pb-3">
             <TouchableOpacity onPress={() => router.back()}>
               <ChevronLeft size={24} color="#333" />
@@ -128,7 +139,9 @@ export default function NewOrderScreen() {
                 }}
                 className="bg-green-500 rounded-2xl py-4 items-center mt-2 shadow shadow-green-600/30"
               >
-                <Text className="text-sm font-extrabold text-white">Next → Select Menu</Text>
+                <Text className="text-sm font-extrabold text-white">
+                  Next → Select Menu
+                </Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -140,7 +153,6 @@ export default function NewOrderScreen() {
   // Step 2: menu selection
   return (
     <SafeAreaView className="flex-1 bg-gray-100">
-      {/* Header with category tabs */}
       <View className="bg-yellow-100 px-4 pt-4 pb-3 shadow-sm">
         <View className="flex-row items-center justify-between mb-3">
           <TouchableOpacity onPress={() => setStep("info")}>
@@ -153,7 +165,6 @@ export default function NewOrderScreen() {
           </Text>
         </View>
 
-        {/* Category selector */}
         <View className="flex-row items-center gap-2">
           <TouchableOpacity
             onPress={() => setCategoryIndex((i) => Math.max(0, i - 1))}
@@ -200,7 +211,6 @@ export default function NewOrderScreen() {
         </View>
       </View>
 
-      {/* Menu items */}
       <ScrollView
         contentContainerStyle={{ padding: 16, paddingBottom: 160 }}
         showsVerticalScrollIndicator={false}
@@ -245,14 +255,21 @@ export default function NewOrderScreen() {
         )}
       </ScrollView>
 
+      {/* Error message */}
+      {!!error && (
+        <View className="mx-4 mb-2 bg-red-50 border border-red-100 rounded-2xl px-4 py-3">
+          <Text className="text-xs font-bold text-red-500 text-center">{error}</Text>
+        </View>
+      )}
+
       {/* Bottom summary bar */}
       {totalItems > 0 && (
         <View className="absolute bottom-0 left-0 right-0">
           <TouchableOpacity
             onPress={() => setSummaryOpen((o) => !o)}
+            disabled={saving}
             className="mx-4 mb-2 bg-green-400 rounded-3xl px-5 py-4 shadow shadow-green-600/30"
           >
-            {/* Summary expanded */}
             {summaryOpen && (
               <View className="mb-3">
                 {selectedItems.map((item) => (
@@ -275,16 +292,20 @@ export default function NewOrderScreen() {
 
                 <TouchableOpacity
                   onPress={handleConfirm}
+                  disabled={saving}
                   className="mt-3 bg-white rounded-xl py-3 items-center"
                 >
-                  <Text className="text-sm font-extrabold text-green-600">
-                    Confirm Order
-                  </Text>
+                  {saving ? (
+                    <ActivityIndicator size="small" color="#22c55e" />
+                  ) : (
+                    <Text className="text-sm font-extrabold text-green-600">
+                      Confirm Order
+                    </Text>
+                  )}
                 </TouchableOpacity>
               </View>
             )}
 
-            {/* Always visible count */}
             <View className="flex-row items-center gap-2">
               <View className="border-2 border-white/60 rounded-xl px-3 py-1">
                 <Text className="text-sm font-extrabold text-white">

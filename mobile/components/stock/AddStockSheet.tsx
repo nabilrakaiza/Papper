@@ -1,4 +1,4 @@
-import {useState } from "react";
+import { useRef, useState } from "react";
 import {
   View,
   Text,
@@ -6,14 +6,15 @@ import {
   TouchableOpacity,
   KeyboardAvoidingView,
   Platform,
+  ActivityIndicator,
 } from "react-native";
 import BottomSheet, { BottomSheetView } from "@gorhom/bottom-sheet";
-import { StockItem } from "../../types/stock";
+import { StockItem } from "@/types/stock";
 
 type PriceMode = "total" | "per-unit";
 
 type Props = {
-  onAdd: (item: Omit<StockItem, "id">) => void;
+  onAdd: (item: Omit<StockItem, "id">) => Promise<void>;
   sheetRef: React.RefObject<BottomSheet>;
 };
 
@@ -24,6 +25,7 @@ export default function AddStockSheet({ onAdd, sheetRef }: Props) {
   const [priceMode, setPriceMode] = useState<PriceMode>("total");
   const [priceInput, setPriceInput] = useState("");
   const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
 
   const qty = parseFloat(quantity);
   const rawPrice = parseFloat(priceInput);
@@ -43,9 +45,10 @@ export default function AddStockSheet({ onAdd, sheetRef }: Props) {
     setPriceInput("");
     setPriceMode("total");
     setError("");
+    setSaving(false);
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!name.trim()) { setError("Item name is required"); return; }
     if (isNaN(qty) || qty <= 0) { setError("Enter a valid quantity"); return; }
     if (!unit.trim()) { setError("Unit is required"); return; }
@@ -53,15 +56,22 @@ export default function AddStockSheet({ onAdd, sheetRef }: Props) {
       setError("Enter a valid price"); return;
     }
 
-    onAdd({
-      name: name.trim(),
-      quantity: qty,
-      unit: unit.trim(),
-      pricePerUnit: Math.round(computedPricePerUnit),
-    });
+    setSaving(true);
+    setError("");
 
-    reset();
-    sheetRef.current?.close();
+    try {
+      await onAdd({
+        name: name.trim(),
+        quantity: qty,
+        unit: unit.trim(),
+        pricePerUnit: Math.round(computedPricePerUnit),
+      });
+      reset();
+      sheetRef.current?.close();
+    } catch (e) {
+      setError("Failed to save. Please try again.");
+      setSaving(false);
+    }
   };
 
   const handleClose = () => {
@@ -85,10 +95,9 @@ export default function AddStockSheet({ onAdd, sheetRef }: Props) {
         >
           <View className="px-5 pt-2 pb-8">
             <Text className="text-lg font-black text-center text-gray-900 mb-5">
-              Add Stock
+              New Stock Item
             </Text>
 
-            {/* Name */}
             <Text className="text-[10px] font-extrabold text-gray-400 uppercase tracking-widest mb-1">
               Item Name
             </Text>
@@ -98,9 +107,10 @@ export default function AddStockSheet({ onAdd, sheetRef }: Props) {
               value={name}
               onChangeText={setName}
               placeholderTextColor="#ccc"
+              autoFocus
+              editable={!saving}
             />
 
-            {/* Quantity + Unit */}
             <View className="flex-row gap-3 mb-3">
               <View className="flex-1">
                 <Text className="text-[10px] font-extrabold text-gray-400 uppercase tracking-widest mb-1">
@@ -113,6 +123,7 @@ export default function AddStockSheet({ onAdd, sheetRef }: Props) {
                   onChangeText={setQuantity}
                   keyboardType="numeric"
                   placeholderTextColor="#ccc"
+                  editable={!saving}
                 />
               </View>
               <View className="flex-1">
@@ -125,11 +136,11 @@ export default function AddStockSheet({ onAdd, sheetRef }: Props) {
                   value={unit}
                   onChangeText={setUnit}
                   placeholderTextColor="#ccc"
+                  editable={!saving}
                 />
               </View>
             </View>
 
-            {/* Price mode toggle */}
             <Text className="text-[10px] font-extrabold text-gray-400 uppercase tracking-widest mb-1">
               Price Input
             </Text>
@@ -138,8 +149,9 @@ export default function AddStockSheet({ onAdd, sheetRef }: Props) {
                 <TouchableOpacity
                   key={mode}
                   onPress={() => setPriceMode(mode)}
+                  disabled={saving}
                   className={`flex-1 py-2 rounded-[9px] items-center ${
-                    priceMode === mode ? "bg-white" : ""
+                    priceMode === mode ? "bg-white shadow" : ""
                   }`}
                 >
                   <Text
@@ -164,9 +176,9 @@ export default function AddStockSheet({ onAdd, sheetRef }: Props) {
               onChangeText={setPriceInput}
               keyboardType="numeric"
               placeholderTextColor="#ccc"
+              editable={!saving}
             />
 
-            {/* Preview */}
             {computedPricePerUnit !== null && computedPricePerUnit > 0 && (
               <View className="bg-green-50 border border-dashed border-green-200 rounded-xl py-2 px-3 mb-3 items-center">
                 <Text className="text-xs font-extrabold text-green-600">
@@ -177,26 +189,30 @@ export default function AddStockSheet({ onAdd, sheetRef }: Props) {
               </View>
             )}
 
-            {/* Error */}
             {!!error && (
               <Text className="text-xs font-bold text-red-500 text-center mb-2">
                 {error}
               </Text>
             )}
 
-            {/* Actions */}
             <View className="flex-row gap-3 mt-1">
               <TouchableOpacity
                 onPress={handleClose}
+                disabled={saving}
                 className="flex-1 border-2 border-gray-100 rounded-2xl py-3 items-center"
               >
                 <Text className="text-sm font-bold text-gray-400">Cancel</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 onPress={handleSave}
+                disabled={saving}
                 className="flex-[2] bg-green-500 rounded-2xl py-3 items-center shadow shadow-green-600/40"
               >
-                <Text className="text-sm font-extrabold text-white">Save</Text>
+                {saving ? (
+                  <ActivityIndicator size="small" color="white" />
+                ) : (
+                  <Text className="text-sm font-extrabold text-white">Save</Text>
+                )}
               </TouchableOpacity>
             </View>
           </View>

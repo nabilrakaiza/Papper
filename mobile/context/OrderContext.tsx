@@ -1,14 +1,17 @@
-import { createContext, useContext, useState, ReactNode, useEffect } from "react";
+import { createContext, useContext, useState, useEffect, ReactNode } from "react";
 import { Order, MenuItem } from "../types/order";
 import { supabase } from "../lib/supabase";
 
 type OrderContextType = {
   orders: Order[];
   menu: MenuItem[];
-  addOrder: (order: Omit<Order, "id" | "createdAt">) => void;
-  updateOrder: (id: number, order: Partial<Order>) => void;
-  markPaid: (id: number, discount: number) => void;
-  toggleMenuAvailability: (menuId: number) => void;
+  loading: boolean;
+  error: string | null;
+  addOrder: (order: Omit<Order, "id" | "createdAt">) => Promise<{ error: string | null }>;
+  updateOrder: (id: number, order: Partial<Order>) => Promise<{ error: string | null }>;
+  markPaid: (id: number, discount: number) => Promise<{ error: string | null }>;
+  toggleMenuAvailability: (menuId: number) => Promise<void>;
+  refetch: () => Promise<void>;
 };
 
 const OrderContext = createContext<OrderContextType>({} as OrderContextType);
@@ -17,110 +20,157 @@ export function OrderProvider({ children }: { children: ReactNode }) {
   const [orders, setOrders] = useState<Order[]>([]);
   const [menu, setMenu] = useState<MenuItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   const fetchMenu = async () => {
-    const { data } = await supabase.from("menus").select("*");
+    const { data, error } = await supabase.from("menus").select("*");
+    if (error) {
+      console.error("Failed to fetch menu:", error.message);
+      return;
+    }
     if (data) setMenu(data);
-    };
+  };
+
   const fetchOrders = async () => {
-    const { data } = await supabase
-    .from("orders")
-    .select("*, order_items(*)")
-    .order("created_at", { ascending: false });
-    if (data) {
-      setOrders(data.map((o) => ({
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+
+    // Fetch all unpaid orders
+    const { data: unpaidData, error: unpaidError } = await supabase
+        .from("orders")
+        .select("*, order_items(*)")
+        .eq("status", "unpaid")
+        .order("created_at", { ascending: false });
+
+    // Fetch today's paid orders only
+    const { data: paidData, error: paidError } = await supabase
+        .from("orders")
+        .select("*, order_items(*)")
+        .eq("status", "paid")
+        .gte("created_at", today.toISOString())
+        .lt("created_at", tomorrow.toISOString())
+        .order("created_at", { ascending: false });
+
+    if (unpaidError || paidError) {
+        setError("Failed to load orders. Please check your connection.");
+        setLoading(false);
+        return;
+    }
+
+    const combined = [...(unpaidData ?? []), ...(paidData ?? [])];
+
+    setOrders(
+        combined.map((o) => ({
         id: o.id,
-        customerName: o.customer_name,  // ← make sure this line exists
+        customerName: o.customer_name,
         seat: o.seat,
         discount: o.discount,
         status: o.status,
         createdAt: new Date(o.created_at),
         items: o.order_items.map((i: any) => ({
-        menuId: i.menu_id,
-        name: i.name,
-        price: i.price,
-        quantity: i.quantity,
+            menuId: i.menu_id,
+            name: i.name,
+            price: i.price,
+            quantity: i.quantity,
+            category: i.category,
         })),
-    })));
-    }
-    setLoading(false);
-};
+        }))
+    );
 
-  // Fetch menu from Supabase on mount
+    setError(null);
+    setLoading(false);
+    };
+
   useEffect(() => {
     fetchMenu();
     fetchOrders();
 
-    // Subscribe to order changes
     const subscription = supabase
-        .channel("orders-channel")
-        .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "orders" },
-        () => {
-            // Refetch orders whenever anything changes
-            fetchOrders();
-        }
-        )
-        .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "order_items" },
-        () => {
-            fetchOrders();
-        }
-        )
-        .subscribe();
+      .channel("orders-channel")
+      .on("postgres_changes", { event: "*", schema: "public", table: "orders" }, () => {
+        fetchOrders();
+      })
+      .on("postgres_changes", { event: "*", schema: "public", table: "order_items" }, () => {
+        fetchOrders();
+      })
+      .subscribe();
 
     return () => {
-        supabase.removeChannel(subscription);
+      supabase.removeChannel(subscription);
     };
   }, []);
 
-  const addOrder = async (order: Omit<Order, "id" | "createdAt">) => {
-    // Insert order
-    const { data: newOrder } = await supabase
-      .from("orders")
-      .insert({
+  const addOrder = async (order: Omit<Order, "id" | "createdAt">): Promise<{ error: string | null }> => {
+    const { data: newOrder, error: orderError } = await supabase
+        .from("orders")
+        .insert({
         customer_name: order.customerName,
         seat: order.seat,
         discount: order.discount,
         status: order.status,
-      })
-      .select()
-      .single();
+        })
+        .select()
+        .single();
 
-    if (!newOrder) return;
+    if (orderError || !newOrder) {
+        return { error: "Failed to create order. Please try again." };
+    }
 
-    // Insert order items
-    await supabase.from("order_items").insert(
-      order.items.map((item) => ({
+    const { error: itemsError } = await supabase.from("order_items").insert(
+        order.items.map((item) => ({
         order_id: newOrder.id,
         menu_id: item.menuId,
         name: item.name,
         price: item.price,
         quantity: item.quantity,
-      }))
+        }))
     );
 
-    // Refresh orders
-    setOrders((prev) => [
-      { ...order, id: newOrder.id, createdAt: new Date(newOrder.created_at) },
-      ...prev,
-    ]);
-  };
+    if (itemsError) {
+        await supabase.from("orders").delete().eq("id", newOrder.id);
+        return { error: "Failed to save order items. Please try again." };
+    }
 
-  const updateOrder = async (id: number, updated: Partial<Order>) => {
-    await supabase.from("orders").update({
-      customer_name: updated.customerName,
-      seat: updated.seat,
-      discount: updated.discount,
-      status: updated.status,
-    }).eq("id", id);
+    // Deduct stock
+    const { error: stockError } = await supabase.rpc("deduct_stock_for_order", {
+        p_order_id: newOrder.id,
+    });
+
+    if (stockError) {
+        // Rollback order and items
+        await supabase.from("orders").delete().eq("id", newOrder.id);
+
+        if (stockError.message.includes("Insufficient stock")) {
+        return { error: "Order blocked — one or more ingredients are out of stock." };
+        }
+        return { error: "Failed to update stock. Please try again." };
+    }
+
+    await fetchOrders();
+
+    return { error: null };
+    };
+
+  const updateOrder = async (id: number, updated: Partial<Order>): Promise<{ error: string | null }> => {
+    const { error: updateError } = await supabase
+      .from("orders")
+      .update({
+        ...(updated.customerName && { customer_name: updated.customerName }),
+        ...(updated.seat && { seat: updated.seat }),
+        ...(updated.discount !== undefined && { discount: updated.discount }),
+        ...(updated.status && { status: updated.status }),
+      })
+      .eq("id", id);
+
+    if (updateError) {
+      return { error: "Failed to update order. Please try again." };
+    }
 
     if (updated.items) {
-      // Delete old items and reinsert
       await supabase.from("order_items").delete().eq("order_id", id);
-      await supabase.from("order_items").insert(
+      const { error: itemsError } = await supabase.from("order_items").insert(
         updated.items.map((item) => ({
           order_id: id,
           menu_id: item.menuId,
@@ -129,41 +179,67 @@ export function OrderProvider({ children }: { children: ReactNode }) {
           quantity: item.quantity,
         }))
       );
+
+      if (itemsError) {
+        return { error: "Failed to update order items. Please try again." };
+      }
     }
 
-    setOrders((prev) =>
-      prev.map((o) => (o.id === id ? { ...o, ...updated } : o))
-    );
+    await fetchOrders();
+
+    return { error: null };
   };
 
-  const markPaid = async (id: number, discount: number) => {
-    await supabase
+  const markPaid = async (id: number, discount: number): Promise<{ error: string | null }> => {
+    const { error } = await supabase
       .from("orders")
       .update({ status: "paid", discount })
       .eq("id", id);
 
-    setOrders((prev) =>
-      prev.map((o) => (o.id === id ? { ...o, status: "paid", discount } : o))
-    );
+    if (error) {
+      return { error: "Failed to confirm payment. Please try again." };
+    }
+
+    await fetchOrders();
+
+    return { error: null };
   };
 
   const toggleMenuAvailability = async (menuId: number) => {
     const item = menu.find((m) => m.id === menuId);
     if (!item) return;
 
-    await supabase
+    // Optimistic update
+    setMenu((prev) =>
+      prev.map((m) => (m.id === menuId ? { ...m, available: !m.available } : m))
+    );
+
+    const { error } = await supabase
       .from("menus")
       .update({ available: !item.available })
       .eq("id", menuId);
 
-    setMenu((prev) =>
-      prev.map((m) => (m.id === menuId ? { ...m, available: !m.available } : m))
-    );
+    if (error) {
+      // Revert on failure
+      setMenu((prev) =>
+        prev.map((m) => (m.id === menuId ? { ...m, available: item.available } : m))
+      );
+    }
   };
 
   return (
     <OrderContext.Provider
-      value={{orders, menu, addOrder, updateOrder, markPaid, toggleMenuAvailability }}
+      value={{
+        orders,
+        menu,
+        loading,
+        error,
+        addOrder,
+        updateOrder,
+        markPaid,
+        toggleMenuAvailability,
+        refetch: fetchOrders,
+      }}
     >
       {children}
     </OrderContext.Provider>
