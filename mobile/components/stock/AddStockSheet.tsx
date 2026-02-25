@@ -7,10 +7,9 @@ import {
   KeyboardAvoidingView,
   Platform,
   ActivityIndicator,
-  ScrollView,
 } from "react-native";
-import BottomSheet, { BottomSheetView, BottomSheetScrollView } from "@gorhom/bottom-sheet";
-import { Check, ChevronDown } from "lucide-react-native";
+import BottomSheet, { BottomSheetScrollView } from "@gorhom/bottom-sheet";
+import { Check, Search, X } from "lucide-react-native";
 import { supabase } from "@/lib/supabase";
 import { StockItem } from "@/types/stock";
 
@@ -30,8 +29,8 @@ type Props = {
 export default function AddStockSheet({ onAdd, sheetRef }: Props) {
   const [definitions, setDefinitions] = useState<StockDefinition[]>([]);
   const [loadingDefs, setLoadingDefs] = useState(true);
+  const [search, setSearch] = useState("");
   const [selected, setSelected] = useState<StockDefinition | null>(null);
-  const [pickerOpen, setPickerOpen] = useState(false);
   const [quantity, setQuantity] = useState("");
   const [priceMode, setPriceMode] = useState<PriceMode>("total");
   const [priceInput, setPriceInput] = useState("");
@@ -50,6 +49,10 @@ export default function AddStockSheet({ onAdd, sheetRef }: Props) {
     fetchDefinitions();
   }, []);
 
+  const filtered = definitions.filter((d) =>
+    d.name.toLowerCase().includes(search.toLowerCase())
+  );
+
   const qty = parseFloat(quantity);
   const rawPrice = parseFloat(priceInput);
   const computedPricePerUnit =
@@ -63,7 +66,7 @@ export default function AddStockSheet({ onAdd, sheetRef }: Props) {
 
   const reset = () => {
     setSelected(null);
-    setPickerOpen(false);
+    setSearch("");
     setQuantity("");
     setPriceInput("");
     setPriceMode("total");
@@ -71,8 +74,19 @@ export default function AddStockSheet({ onAdd, sheetRef }: Props) {
     setSaving(false);
   };
 
+  const handleSelect = (def: StockDefinition) => {
+    setSelected(def);
+    setSearch(def.name);
+    setError("");
+  };
+
+  const handleClearSelection = () => {
+    setSelected(null);
+    setSearch("");
+  };
+
   const handleSave = async () => {
-    if (!selected) { setError("Please select a stock item"); return; }
+    if (!selected) { setError("Please select a stock item from the list"); return; }
     if (isNaN(qty) || qty <= 0) { setError("Enter a valid quantity"); return; }
     if (computedPricePerUnit === null || computedPricePerUnit < 0) {
       setError("Enter a valid price"); return;
@@ -101,6 +115,8 @@ export default function AddStockSheet({ onAdd, sheetRef }: Props) {
     sheetRef.current?.close();
   };
 
+  const showDropdown = !selected && search.length > 0 && filtered.length > 0;
+
   return (
     <BottomSheet
       ref={sheetRef}
@@ -111,7 +127,7 @@ export default function AddStockSheet({ onAdd, sheetRef }: Props) {
       backgroundStyle={{ borderRadius: 24, backgroundColor: "white" }}
       handleIndicatorStyle={{ backgroundColor: "#ddd", width: 40 }}
     >
-      <BottomSheetScrollView>
+      <BottomSheetScrollView keyboardShouldPersistTaps="handled">
         <KeyboardAvoidingView
           behavior={Platform.OS === "ios" ? "padding" : undefined}
         >
@@ -120,7 +136,7 @@ export default function AddStockSheet({ onAdd, sheetRef }: Props) {
               Add Stock
             </Text>
 
-            {/* Stock item picker */}
+            {/* Search / select */}
             <Text className="text-[10px] font-extrabold text-gray-400 uppercase tracking-widest mb-1">
               Stock Item
             </Text>
@@ -130,53 +146,82 @@ export default function AddStockSheet({ onAdd, sheetRef }: Props) {
                 <ActivityIndicator size="small" color="#aaa" />
               </View>
             ) : (
-              <TouchableOpacity
-                onPress={() => setPickerOpen((o) => !o)}
-                disabled={saving}
-                className="bg-gray-50 border-2 border-gray-100 rounded-xl px-3 py-3 mb-1 flex-row items-center justify-between"
-              >
-                <Text className={`text-sm font-bold ${selected ? "text-gray-900" : "text-gray-300"}`}>
-                  {selected ? `${selected.name}` : "Select an item..."}
-                </Text>
-                <ChevronDown size={16} color="#aaa" />
-              </TouchableOpacity>
-            )}
-
-            {/* Dropdown list */}
-            {pickerOpen && (
-              <View className="bg-white border-2 border-gray-100 rounded-xl mb-3 overflow-hidden shadow-sm">
-                {definitions.map((def, index) => (
-                  <TouchableOpacity
-                    key={def.id}
-                    onPress={() => {
-                      setSelected(def);
-                      setPickerOpen(false);
-                      setError("");
+              <View className="mb-1">
+                {/* Search input */}
+                <View className={`flex-row items-center bg-gray-50 border-2 rounded-xl px-3 mb-1 ${
+                  selected ? "border-green-200 bg-green-50" : "border-gray-100"
+                }`}>
+                  <Search size={16} color="#aaa" />
+                  <TextInput
+                    className="flex-1 py-2.5 px-2 font-bold text-sm text-gray-900"
+                    placeholder="Search stock item..."
+                    value={search}
+                    onChangeText={(text) => {
+                      setSearch(text);
+                      if (selected && text !== selected.name) {
+                        setSelected(null);
+                      }
                     }}
-                    className={`flex-row items-center justify-between px-4 py-3 ${
-                      index < definitions.length - 1 ? "border-b border-gray-50" : ""
-                    } ${selected?.id === def.id ? "bg-green-50" : ""}`}
-                  >
-                    <View className="flex-row items-center gap-2">
-                      <Text className="text-sm font-bold text-gray-800">{def.name}</Text>
-                      <View className="bg-gray-100 rounded-lg px-2 py-0.5">
-                        <Text className="text-xs font-bold text-gray-400">{def.unit}</Text>
-                      </View>
-                    </View>
-                    {selected?.id === def.id && (
-                      <Check size={16} color="#22c55e" />
-                    )}
-                  </TouchableOpacity>
-                ))}
-              </View>
-            )}
+                    placeholderTextColor="#ccc"
+                    editable={!saving}
+                  />
+                  {search.length > 0 && (
+                    <TouchableOpacity onPress={handleClearSelection}>
+                      <X size={16} color="#aaa" />
+                    </TouchableOpacity>
+                  )}
+                </View>
 
-            {/* Unit display (locked) */}
-            {selected && (
-              <View className="bg-blue-50 border border-blue-100 rounded-xl px-3 py-2 mb-3 flex-row items-center gap-2">
-                <Text className="text-xs font-bold text-blue-400">Unit:</Text>
-                <Text className="text-xs font-extrabold text-blue-600">{selected.unit}</Text>
-                <Text className="text-xs text-blue-300 ml-1">(fixed)</Text>
+                {/* Dropdown results */}
+                {showDropdown && (
+                  <View className="bg-white border-2 border-gray-100 rounded-xl overflow-hidden shadow-sm mb-2">
+                    {filtered.map((def, index) => (
+                      <TouchableOpacity
+                        key={def.id}
+                        onPress={() => handleSelect(def)}
+                        className={`flex-row items-center justify-between px-4 py-3 ${
+                          index < filtered.length - 1 ? "border-b border-gray-50" : ""
+                        }`}
+                      >
+                        <View className="flex-row items-center gap-2">
+                          <Text className="text-sm font-bold text-gray-800">
+                            {def.name}
+                          </Text>
+                          <View className="bg-gray-100 rounded-lg px-2 py-0.5">
+                            <Text className="text-xs font-bold text-gray-400">
+                              {def.unit}
+                            </Text>
+                          </View>
+                        </View>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                )}
+
+                {/* No results */}
+                {!selected && search.length > 0 && filtered.length === 0 && (
+                  <View className="bg-gray-50 rounded-xl px-4 py-3 mb-2">
+                    <Text className="text-xs font-bold text-gray-400 text-center">
+                      No items found for -{search}-
+                    </Text>
+                  </View>
+                )}
+
+                {/* Selected confirmation */}
+                {selected && (
+                  <View className="flex-row items-center gap-2 bg-green-50 border border-green-100 rounded-xl px-3 py-2 mb-2">
+                    <Check size={14} color="#22c55e" />
+                    <Text className="text-xs font-bold text-green-600 flex-1">
+                      {selected.name}
+                    </Text>
+                    <View className="bg-green-100 rounded-lg px-2 py-0.5">
+                      <Text className="text-xs font-extrabold text-green-500">
+                        {selected.unit}
+                      </Text>
+                    </View>
+                    <Text className="text-xs text-green-300">(fixed)</Text>
+                  </View>
+                )}
               </View>
             )}
 
@@ -194,7 +239,7 @@ export default function AddStockSheet({ onAdd, sheetRef }: Props) {
               editable={!saving}
             />
 
-            {/* Price mode toggle */}
+            {/* Price mode */}
             <Text className="text-[10px] font-extrabold text-gray-400 uppercase tracking-widest mb-1">
               Price Input
             </Text>

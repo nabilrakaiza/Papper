@@ -1,11 +1,17 @@
 import { useState, useCallback } from "react";
 import {
-  View, Text, ScrollView,
-  TouchableOpacity, ActivityIndicator,
+  View,
+  Text,
+  ScrollView,
+  // SafeAreaView,
+  TouchableOpacity,
+  ActivityIndicator,
+  TextInput,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { supabase } from "../../../lib/supabase";
 import { useFocusEffect } from "expo-router";
+import { Search, X } from "lucide-react-native";
+import { supabase } from "../../../lib/supabase";
 
 type Ingredient = {
   stockId: number;
@@ -42,19 +48,18 @@ export default function CogsScreen() {
   const [menus, setMenus] = useState<MenuWithCogs[]>([]);
   const [loading, setLoading] = useState(true);
   const [expandedId, setExpandedId] = useState<number | null>(null);
+  const [search, setSearch] = useState("");
 
   const fetchData = async () => {
     setLoading(true);
 
-    // Fetch menus
     const { data: menuData } = await supabase
       .from("menus")
       .select("id, name, price");
 
-    // Fetch ingredients with stock price
     const { data: ingredientData } = await supabase
       .from("menu_ingredients")
-      .select("menu_id, quantity, stock(id, name, price_per_unit)");
+      .select("menu_id, quantity, stock:stock_id(id, name, price_per_unit)");
 
     if (!menuData) { setLoading(false); return; }
 
@@ -86,8 +91,11 @@ export default function CogsScreen() {
     setLoading(false);
   };
 
-  // Refresh whenever screen comes into focus
   useFocusEffect(useCallback(() => { fetchData(); }, []));
+
+  const filtered = menus.filter((m) =>
+    m.name.toLowerCase().includes(search.toLowerCase())
+  );
 
   if (loading) {
     return (
@@ -99,14 +107,35 @@ export default function CogsScreen() {
 
   return (
     <SafeAreaView className="flex-1 bg-gray-100">
+      {/* Header */}
       <View className="px-5 pt-4 pb-3">
         <Text className="text-2xl font-black text-gray-900">COGS</Text>
+      </View>
+
+      {/* Search */}
+      <View className="px-4 mb-2">
+        <View className="flex-row items-center bg-white border-2 border-gray-100 rounded-2xl px-3 gap-2">
+          <Search size={16} color="#aaa" />
+          <TextInput
+            className="flex-1 py-2.5 font-bold text-sm text-gray-900"
+            placeholder="Search menu..."
+            value={search}
+            onChangeText={setSearch}
+            placeholderTextColor="#ccc"
+          />
+          {search.length > 0 && (
+            <TouchableOpacity onPress={() => setSearch("")}>
+              <X size={16} color="#aaa" />
+            </TouchableOpacity>
+          )}
+        </View>
       </View>
 
       <ScrollView
         contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 24 }}
         showsVerticalScrollIndicator={false}
       >
+        {/* Info banner */}
         <View className="bg-blue-50 border border-blue-100 rounded-2xl px-4 py-3 mb-4">
           <Text className="text-xs font-bold text-blue-400 leading-5">
             COGS is calculated from ingredients linked to stock items.
@@ -114,7 +143,15 @@ export default function CogsScreen() {
           </Text>
         </View>
 
-        {menus.map((item) => {
+        {filtered.length === 0 && (
+          <View className="items-center mt-16">
+            <Text className="text-gray-300 font-bold text-sm">
+              {search.length > 0 ? `No results for "${search}"` : "No menu items found."}
+            </Text>
+          </View>
+        )}
+
+        {filtered.map((item) => {
           const isExpanded = expandedId === item.id;
           return (
             <TouchableOpacity
@@ -169,7 +206,7 @@ export default function CogsScreen() {
                 )}
               </View>
 
-              {/* Ingredients breakdown — expanded */}
+              {/* Ingredients breakdown */}
               {isExpanded && item.ingredients.length > 0 && (
                 <View className="mt-3">
                   <Text className="text-[10px] font-extrabold text-gray-400 uppercase tracking-widest mb-2">

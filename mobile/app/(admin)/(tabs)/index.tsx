@@ -6,10 +6,12 @@ import {
   TouchableOpacity,
   // SafeAreaView,
   ActivityIndicator,
+  TextInput,
 } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
 import BottomSheet from "@gorhom/bottom-sheet";
-import { RefreshCw } from "lucide-react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
+import { User, RefreshCw, Search, X } from "lucide-react-native";
+import { useAuth } from "../../../context/AuthContext";
 import { supabase } from "../../../lib/supabase";
 import StockCard from "@/components/stock/StockCard";
 import AddStockSheet from "@/components/stock/AddStockSheet";
@@ -20,7 +22,9 @@ export default function StockScreen() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [search, setSearch] = useState("");
   const sheetRef = useRef<BottomSheet>(null) as React.RefObject<BottomSheet>;
+  const { signOut } = useAuth();
 
   const fetchStock = useCallback(async () => {
     setLoading(true);
@@ -110,6 +114,10 @@ export default function StockScreen() {
     setSaving(false);
   };
 
+  const filtered = items.filter((i) =>
+    i.name.toLowerCase().includes(search.toLowerCase())
+  );
+
   return (
     <SafeAreaView className="flex-1 bg-gray-100">
       {/* Header */}
@@ -118,12 +126,31 @@ export default function StockScreen() {
           <Text className="text-blue-500 text-xl font-black">✛</Text>
           <Text className="text-2xl font-black text-gray-900">Stock</Text>
         </View>
-        {/* <TouchableOpacity
+        <TouchableOpacity
           onPress={signOut}
           className="w-10 h-10 rounded-full bg-gray-900 items-center justify-center"
         >
           <User size={18} color="white" />
-        </TouchableOpacity> */}
+        </TouchableOpacity>
+      </View>
+
+      {/* Search */}
+      <View className="px-4 mb-2">
+        <View className="flex-row items-center bg-white border-2 border-gray-100 rounded-2xl px-3 gap-2">
+          <Search size={16} color="#aaa" />
+          <TextInput
+            className="flex-1 py-2.5 font-bold text-sm text-gray-900"
+            placeholder="Search stock..."
+            value={search}
+            onChangeText={setSearch}
+            placeholderTextColor="#ccc"
+          />
+          {search.length > 0 && (
+            <TouchableOpacity onPress={() => setSearch("")}>
+              <X size={16} color="#aaa" />
+            </TouchableOpacity>
+          )}
+        </View>
       </View>
 
       {/* Error banner */}
@@ -144,19 +171,21 @@ export default function StockScreen() {
         </View>
       ) : (
         <FlatList
-          data={items}
+          data={filtered}
           keyExtractor={(item) => item.id.toString()}
           renderItem={({ item }) => <StockCard item={item} />}
           contentContainerStyle={{
             paddingHorizontal: 16,
             paddingTop: 4,
-            paddingBottom: 16,
+            paddingBottom: 100,
           }}
           showsVerticalScrollIndicator={false}
           ListEmptyComponent={
             <View className="items-center mt-24">
               <Text className="text-gray-300 font-bold text-sm text-center leading-7">
-                No items in stock.{"\n"}Tap add stock to begin.
+                {search.length > 0
+                  ? `No results for "${search}"`
+                  : `No items in stock.\nTap "add stock" to begin.`}
               </Text>
             </View>
           }

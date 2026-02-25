@@ -11,11 +11,11 @@ function RootNavigator() {
   const { session, role, loading } = useAuth();
   const [ready, setReady] = useState(false);
 
-  // useEffect(() => {
-  //   if (Platform.OS === 'android' && SystemNavigationBar?.navigationHide) {      
-  //     SystemNavigationBar.navigationHide();
-  //   }
-  // }, []);
+  useEffect(() => {
+    if (Platform.OS === 'android' && SystemNavigationBar?.navigationHide) {      
+      SystemNavigationBar.navigationHide();
+    }
+  }, []);
 
   useEffect(() => {
     if (!loading) setReady(true);
