@@ -4,7 +4,7 @@
     "slug": "papper",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/images/logo.png", 
+    "icon": "./assets/images/logo.png",
     "scheme": "papper",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
@@ -44,6 +44,13 @@
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
-    }
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "0051fe29-a8c6-4188-965b-fd6c0f61306d"
+      }
+    },
+    "owner": "nabilrakaiza"
   }
 }
