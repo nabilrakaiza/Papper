@@ -4,6 +4,7 @@ import {
   Text,
   ScrollView,
   TouchableOpacity,
+  TextInput,
 //   SafeAreaView,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -20,14 +21,13 @@ function formatRupiah(amount: number): string {
 export default function EditOrderScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { orders, menu, updateOrder } = useOrders();
-
   const order = orders.find((o) => o.id === Number(id));
-
   const [categoryIndex, setCategoryIndex] = useState(0);
   const [quantities, setQuantities] = useState<Record<number, number>>(
     Object.fromEntries(order?.items.map((i) => [i.menuId, i.quantity]) ?? [])
   );
   const [summaryOpen, setSummaryOpen] = useState(false);
+  const [note, setNote] = useState<string>(order?.note ?? "");
 
   const increment = useCallback((menuId: number) => {
     setQuantities((prev) => ({ ...prev, [menuId]: (prev[menuId] ?? 0) + 1 }));
@@ -67,8 +67,12 @@ export default function EditOrderScreen() {
   const totalItems = selectedItems.reduce((sum, i) => sum + i.quantity, 0);
   const subtotal = selectedItems.reduce((sum, i) => sum + i.price * i.quantity, 0);
 
-  const handleSave = () => {
-    updateOrder(order.id, { items: selectedItems });
+  const handleSave = async () => {
+    if (selectedItems.length === 0) return;
+    await updateOrder(order.id, { 
+      items: selectedItems,
+      note: note.trim() || null,
+    });
     router.back();
   };
 
@@ -173,6 +177,22 @@ export default function EditOrderScreen() {
           );
         })}
       </ScrollView>
+
+      <View className="mx-1 mt-2 mb-4">
+        <Text className="text-[10px] font-extrabold text-gray-400 uppercase tracking-widest mb-2 px-1">
+          Order Note (optional)
+        </Text>
+        <TextInput
+          className="bg-yellow-100 border-2 border-yellow-200 rounded-2xl px-4 py-3 font-bold text-sm text-gray-800"
+          placeholder="e.g. No spicy, extra rice, less sugar..."
+          value={note}
+          onChangeText={setNote}
+          placeholderTextColor="#bbb"
+          multiline
+          numberOfLines={3}
+          textAlignVertical="top"
+        />
+      </View>
 
       {/* Bottom bar */}
       <View className="absolute bottom-0 left-0 right-0 px-4 pb-4">

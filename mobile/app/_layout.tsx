@@ -3,8 +3,9 @@ import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { Slot, router } from "expo-router";
 import { ActivityIndicator, View, Platform } from "react-native";
 import { AuthProvider, useAuth } from "../context/AuthContext";
+import { SafeAreaProvider } from "react-native-safe-area-context";
 import "../global.css";
-import SystemNavigationBar from 'react-native-system-navigation-bar';
+import * as NavigationBar from 'expo-navigation-bar';
 
 // app/_layout.tsx
 function RootNavigator() {
@@ -12,10 +13,22 @@ function RootNavigator() {
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
-    if (Platform.OS === 'android' && SystemNavigationBar?.navigationHide) {      
-      SystemNavigationBar.navigationHide();
-    }
+    if (Platform.OS !== 'android') return;
+
+    NavigationBar.setVisibilityAsync('hidden');
+    const subscription = NavigationBar.addVisibilityListener(({ visibility }) => {
+      if (visibility === 'visible') {
+        setTimeout(() => {
+          NavigationBar.setVisibilityAsync('hidden');
+        }, 3000);
+      }
+    });
+
+    return () => {
+      subscription.remove();
+    };
   }, []);
+
 
   useEffect(() => {
     if (!loading) setReady(true);
@@ -23,9 +36,6 @@ function RootNavigator() {
 
   useEffect(() => {
     if (!ready) return;
-
-    // console.log("session:", session);
-    // console.log("role:", role);
 
     if (!session) {
       // console.log("p1") 
@@ -56,9 +66,11 @@ function RootNavigator() {
 export default function RootLayout() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
-      <AuthProvider>
-        <RootNavigator />
-      </AuthProvider>
+      <SafeAreaProvider>
+        <AuthProvider>
+          <RootNavigator />
+        </AuthProvider>
+      </SafeAreaProvider>
     </GestureHandlerRootView>
   );
 }

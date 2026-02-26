@@ -13,12 +13,15 @@ export type Order = {
   customerName: string;
   seat: string;
   items: OrderItem[];
-  discount: number; // percentage 0-100
+  discount: number;
   status: OrderStatus;
   createdAt: Date;
+  note: string | null;
 };
 
-export type MenuCategory = "Ayam" | "Nasi" | "Sapi" | "Minuman" | "Lainnya";
+export type MenuCategory = "Ayam" | "Nasi" | "Sapi" | "Udang"| 
+    "Ikan"| "Steak"| "Burger"| "Pasta"| "Additions"| "Snacks"| 
+    "Coffee"| "Drinks"| "Milkshake"| "Juice"| "Dessert"| "Pastry";
 
 export type MenuItem = {
   id: number;

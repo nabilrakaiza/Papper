@@ -10,8 +10,7 @@ import {
 } from "react-native";
 import BottomSheet from "@gorhom/bottom-sheet";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { User, RefreshCw, Search, X } from "lucide-react-native";
-import { useAuth } from "../../../context/AuthContext";
+import { RefreshCw, Search, X } from "lucide-react-native";
 import { supabase } from "../../../lib/supabase";
 import StockCard from "@/components/stock/StockCard";
 import AddStockSheet from "@/components/stock/AddStockSheet";
@@ -24,7 +23,6 @@ export default function StockScreen() {
   const [saving, setSaving] = useState(false);
   const [search, setSearch] = useState("");
   const sheetRef = useRef<BottomSheet>(null) as React.RefObject<BottomSheet>;
-  const { signOut } = useAuth();
 
   const fetchStock = useCallback(async () => {
     setLoading(true);
@@ -126,12 +124,12 @@ export default function StockScreen() {
           <Text className="text-blue-500 text-xl font-black">✛</Text>
           <Text className="text-2xl font-black text-gray-900">Stock</Text>
         </View>
-        <TouchableOpacity
+        {/* <TouchableOpacity
           onPress={signOut}
           className="w-10 h-10 rounded-full bg-gray-900 items-center justify-center"
         >
           <User size={18} color="white" />
-        </TouchableOpacity>
+        </TouchableOpacity> */}
       </View>
 
       {/* Search */}

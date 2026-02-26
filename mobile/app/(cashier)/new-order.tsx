@@ -74,6 +74,7 @@ export default function NewOrderScreen() {
       items: selectedItems,
       discount: 0,
       status: "unpaid",
+      note: null,
     });
 
     if (error) {

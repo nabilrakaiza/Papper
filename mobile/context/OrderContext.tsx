@@ -69,6 +69,7 @@ export function OrderProvider({ children }: { children: ReactNode }) {
         discount: o.discount,
         status: o.status,
         createdAt: new Date(o.created_at),
+        note: o.note ?? null,
         items: o.order_items.map((i: any) => ({
             menuId: i.menu_id,
             name: i.name,
@@ -110,6 +111,7 @@ export function OrderProvider({ children }: { children: ReactNode }) {
         seat: order.seat,
         discount: order.discount,
         status: order.status,
+        note: order.note ?? null,
         })
         .select()
         .single();
@@ -161,6 +163,7 @@ export function OrderProvider({ children }: { children: ReactNode }) {
         ...(updated.seat && { seat: updated.seat }),
         ...(updated.discount !== undefined && { discount: updated.discount }),
         ...(updated.status && { status: updated.status }),
+        ...(updated.note !== undefined && { note: updated.note }),
       })
       .eq("id", id);
 
