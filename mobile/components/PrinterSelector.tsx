@@ -5,9 +5,8 @@ import {
   Modal,
   TouchableOpacity,
   ActivityIndicator,
-  FlatList,
 } from "react-native";
-import { Bluetooth, Printer, X, RefreshCw, Check } from "lucide-react-native";
+import { Bluetooth, Printer, X, RefreshCw } from "lucide-react-native";
 import { scanAndConnectPrinter, connectToPrinter } from "../lib/printer";
 
 type Device = { name: string; address: string };
