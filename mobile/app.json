@@ -13,6 +13,12 @@
       "bundleIdentifier": "com.yourname.papper"
     },
     "android": {
+      "permissions": [
+        "BLUETOOTH",
+        "BLUETOOTH_ADMIN",
+        "BLUETOOTH_CONNECT",
+        "BLUETOOTH_SCAN"
+      ],
       "package": "com.yourname.papper",
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/logo.png",

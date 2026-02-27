@@ -110,6 +110,7 @@ export default function StockScreen() {
     }
 
     setSaving(false);
+    fetchStock();
   };
 
   const filtered = items.filter((i) =>

@@ -1,10 +1,13 @@
 import { Slot } from "expo-router";
 import { OrderProvider } from "../../context/OrderContext";
+import { PrinterProvider } from "../../context/PrinterContext";
 
 export default function CashierLayout() {
   return (
-    <OrderProvider>
-      <Slot />
-    </OrderProvider>
+    <PrinterProvider>
+      <OrderProvider>
+        <Slot />
+      </OrderProvider>
+    </PrinterProvider>
   );
 }

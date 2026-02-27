@@ -1,0 +1,1 @@
+declare module '@vardrz/react-native-bluetooth-escpos-printer';

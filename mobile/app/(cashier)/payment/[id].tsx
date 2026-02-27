@@ -78,6 +78,13 @@ export default function PaymentScreen() {
           </Text>
         </View>
 
+        {order.note && (
+          <View className="bg-blue-50 border border-blue-100 rounded-2xl px-4 py-3 mb-4">
+            <Text className="text-xs font-extrabold text-blue-400 mb-1">Note</Text>
+            <Text className="text-sm font-bold text-blue-600">{order.note}</Text>
+          </View>
+        )}
+
         {/* Order summary */}
         <View className="bg-yellow-100 rounded-3xl px-5 py-5 shadow-sm">
           <View className="border-2 border-gray-200 rounded-xl px-3 py-1.5 self-start mb-4 bg-white/60">

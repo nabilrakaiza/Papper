@@ -250,7 +250,7 @@ export default function AddStockSheet({ onAdd, sheetRef }: Props) {
                   onPress={() => setPriceMode(mode)}
                   disabled={saving}
                   className={`flex-1 py-2 rounded-[9px] items-center ${
-                    priceMode === mode ? "bg-white shadow" : ""
+                    priceMode === mode ? "bg-white" : ""
                   }`}
                 >
                   <Text

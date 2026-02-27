@@ -32,6 +32,7 @@ export default function NewOrderScreen() {
   const [step, setStep] = useState<"info" | "menu">("info");
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
+  const [note, setNote] = useState("");
 
   const currentCategory: MenuCategory = CATEGORIES[categoryIndex];
   const categoryItems = menu.filter(
@@ -74,7 +75,7 @@ export default function NewOrderScreen() {
       items: selectedItems,
       discount: 0,
       status: "unpaid",
-      note: null,
+      note: note.trim() || null,
     });
 
     if (error) {
@@ -248,12 +249,21 @@ export default function NewOrderScreen() {
             </View>
           );
         })}
-
-        {categoryItems.length === 0 && (
-          <Text className="text-center text-gray-300 font-bold mt-10">
-            No available items in this category
+        <View className="mx-1 mt-2 mb-4">
+          <Text className="text-[10px] font-extrabold text-gray-400 uppercase tracking-widest mb-2 px-1">
+            Order Note (optional)
           </Text>
-        )}
+          <TextInput
+            className="bg-yellow-100 border-2 border-yellow-200 rounded-2xl px-4 py-3 font-bold text-sm text-gray-800"
+            placeholder="e.g. No spicy, extra rice, less sugar..."
+            value={note}
+            onChangeText={setNote}
+            placeholderTextColor="#bbb"
+            multiline
+            numberOfLines={3}
+            textAlignVertical="top"
+          />
+        </View>
       </ScrollView>
 
       {/* Error message */}
