@@ -6,18 +6,21 @@ import {
   TouchableOpacity,
   ActivityIndicator,
 } from "react-native";
-import { Bluetooth, Printer, X, RefreshCw } from "lucide-react-native";
+import { Bluetooth, Printer, X, RefreshCw, ChefHat } from "lucide-react-native";
 import { scanAndConnectPrinter, connectToPrinter } from "../lib/printer";
+import { PrinterRole } from "../context/PrinterContext";
 
 type Device = { name: string; address: string };
 
 type Props = {
   visible: boolean;
   onClose: () => void;
-  onConnected: (device: Device) => void;
+  onConnected: (role: PrinterRole, device: Device) => void;
+  initialRole?: PrinterRole;
 };
 
-export default function PrinterSelector({ visible, onClose, onConnected }: Props) {
+export default function PrinterSelector({ visible, onClose, onConnected, initialRole = "cashier" }: Props) {
+  const [role, setRole] = useState<PrinterRole>(initialRole);
   const [devices, setDevices] = useState<Device[]>([]);
   const [scanning, setScanning] = useState(false);
   const [connecting, setConnecting] = useState<string | null>(null);
@@ -31,7 +34,6 @@ export default function PrinterSelector({ visible, onClose, onConnected }: Props
     const { devices: found, error } = await scanAndConnectPrinter();
 
     if (error) {
-        console.log(error)
       setError("Failed to scan. Make sure Bluetooth is enabled.");
     } else if (found.length === 0) {
       setError("No paired devices found. Pair your printer in Android Bluetooth settings first.");
@@ -55,7 +57,13 @@ export default function PrinterSelector({ visible, onClose, onConnected }: Props
     }
 
     setConnecting(null);
-    onConnected(device);
+    onConnected(role, device);
+    onClose();
+  };
+
+  const handleClose = () => {
+    setDevices([]);
+    setError(null);
     onClose();
   };
 
@@ -64,18 +72,47 @@ export default function PrinterSelector({ visible, onClose, onConnected }: Props
       visible={visible}
       transparent
       animationType="slide"
-      onRequestClose={onClose}
+      onRequestClose={handleClose}
     >
       <View className="flex-1 bg-black/40 justify-end">
         <View className="bg-white rounded-t-3xl px-5 pt-5 pb-8">
           {/* Header */}
-          <View className="flex-row items-center justify-between mb-5">
+          <View className="flex-row items-center justify-between mb-4">
             <View className="flex-row items-center gap-2">
               <Printer size={20} color="#333" />
               <Text className="text-lg font-black text-gray-900">Select Printer</Text>
             </View>
-            <TouchableOpacity onPress={onClose}>
+            <TouchableOpacity onPress={handleClose}>
               <X size={20} color="#aaa" />
+            </TouchableOpacity>
+          </View>
+
+          {/* Role selector */}
+          <Text className="text-[10px] font-extrabold text-gray-400 uppercase tracking-widest mb-2">
+            Printer Type
+          </Text>
+          <View className="flex-row bg-gray-100 rounded-xl p-1 mb-4 gap-1">
+            <TouchableOpacity
+              onPress={() => setRole("cashier")}
+              className={`flex-1 flex-row items-center justify-center gap-2 py-2.5 rounded-[9px] ${
+                role === "cashier" ? "bg-white shadow" : ""
+              }`}
+            >
+              <Printer size={14} color={role === "cashier" ? "#3a7bd5" : "#aaa"} />
+              <Text className={`text-xs font-extrabold ${role === "cashier" ? "text-blue-500" : "text-gray-400"}`}>
+                Cashier
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => setRole("kitchen")}
+              className={`flex-1 flex-row items-center justify-center gap-2 py-2.5 rounded-[9px] ${
+                role === "kitchen" ? "bg-white shadow" : ""
+              }`}
+            >
+              <ChefHat size={14} color={role === "kitchen" ? "#f97316" : "#aaa"} />
+              <Text className={`text-xs font-extrabold ${role === "kitchen" ? "text-orange-500" : "text-gray-400"}`}>
+                Kitchen
+              </Text>
             </TouchableOpacity>
           </View>
 
@@ -124,7 +161,9 @@ export default function PrinterSelector({ visible, onClose, onConnected }: Props
                   {connecting === device.address ? (
                     <ActivityIndicator size="small" color="#3a7bd5" />
                   ) : (
-                    <Text className="text-xs font-extrabold text-blue-500">Connect</Text>
+                    <Text className="text-xs font-extrabold text-blue-500">
+                      Set as {role === "cashier" ? "Cashier" : "Kitchen"}
+                    </Text>
                   )}
                 </TouchableOpacity>
               ))}

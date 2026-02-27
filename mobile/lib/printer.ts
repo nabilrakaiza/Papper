@@ -86,81 +86,114 @@ export async function scanAndConnectPrinter(): Promise<{
 
 export async function connectToPrinter(address: string): Promise<{ error: string | null }> {
   try {
-    console.log("connecting to:", address);
     await BluetoothManager.connect(address);
-    console.log("connected!");
     return { error: null };
   } catch (e: any) {
-    console.log("connection error:", e);
     return { error: e.message };
   }
 }
+async function printCustomerReceipt(order: Order): Promise<void> {
+  const subtotal = order.items.reduce((sum, i) => sum + i.price * i.quantity, 0);
+  const total = subtotal * (1 - order.discount / 100);
 
-export async function printReceipt(order: Order): Promise<{ error: string | null }> {
-  try {
-    const subtotal = order.items.reduce((sum, i) => sum + i.price * i.quantity, 0);
-    const total = subtotal * (1 - order.discount / 100);
+  await BluetoothEscposPrinter.printerAlign(BluetoothEscposPrinter.ALIGN.CENTER);
+  await BluetoothEscposPrinter.printText('Nabawi Cafe\n', {
+    encoding: 'GBK', codepage: 0, widthtimes: 2, heigthtimes: 2, fonttype: 1,
+  });
+  await BluetoothEscposPrinter.printText('--------------------------------\n', {});
 
-    // Header
-    await BluetoothEscposPrinter.printerAlign(BluetoothEscposPrinter.ALIGN.CENTER);
-    await BluetoothEscposPrinter.printText('PAPPER\n', {
-      encoding: 'GBK',
-      codepage: 0,
-      widthtimes: 2,
-      heigthtimes: 2,
-      fonttype: 1,
-    });
-    await BluetoothEscposPrinter.printText('--------------------------------\n', {});
+  await BluetoothEscposPrinter.printerAlign(BluetoothEscposPrinter.ALIGN.LEFT);
+  await BluetoothEscposPrinter.printText(`Customer: ${order.customerName}\n`, {});
+  await BluetoothEscposPrinter.printText(`Seat    : ${order.seat}\n`, {});
+  await BluetoothEscposPrinter.printText(`Date    : ${new Date().toLocaleDateString('id-ID')}\n`, {});
+  await BluetoothEscposPrinter.printText('--------------------------------\n', {});
 
-    // Customer info
-    await BluetoothEscposPrinter.printerAlign(BluetoothEscposPrinter.ALIGN.LEFT);
-    await BluetoothEscposPrinter.printText(`Customer: ${order.customerName}\n`, {});
-    await BluetoothEscposPrinter.printText(`Seat    : ${order.seat}\n`, {});
-    await BluetoothEscposPrinter.printText(`Date    : ${new Date().toLocaleDateString('id-ID')}\n`, {});
-    await BluetoothEscposPrinter.printText('--------------------------------\n', {});
-
-    // Items
-    for (const item of order.items) {
-      const itemTotal = item.price * item.quantity;
-      await BluetoothEscposPrinter.printColumn(
-        [24, 8],
-        [BluetoothEscposPrinter.ALIGN.LEFT, BluetoothEscposPrinter.ALIGN.RIGHT],
-        [`${item.quantity}x ${item.name}`, formatRupiah(itemTotal)],
-        {}
-      );
-    }
-
-    await BluetoothEscposPrinter.printText('--------------------------------\n', {});
-
-    // Discount if any
-    if (order.discount > 0) {
-      await BluetoothEscposPrinter.printColumn(
-        [24, 8],
-        [BluetoothEscposPrinter.ALIGN.LEFT, BluetoothEscposPrinter.ALIGN.RIGHT],
-        [`Discount ${order.discount}%`, `-${formatRupiah(subtotal - total)}`],
-        {}
-      );
-    }
-
-    // Total
+  for (const item of order.items) {
     await BluetoothEscposPrinter.printColumn(
-      [24, 8],
+      [20, 12], // can change this value to make it better
       [BluetoothEscposPrinter.ALIGN.LEFT, BluetoothEscposPrinter.ALIGN.RIGHT],
-      ['TOTAL', formatRupiah(total)],
-      { fonttype: 1, widthtimes: 1, heigthtimes: 1 }
+      [`${item.quantity}x ${item.name}`, formatRupiah(item.price * item.quantity)],
+      {}
     );
+  }
 
-    // Note
-    if (order.note) {
-      await BluetoothEscposPrinter.printText('--------------------------------\n', {});
-      await BluetoothEscposPrinter.printText(`Note: ${order.note}\n`, {});
+  await BluetoothEscposPrinter.printText('--------------------------------\n', {});
+
+  if (order.discount > 0) {
+    await BluetoothEscposPrinter.printColumn(
+      [20, 12],
+      [BluetoothEscposPrinter.ALIGN.LEFT, BluetoothEscposPrinter.ALIGN.RIGHT],
+      [`Discount ${order.discount}%`, `-${formatRupiah(subtotal - total)}`],
+      {}
+    );
+  }
+
+  await BluetoothEscposPrinter.printColumn(
+    [20, 12],
+    [BluetoothEscposPrinter.ALIGN.LEFT, BluetoothEscposPrinter.ALIGN.RIGHT],
+    ['TOTAL', formatRupiah(total)],
+    {}
+  );
+
+  if (order.note) {
+    await BluetoothEscposPrinter.printText('--------------------------------\n', {});
+    await BluetoothEscposPrinter.printText(`Note: ${order.note}\n`, {});
+  }
+
+  await BluetoothEscposPrinter.printerAlign(BluetoothEscposPrinter.ALIGN.CENTER);
+  await BluetoothEscposPrinter.printText('--------------------------------\n', {});
+  await BluetoothEscposPrinter.printText('Thank you!\n', {});
+  await BluetoothEscposPrinter.printText('\n\n\n', {});
+}
+
+// Simplified kitchen ticket — no prices
+async function printKitchenTicket(order: Order): Promise<void> {
+  await BluetoothEscposPrinter.printerAlign(BluetoothEscposPrinter.ALIGN.CENTER);
+  await BluetoothEscposPrinter.printText('KITCHEN\n', {
+    encoding: 'GBK', codepage: 0, widthtimes: 2, heigthtimes: 2, fonttype: 1,
+  });
+  await BluetoothEscposPrinter.printText('--------------------------------\n', {});
+
+  await BluetoothEscposPrinter.printerAlign(BluetoothEscposPrinter.ALIGN.LEFT);
+  await BluetoothEscposPrinter.printText(`Customer: ${order.customerName}\n`, {});
+  await BluetoothEscposPrinter.printText(`Seat    : ${order.seat}\n`, {});
+  await BluetoothEscposPrinter.printText(`Time    : ${new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}\n`, {});
+  await BluetoothEscposPrinter.printText('--------------------------------\n', {});
+
+  for (const item of order.items) {
+    await BluetoothEscposPrinter.printText(`${item.quantity}x ${item.name}\n`, {
+      fonttype: 1, widthtimes: 1, heigthtimes: 1,
+    });
+  }
+
+  if (order.note) {
+    await BluetoothEscposPrinter.printText('--------------------------------\n', {});
+    await BluetoothEscposPrinter.printText(`NOTE: ${order.note}\n`, {
+      fonttype: 1, widthtimes: 1, heigthtimes: 1,
+    });
+  }
+
+  await BluetoothEscposPrinter.printText('\n\n\n', {});
+}
+
+// Print to both printers sequentially
+export async function printReceipt(
+  order: Order,
+  cashierPrinter: { address: string } | null,
+  kitchenPrinter: { address: string } | null,
+): Promise<{ error: string | null }> {
+  try {
+    // Print customer receipt on cashier printer
+    if (cashierPrinter) {
+      await BluetoothManager.connect(cashierPrinter.address);
+      await printCustomerReceipt(order);
     }
 
-    // Footer
-    await BluetoothEscposPrinter.printerAlign(BluetoothEscposPrinter.ALIGN.CENTER);
-    await BluetoothEscposPrinter.printText('--------------------------------\n', {});
-    await BluetoothEscposPrinter.printText('Thank you!\n', {});
-    await BluetoothEscposPrinter.printText('\n\n\n', {});
+    // Print kitchen ticket on kitchen printer
+    if (kitchenPrinter) {
+      await BluetoothManager.connect(kitchenPrinter.address);
+      await printKitchenTicket(order);
+    }
 
     return { error: null };
   } catch (e: any) {
