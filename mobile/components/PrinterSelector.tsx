@@ -32,6 +32,7 @@ export default function PrinterSelector({ visible, onClose, onConnected }: Props
     const { devices: found, error } = await scanAndConnectPrinter();
 
     if (error) {
+        console.log(error)
       setError("Failed to scan. Make sure Bluetooth is enabled.");
     } else if (found.length === 0) {
       setError("No paired devices found. Pair your printer in Android Bluetooth settings first.");

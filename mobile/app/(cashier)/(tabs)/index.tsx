@@ -258,7 +258,7 @@ export default function CashierHomeScreen() {
 
       {/* Add New Order */}
       {!loading && (
-        <View className="absolute bottom-20 left-0 right-0 px-4">
+        <View className="absolute bottom-6 left-4 right-4">
           <TouchableOpacity
             onPress={() => router.push("/(cashier)/new-order")}
             className="w-full bg-cyan-200 rounded-2xl py-4 items-center shadow shadow-cyan-400/20"
