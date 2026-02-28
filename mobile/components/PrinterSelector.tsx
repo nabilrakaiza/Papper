@@ -95,7 +95,7 @@ export default function PrinterSelector({ visible, onClose, onConnected, initial
             <TouchableOpacity
               onPress={() => setRole("cashier")}
               className={`flex-1 flex-row items-center justify-center gap-2 py-2.5 rounded-[9px] ${
-                role === "cashier" ? "bg-white shadow" : ""
+                role === "cashier" ? "bg-white " : ""
               }`}
             >
               <Printer size={14} color={role === "cashier" ? "#3a7bd5" : "#aaa"} />
@@ -106,7 +106,7 @@ export default function PrinterSelector({ visible, onClose, onConnected, initial
             <TouchableOpacity
               onPress={() => setRole("kitchen")}
               className={`flex-1 flex-row items-center justify-center gap-2 py-2.5 rounded-[9px] ${
-                role === "kitchen" ? "bg-white shadow" : ""
+                role === "kitchen" ? "bg-white " : ""
               }`}
             >
               <ChefHat size={14} color={role === "kitchen" ? "#f97316" : "#aaa"} />

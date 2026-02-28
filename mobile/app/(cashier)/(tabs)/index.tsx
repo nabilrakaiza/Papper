@@ -9,9 +9,10 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { router } from "expo-router";
-import { Printer, Check, X, RefreshCw } from "lucide-react-native";
+import { Printer, Check, X, RefreshCw, ChefHat } from "lucide-react-native";
 import { useOrders } from "../../../context/OrderContext";
-import { usePrinter } from "../../../context/PrinterContext";
+import { useAuth } from "../../../context/AuthContext";
+import { usePrinter, PrinterRole } from "../../../context/PrinterContext";
 import { Order } from "../../../types/order";
 import ConfirmDialog from "../../../components/ConfirmDialog";
 import PrinterSelector from "../../../components/PrinterSelector";
@@ -48,14 +49,8 @@ function OrderCard({ order, onCancelPress, onPrintPress }: OrderCardProps) {
       }`}
     >
       <View className="flex-row items-center justify-between">
-        <View
-          className={`rounded-xl px-3 py-1.5 ${
-            isPaid ? "bg-white/20" : "bg-white/80"
-          }`}
-        >
-          <Text
-            className={`text-sm font-bold ${isPaid ? "text-white" : "text-gray-800"}`}
-          >
+        <View className={`rounded-xl px-3 py-1.5 ${isPaid ? "bg-white/20" : "bg-white/80"}`}>
+          <Text className={`text-sm font-bold ${isPaid ? "text-white" : "text-gray-800"}`}>
             Order : {order.customerName}
           </Text>
         </View>
@@ -64,12 +59,9 @@ function OrderCard({ order, onCancelPress, onPrintPress }: OrderCardProps) {
           <TouchableOpacity onPress={() => onPrintPress(order)}>
             <Printer size={20} color={isPaid ? "white" : "#555"} />
           </TouchableOpacity>
-
           {!isPaid && (
             <>
-              <TouchableOpacity
-                onPress={() => router.push(`/(cashier)/payment/${order.id}`)}
-              >
+              <TouchableOpacity onPress={() => router.push(`/(cashier)/payment/${order.id}`)}>
                 <Check size={20} color="#22c55e" />
               </TouchableOpacity>
               <TouchableOpacity onPress={() => onCancelPress(order.id)}>
@@ -81,25 +73,17 @@ function OrderCard({ order, onCancelPress, onPrintPress }: OrderCardProps) {
       </View>
 
       <View className="flex-row justify-between mt-2 px-1">
-        <Text
-          className={`text-xs font-bold ${isPaid ? "text-white/70" : "text-gray-400"}`}
-        >
+        <Text className={`text-xs font-bold ${isPaid ? "text-white/70" : "text-gray-400"}`}>
           Seat {order.seat}
         </Text>
-        <Text
-          className={`text-xs font-bold ${isPaid ? "text-white/70" : "text-gray-400"}`}
-        >
+        <Text className={`text-xs font-bold ${isPaid ? "text-white/70" : "text-gray-400"}`}>
           {formatRupiah(orderTotal(order))}
         </Text>
       </View>
 
       {order.note && (
         <View className="mt-1.5 px-1">
-          <Text
-            className={`text-xs font-bold italic ${
-              isPaid ? "text-white/60" : "text-gray-400"
-            }`}
-          >
+          <Text className={`text-xs font-bold italic ${isPaid ? "text-white/60" : "text-gray-400"}`}>
             📝 {order.note}
           </Text>
         </View>
@@ -110,11 +94,12 @@ function OrderCard({ order, onCancelPress, onPrintPress }: OrderCardProps) {
 
 export default function CashierHomeScreen() {
   const { orders, loading, error, updateOrder, refetch } = useOrders();
-  const { connectedPrinter, setConnectedPrinter } = usePrinter();
+  const { cashierPrinter, kitchenPrinter, setPrinter } = usePrinter();
 
   const [cancelTargetId, setCancelTargetId] = useState<number | null>(null);
   const [cancelError, setCancelError] = useState<string | null>(null);
   const [printerSelectorVisible, setPrinterSelectorVisible] = useState(false);
+  const [printerSelectorRole, setPrinterSelectorRole] = useState<PrinterRole>("cashier");
   const [pendingPrintOrder, setPendingPrintOrder] = useState<Order | null>(null);
   const [printing, setPrinting] = useState(false);
   const [printError, setPrintError] = useState<string | null>(null);
@@ -132,14 +117,14 @@ export default function CashierHomeScreen() {
   const handlePrintPress = async (order: Order) => {
     setPrintError(null);
 
-    // No printer connected — open selector first
-    if (!connectedPrinter) {
+    // Need at least one printer connected
+    if (!cashierPrinter && !kitchenPrinter) {
       setPendingPrintOrder(order);
+      setPrinterSelectorRole("cashier");
       setPrinterSelectorVisible(true);
       return;
     }
 
-    // Printer connected — print directly
     await doPrint(order);
   };
 
@@ -147,21 +132,23 @@ export default function CashierHomeScreen() {
     setPrinting(true);
     setPrintError(null);
 
-    const { error } = await printReceipt(order);
+    const { error } = await printReceipt(order, cashierPrinter, kitchenPrinter);
 
-    if (error) {
-      setPrintError("Failed to print. Make sure printer is on and connected.");
-    }
-
+    if (error) setPrintError("Failed to print. Make sure printer is on and connected.");
     setPrinting(false);
   };
 
-  const handlePrinterConnected = async (device: { name: string; address: string }) => {
-    setConnectedPrinter(device);
+  const handlePrinterConnected = async (role: PrinterRole, device: { name: string; address: string }) => {
+    setPrinter(role, device);
 
-    // Print the pending order if there was one
     if (pendingPrintOrder) {
-      await doPrint(pendingPrintOrder);
+      const updatedCashier = role === "cashier" ? device : cashierPrinter;
+      const updatedKitchen = role === "kitchen" ? device : kitchenPrinter;
+
+      setPrinting(true);
+      const { error } = await printReceipt(pendingPrintOrder, updatedCashier, updatedKitchen);
+      if (error) setPrintError("Failed to print. Make sure printer is on and connected.");
+      setPrinting(false);
       setPendingPrintOrder(null);
     }
   };
@@ -174,21 +161,30 @@ export default function CashierHomeScreen() {
           <Text className="text-blue-500 text-xl font-black">✛</Text>
           <Text className="text-2xl font-black text-gray-900">Orders</Text>
         </View>
-        <View className="flex-row items-center gap-2">
-          {/* Printer status indicator */}
+
+        {/* Printer status indicators */}
+        <View className="flex-row gap-2">
           <TouchableOpacity
-            onPress={() => setPrinterSelectorVisible(true)}
-            className={`flex-row items-center gap-1.5 px-3 py-1.5 rounded-xl ${
-              connectedPrinter ? "bg-green-100" : "bg-gray-100"
+            onPress={() => { setPrinterSelectorRole("cashier"); setPrinterSelectorVisible(true); }}
+            className={`flex-row items-center gap-1.5 px-2.5 py-1.5 rounded-xl ${
+              cashierPrinter ? "bg-blue-50" : "bg-gray-100"
             }`}
           >
-            <Printer size={14} color={connectedPrinter ? "#22c55e" : "#aaa"} />
-            <Text
-              className={`text-xs font-extrabold ${
-                connectedPrinter ? "text-green-600" : "text-gray-400"
-              }`}
-            >
-              {connectedPrinter ? connectedPrinter.name : "No Printer"}
+            <Printer size={13} color={cashierPrinter ? "#3a7bd5" : "#aaa"} />
+            <Text className={`text-xs font-extrabold ${cashierPrinter ? "text-blue-500" : "text-gray-400"}`}>
+              {cashierPrinter ? cashierPrinter.name : "Cashier"}
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            onPress={() => { setPrinterSelectorRole("kitchen"); setPrinterSelectorVisible(true); }}
+            className={`flex-row items-center gap-1.5 px-2.5 py-1.5 rounded-xl ${
+              kitchenPrinter ? "bg-orange-50" : "bg-gray-100"
+            }`}
+          >
+            <ChefHat size={13} color={kitchenPrinter ? "#f97316" : "#aaa"} />
+            <Text className={`text-xs font-extrabold ${kitchenPrinter ? "text-orange-500" : "text-gray-400"}`}>
+              {kitchenPrinter ? kitchenPrinter.name : "Kitchen"}
             </Text>
           </TouchableOpacity>
         </View>
@@ -200,13 +196,7 @@ export default function CashierHomeScreen() {
           <Text className="text-xs font-bold text-red-500 flex-1">
             {error || cancelError || printError}
           </Text>
-          <TouchableOpacity
-            onPress={() => {
-              refetch();
-              setCancelError(null);
-              setPrintError(null);
-            }}
-          >
+          <TouchableOpacity onPress={() => { refetch(); setCancelError(null); setPrintError(null); }}>
             <RefreshCw size={16} color="#ef4444" />
           </TouchableOpacity>
         </View>
@@ -237,20 +227,10 @@ export default function CashierHomeScreen() {
             </View>
           )}
           {unpaid.map((o) => (
-            <OrderCard
-              key={o.id}
-              order={o}
-              onCancelPress={setCancelTargetId}
-              onPrintPress={handlePrintPress}
-            />
+            <OrderCard key={o.id} order={o} onCancelPress={setCancelTargetId} onPrintPress={handlePrintPress} />
           ))}
           {paid.map((o) => (
-            <OrderCard
-              key={o.id}
-              order={o}
-              onCancelPress={setCancelTargetId}
-              onPrintPress={handlePrintPress}
-            />
+            <OrderCard key={o.id} order={o} onCancelPress={setCancelTargetId} onPrintPress={handlePrintPress} />
           ))}
         </ScrollView>
       )}
@@ -282,10 +262,8 @@ export default function CashierHomeScreen() {
       {/* Printer selector */}
       <PrinterSelector
         visible={printerSelectorVisible}
-        onClose={() => {
-          setPrinterSelectorVisible(false);
-          setPendingPrintOrder(null);
-        }}
+        initialRole={printerSelectorRole}
+        onClose={() => { setPrinterSelectorVisible(false); setPendingPrintOrder(null); }}
         onConnected={handlePrinterConnected}
       />
     </SafeAreaView>
