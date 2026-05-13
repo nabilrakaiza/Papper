@@ -178,6 +178,17 @@ export function OrderProvider({ children }: { children: ReactNode }) {
       return { error: "Failed to update order. Please try again." };
     }
 
+    if (updated.status === "cancelled") {
+      const { error: cancelItemsError } = await supabase
+        .from("order_items")
+        .update({ is_cancelled: true })
+        .eq("order_id", id);
+
+      if (cancelItemsError) {
+        return { error: "Failed to cancel order items. Please try again." };
+      }
+    }
+
     if (updated.items) {
       await supabase.from("order_items").delete().eq("order_id", id);
       

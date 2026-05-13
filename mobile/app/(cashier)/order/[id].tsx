@@ -14,6 +14,7 @@ import { ChevronLeft, ChevronRight, Plus, Minus } from "lucide-react-native";
 import { useOrders } from "../../../context/OrderContext";
 import { CATEGORIES } from "../../../data/menu";
 import { MenuCategory, OrderItem } from "../../../types/order";
+import ConfirmDialog from "@/components/ConfirmDialog";
 
 function formatRupiah(amount: number): string {
   return "Rp " + Math.round(amount).toLocaleString("id-ID");
@@ -27,6 +28,26 @@ export default function EditOrderScreen() {
   const [categoryIndex, setCategoryIndex] = useState(0);
   const [summaryOpen, setSummaryOpen] = useState(false);
   const [saving, setSaving] = useState(false);
+
+  // Handling cancel
+  const [showCancelDialog, setShowCancelDialog] = useState(false);
+  const [cancelError, setCancelError] = useState<string | null>(null);
+
+  const handleCancel = async () => {
+    if (!order) return;
+    setSaving(true); // Reuse your saving state to prevent multi-taps
+    
+    const { error } = await updateOrder(order.id, { status: "cancelled" });
+    
+    setSaving(false);
+    if (error) {
+      setCancelError(error);
+      setShowCancelDialog(false);
+    } else {
+      setShowCancelDialog(false);
+      router.back(); // Kick them back to the index screen after canceling
+    }
+  };
 
   // Initialize quantities AND existing notes from the current order
   const [quantities, setQuantities] = useState<Record<number, number>>(
@@ -89,7 +110,7 @@ export default function EditOrderScreen() {
     const currentNote = notes[m.id] || "";
 
     if (finalQty === oldTotalQty) {
-      // CASE A: No quantity change. Just keep existing entries and update notes.
+      // CASE A: No quantity change. Just keep existing entries.
       existingEntries.forEach((entry) => {
         selectedItems.push({ ...entry, note: currentNote });
       });
@@ -98,7 +119,7 @@ export default function EditOrderScreen() {
       // CASE B: Quantity increased! (The Delta)
       // First, keep the old entries exactly as they were
       existingEntries.forEach((entry) => {
-        selectedItems.push({ ...entry, note: currentNote });
+        selectedItems.push({ ...entry, note: entry.note });
       });
 
       // Then, add the difference as a brand new batch!
@@ -128,11 +149,11 @@ export default function EditOrderScreen() {
 
         if (entry.quantity <= remainingToKeep) {
           // Keep this whole batch
-          selectedItems.push({ ...entry, note: currentNote });
+          selectedItems.push({ ...entry, note: entry.note });
           remainingToKeep -= entry.quantity;
         } else {
           // Keep a partial amount of this batch
-          selectedItems.push({ ...entry, quantity: remainingToKeep, note: currentNote });
+          selectedItems.push({ ...entry, quantity: remainingToKeep, note: entry.note });
           remainingToKeep = 0;
         }
       });
@@ -167,10 +188,26 @@ export default function EditOrderScreen() {
                 <Text className="text-sm font-bold text-gray-700">Menu Order</Text>
               </View>
             </TouchableOpacity>
-            <Text className="text-xs font-bold text-gray-400">
-              {order.customerName} · {order.seat}
-            </Text>
+            <View className="flex-row items-center gap-3">
+              <Text className="text-xs font-bold text-gray-400">
+                {order.customerName} · {order.seat}
+              </Text>
+              <TouchableOpacity 
+                onPress={() => setShowCancelDialog(true)} 
+                className="bg-red-100 rounded-xl px-3 py-1.5"
+              >
+                <Text className="text-sm font-extrabold text-red-600">X</Text>
+              </TouchableOpacity>
+            </View>
           </View>
+
+          {cancelError && (
+            <View className="mx-4 mt-3 bg-red-50 border border-red-100 rounded-2xl px-4 py-3">
+              <Text className="text-xs font-bold text-red-500">
+                {cancelError}
+              </Text>
+            </View>
+          )}
 
           {/* Category selector */}
           <View className="flex-row items-center gap-2">
@@ -344,6 +381,18 @@ export default function EditOrderScreen() {
             </View>
           </View>
         )}
+
+        <ConfirmDialog
+          visible={showCancelDialog}
+          title="Cancel Order"
+          message="Are you sure you want to cancel this order? This cannot be undone."
+          confirmLabel="Yes, Cancel"
+          cancelLabel="Keep"
+          destructive
+          onConfirm={handleCancel}
+          onCancel={() => setShowCancelDialog(false)}
+        />
+
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
