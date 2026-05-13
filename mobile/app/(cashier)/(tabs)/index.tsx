@@ -4,18 +4,17 @@ import {
   Text,
   ScrollView,
   TouchableOpacity,
-  // SafeAreaView,
   ActivityIndicator,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { router } from "expo-router";
-import { Printer, Check, X, RefreshCw, ChefHat } from "lucide-react-native";
+import { Printer, Check, RefreshCw, ChefHat, Receipt, Utensils, Pencil} from "lucide-react-native";
 import { useOrders } from "../../../context/OrderContext";
-import { useAuth } from "../../../context/AuthContext";
 import { usePrinter, PrinterRole } from "../../../context/PrinterContext";
 import { Order } from "../../../types/order";
-import ConfirmDialog from "../../../components/ConfirmDialog";
 import PrinterSelector from "../../../components/PrinterSelector";
+// Note: You might need to update your printReceipt function in lib/printer 
+// to handle printing to just one specific printer based on the action.
 import { printReceipt } from "../../../lib/printer";
 
 function formatRupiah(amount: number): string {
@@ -29,19 +28,15 @@ function orderTotal(order: Order): number {
 
 type OrderCardProps = {
   order: Order;
-  onCancelPress: (id: number) => void;
-  onPrintPress: (order: Order) => void;
+  onPrintKitchenPress: (order: Order) => void;
+  onPrintBillPress: (order: Order) => void;
 };
 
-function OrderCard({ order, onCancelPress, onPrintPress }: OrderCardProps) {
+function OrderCard({ order, onPrintKitchenPress, onPrintBillPress }: OrderCardProps) {
   const isPaid = order.status === "paid";
 
   return (
-    <TouchableOpacity
-      onPress={() => {
-        if (!isPaid) router.push(`/(cashier)/order/${order.id}`);
-      }}
-      activeOpacity={isPaid ? 1 : 0.7}
+    <View
       className={`rounded-2xl px-4 py-4 mb-3 ${
         isPaid
           ? "bg-green-500 shadow shadow-green-600/30"
@@ -55,17 +50,25 @@ function OrderCard({ order, onCancelPress, onPrintPress }: OrderCardProps) {
           </Text>
         </View>
 
-        <View className="flex-row items-center gap-3">
-          <TouchableOpacity onPress={() => onPrintPress(order)}>
-            <Printer size={20} color={isPaid ? "white" : "#555"} />
+        <View className="flex-row items-center gap-5">
+          {/* Kitchen Print Action */}
+          <TouchableOpacity onPress={() => onPrintKitchenPress(order)}>
+            <Utensils size={20} color="#FF6B6B" /> 
           </TouchableOpacity>
+
+          {/* Bill Print Action */}
+          <TouchableOpacity onPress={() => onPrintBillPress(order)}>
+            <Receipt size={20} color={isPaid ? "green" : "#555"} />
+          </TouchableOpacity>
+          
           {!isPaid && (
             <>
+              <TouchableOpacity onPress={() => router.push(`/(cashier)/order/${order.id}`)}>
+                <Pencil size={18} color="#eab308" />
+              </TouchableOpacity>
+
               <TouchableOpacity onPress={() => router.push(`/(cashier)/payment/${order.id}`)}>
                 <Check size={20} color="#22c55e" />
-              </TouchableOpacity>
-              <TouchableOpacity onPress={() => onCancelPress(order.id)}>
-                <X size={20} color="#ef4444" />
               </TouchableOpacity>
             </>
           )}
@@ -74,82 +77,93 @@ function OrderCard({ order, onCancelPress, onPrintPress }: OrderCardProps) {
 
       <View className="flex-row justify-between mt-2 px-1">
         <Text className={`text-xs font-bold ${isPaid ? "text-white/70" : "text-gray-400"}`}>
-          Seat {order.seat}
+          Seat: {order.seat}
         </Text>
         <Text className={`text-xs font-bold ${isPaid ? "text-white/70" : "text-gray-400"}`}>
           {formatRupiah(orderTotal(order))}
         </Text>
       </View>
-
-      {order.note && (
-        <View className="mt-1.5 px-1">
-          <Text className={`text-xs font-bold italic ${isPaid ? "text-white/60" : "text-gray-400"}`}>
-            📝 {order.note}
-          </Text>
-        </View>
-      )}
-    </TouchableOpacity>
+    </View>
   );
 }
 
 export default function CashierHomeScreen() {
-  const { orders, loading, error, updateOrder, refetch } = useOrders();
+  const { orders, loading, error, refetch } = useOrders();
   const { cashierPrinter, kitchenPrinter, setPrinter } = usePrinter();
 
-  const [cancelTargetId, setCancelTargetId] = useState<number | null>(null);
-  const [cancelError, setCancelError] = useState<string | null>(null);
   const [printerSelectorVisible, setPrinterSelectorVisible] = useState(false);
   const [printerSelectorRole, setPrinterSelectorRole] = useState<PrinterRole>("cashier");
+  
+  // Keep track of which order AND which type of print is pending
   const [pendingPrintOrder, setPendingPrintOrder] = useState<Order | null>(null);
+  const [pendingPrintType, setPendingPrintType] = useState<"kitchen" | "bill" | null>(null);
+  
   const [printing, setPrinting] = useState(false);
   const [printError, setPrintError] = useState<string | null>(null);
 
   const unpaid = orders.filter((o) => o.status === "unpaid");
   const paid = orders.filter((o) => o.status === "paid");
 
-  const handleCancel = async () => {
-    if (!cancelTargetId) return;
-    const { error } = await updateOrder(cancelTargetId, { status: "cancelled" });
-    if (error) setCancelError(error);
-    setCancelTargetId(null);
-  };
-
-  const handlePrintPress = async (order: Order) => {
+  // Unified handler to route to the correct printer logic
+  const handlePrint = async (order: Order, type: "kitchen" | "bill") => {
     setPrintError(null);
 
-    // Need at least one printer connected
-    if (!cashierPrinter && !kitchenPrinter) {
+    if (type === "kitchen" && !kitchenPrinter) {
       setPendingPrintOrder(order);
+      setPendingPrintType("kitchen");
+      setPrinterSelectorRole("kitchen");
+      setPrinterSelectorVisible(true);
+      return;
+    }
+
+    if (type === "bill" && !cashierPrinter) {
+      setPendingPrintOrder(order);
+      setPendingPrintType("bill");
       setPrinterSelectorRole("cashier");
       setPrinterSelectorVisible(true);
       return;
     }
 
-    await doPrint(order);
+    await doPrint(order, type);
   };
 
-  const doPrint = async (order: Order) => {
+  const doPrint = async (order: Order, type: "kitchen" | "bill", specificPrinter?: { name: string; address: string }) => {
     setPrinting(true);
     setPrintError(null);
 
-    const { error } = await printReceipt(order, cashierPrinter, kitchenPrinter);
+    let printErr = null;
 
-    if (error) setPrintError("Failed to print. Make sure printer is on and connected.");
+    // TODO: You may need to adapt your `printReceipt` function inside lib/printer to accept a "print type" 
+    // or create two separate functions (e.g., printKitchenTicket() and printCustomerBill()).
+    // For now, this passes the specific printer targeted by the button press.
+    if (type === "kitchen") {
+      const targetPrinter = specificPrinter || kitchenPrinter;
+      const { error } = await printReceipt(order, null, targetPrinter); // Passing null to cashier to prevent dual-printing
+      printErr = error;
+    } else {
+      const targetPrinter = specificPrinter || cashierPrinter;
+      const { error } = await printReceipt(order, targetPrinter, null); // Passing null to kitchen to prevent dual-printing
+      printErr = error;
+    }
+
+    if (printErr) setPrintError(`Failed to print ${type}. Make sure printer is on and connected.`);
     setPrinting(false);
   };
 
   const handlePrinterConnected = async (role: PrinterRole, device: { name: string; address: string }) => {
     setPrinter(role, device);
 
-    if (pendingPrintOrder) {
-      const updatedCashier = role === "cashier" ? device : cashierPrinter;
-      const updatedKitchen = role === "kitchen" ? device : kitchenPrinter;
-
-      setPrinting(true);
-      const { error } = await printReceipt(pendingPrintOrder, updatedCashier, updatedKitchen);
-      if (error) setPrintError("Failed to print. Make sure printer is on and connected.");
-      setPrinting(false);
+    // If there is a pending print, and the newly connected printer matches what we were waiting for
+    if (pendingPrintOrder && pendingPrintType) {
+      if (
+        (pendingPrintType === "kitchen" && role === "kitchen") ||
+        (pendingPrintType === "bill" && role === "cashier")
+      ) {
+        await doPrint(pendingPrintOrder, pendingPrintType, device);
+      }
+      
       setPendingPrintOrder(null);
+      setPendingPrintType(null);
     }
   };
 
@@ -191,12 +205,12 @@ export default function CashierHomeScreen() {
       </View>
 
       {/* Error banners */}
-      {(error || cancelError || printError) && (
+      {(error || printError) && (
         <View className="mx-4 mb-2 bg-red-50 border border-red-100 rounded-2xl px-4 py-3 flex-row items-center justify-between">
           <Text className="text-xs font-bold text-red-500 flex-1">
-            {error || cancelError || printError}
+            {error || printError}
           </Text>
-          <TouchableOpacity onPress={() => { refetch(); setCancelError(null); setPrintError(null); }}>
+          <TouchableOpacity onPress={() => { refetch(); setPrintError(null); }}>
             <RefreshCw size={16} color="#ef4444" />
           </TouchableOpacity>
         </View>
@@ -227,10 +241,20 @@ export default function CashierHomeScreen() {
             </View>
           )}
           {unpaid.map((o) => (
-            <OrderCard key={o.id} order={o} onCancelPress={setCancelTargetId} onPrintPress={handlePrintPress} />
+            <OrderCard 
+              key={o.id} 
+              order={o} 
+              onPrintKitchenPress={(order) => handlePrint(order, "kitchen")}
+              onPrintBillPress={(order) => handlePrint(order, "bill")}
+            />
           ))}
           {paid.map((o) => (
-            <OrderCard key={o.id} order={o} onCancelPress={setCancelTargetId} onPrintPress={handlePrintPress} />
+            <OrderCard 
+              key={o.id} 
+              order={o} 
+              onPrintKitchenPress={(order) => handlePrint(order, "kitchen")}
+              onPrintBillPress={(order) => handlePrint(order, "bill")}
+            />
           ))}
         </ScrollView>
       )}
@@ -247,23 +271,15 @@ export default function CashierHomeScreen() {
         </View>
       )}
 
-      {/* Cancel confirm dialog */}
-      <ConfirmDialog
-        visible={cancelTargetId !== null}
-        title="Cancel Order"
-        message="Are you sure you want to cancel this order? This cannot be undone."
-        confirmLabel="Yes, Cancel"
-        cancelLabel="Keep"
-        destructive
-        onConfirm={handleCancel}
-        onCancel={() => setCancelTargetId(null)}
-      />
-
       {/* Printer selector */}
       <PrinterSelector
         visible={printerSelectorVisible}
         initialRole={printerSelectorRole}
-        onClose={() => { setPrinterSelectorVisible(false); setPendingPrintOrder(null); }}
+        onClose={() => { 
+          setPrinterSelectorVisible(false); 
+          setPendingPrintOrder(null); 
+          setPendingPrintType(null);
+        }}
         onConnected={handlePrinterConnected}
       />
     </SafeAreaView>

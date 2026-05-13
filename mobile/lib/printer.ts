@@ -135,10 +135,10 @@ async function printCustomerReceipt(order: Order): Promise<void> {
     {}
   );
 
-  if (order.note) {
-    await BluetoothEscposPrinter.printText('--------------------------------\n', {});
-    await BluetoothEscposPrinter.printText(`Note: ${order.note}\n`, {});
-  }
+  // if (order.note) {
+  //   await BluetoothEscposPrinter.printText('--------------------------------\n', {});
+  //   await BluetoothEscposPrinter.printText(`Note: ${order.note}\n`, {});
+  // }
 
   await BluetoothEscposPrinter.printerAlign(BluetoothEscposPrinter.ALIGN.CENTER);
   await BluetoothEscposPrinter.printText('--------------------------------\n', {});
@@ -164,39 +164,55 @@ async function printKitchenTicket(order: Order): Promise<void> {
     await BluetoothEscposPrinter.printText(`${item.quantity}x ${item.name}\n`, {
       fonttype: 1, widthtimes: 1, heigthtimes: 1,
     });
-  }
 
-  if (order.note) {
-    await BluetoothEscposPrinter.printText('--------------------------------\n', {});
-    await BluetoothEscposPrinter.printText(`NOTE: ${order.note}\n`, {
-      fonttype: 1, widthtimes: 1, heigthtimes: 1,
-    });
+    if (item.note) {
+      await BluetoothEscposPrinter.printText(`NOTE: ${item.note}\n`, {
+        fonttype: 1, widthtimes: 1, heigthtimes: 1,
+      })
+    }
   }
-
   await BluetoothEscposPrinter.printText('\n\n\n', {});
 }
 
 // Print to both printers sequentially
+// Print to selected printers safely
 export async function printReceipt(
   order: Order,
   cashierPrinter: { address: string } | null,
   kitchenPrinter: { address: string } | null,
 ): Promise<{ error: string | null }> {
-  try {
-    // Print customer receipt on cashier printer
-    if (cashierPrinter) {
+  let errors: string[] = [];
+
+  // 1. Print customer receipt on cashier printer
+  if (cashierPrinter) {
+    try {
       await BluetoothManager.connect(cashierPrinter.address);
       await printCustomerReceipt(order);
+    } catch (e: any) {
+      errors.push(`Cashier Printer Error: ${e.message}`);
     }
+  }
 
-    // Print kitchen ticket on kitchen printer
-    if (kitchenPrinter) {
+  // 2. Print kitchen ticket on kitchen printer
+  if (kitchenPrinter) {
+    try {
+      // Adding a tiny delay when switching between bluetooth devices
+      // can sometimes prevent connection drops in react-native-bluetooth-escpos-printer
+      if (cashierPrinter) {
+        await new Promise(resolve => setTimeout(resolve, 500)); 
+      }
+      
       await BluetoothManager.connect(kitchenPrinter.address);
       await printKitchenTicket(order);
+    } catch (e: any) {
+      errors.push(`Kitchen Printer Error: ${e.message}`);
     }
-
-    return { error: null };
-  } catch (e: any) {
-    return { error: e.message };
   }
+
+  // 3. Return combined errors if any failed
+  if (errors.length > 0) {
+    return { error: errors.join(' | ') };
+  }
+
+  return { error: null };
 }

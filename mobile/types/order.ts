@@ -6,6 +6,10 @@ export type OrderItem = {
   price: number;
   quantity: number;
   category: MenuCategory;
+  isSent: boolean;
+  isCancelled: boolean;
+  printBatch: number;
+  note?: string;
 };
 
 export type Order = {
@@ -16,7 +20,6 @@ export type Order = {
   discount: number;
   status: OrderStatus;
   createdAt: Date;
-  note: string | null;
 };
 
 export type MenuCategory = "Ayam" | "Nasi" | "Sapi" | "Udang"| 

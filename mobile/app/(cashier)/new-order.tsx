@@ -4,7 +4,6 @@ import {
   Text,
   ScrollView,
   TouchableOpacity,
-//   SafeAreaView,
   TextInput,
   KeyboardAvoidingView,
   Platform,
@@ -27,12 +26,15 @@ export default function NewOrderScreen() {
   const [customerName, setCustomerName] = useState("");
   const [seat, setSeat] = useState("");
   const [categoryIndex, setCategoryIndex] = useState(0);
+  
+  // State for quantities and notes tied to item IDs
   const [quantities, setQuantities] = useState<Record<number, number>>({});
+  const [notes, setNotes] = useState<Record<number, string>>({}); 
+  
   const [summaryOpen, setSummaryOpen] = useState(false);
   const [step, setStep] = useState<"info" | "menu">("info");
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
-  const [note, setNote] = useState("");
 
   const currentCategory: MenuCategory = CATEGORIES[categoryIndex];
   const categoryItems = menu.filter(
@@ -47,6 +49,10 @@ export default function NewOrderScreen() {
       price: m.price,
       quantity: quantities[m.id],
       category: m.category,
+      note: notes[m.id] || "", // Attach the note to the specific item
+      isSent: false,
+      isCancelled: false,
+      printBatch: 1,
     }));
 
   const totalItems = selectedItems.reduce((sum, i) => sum + i.quantity, 0);
@@ -60,8 +66,22 @@ export default function NewOrderScreen() {
     setQuantities((prev) => {
       const current = prev[id] ?? 0;
       if (current <= 0) return prev;
+      
+      // Optional cleanup: if quantity drops to 0, clear the note
+      if (current - 1 === 0) {
+        setNotes((prevNotes) => {
+          const newNotes = { ...prevNotes };
+          delete newNotes[id];
+          return newNotes;
+        });
+      }
+      
       return { ...prev, [id]: current - 1 };
     });
+  }, []);
+
+  const handleNoteChange = useCallback((id: number, text: string) => {
+    setNotes((prev) => ({ ...prev, [id]: text }));
   }, []);
 
   const handleConfirm = async () => {
@@ -69,22 +89,28 @@ export default function NewOrderScreen() {
     setSaving(true);
     setError("");
 
-    const { error } = await addOrder({
-      customerName,
-      seat,
-      items: selectedItems,
-      discount: 0,
-      status: "unpaid",
-      note: note.trim() || null,
-    });
+    try {
+      const { error } = await addOrder({
+        customerName,
+        seat,
+        items: selectedItems,
+        discount: 0,
+        status: "unpaid",
+      });
 
-    if (error) {
-      setError(error);
+      if (error) {
+        setError(error);
+        setSaving(false);
+        return;
+      }
+
       setSaving(false);
-      return;
+      router.back();
+    } catch (err: any) {
+      console.error("Unhandled crash during order:", err);
+      setError(err.message || "An unexpected error occurred.");
+      setSaving(false); // Stops the infinite loading!
     }
-
-    router.back();
   };
 
   // Step 1: customer info
@@ -155,181 +181,202 @@ export default function NewOrderScreen() {
   // Step 2: menu selection
   return (
     <SafeAreaView className="flex-1 bg-gray-100">
-      <View className="bg-yellow-100 px-4 pt-4 pb-3 shadow-sm">
-        <View className="flex-row items-center justify-between mb-3">
-          <TouchableOpacity onPress={() => setStep("info")}>
-            <View className="border-2 border-gray-200 rounded-xl px-3 py-1.5">
-              <Text className="text-sm font-bold text-gray-700">Menu Order</Text>
-            </View>
-          </TouchableOpacity>
-          <Text className="text-xs font-bold text-gray-400">
-            {customerName} · {seat}
-          </Text>
-        </View>
+      <KeyboardAvoidingView 
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+        className="flex-1"
+      >
+        <View className="bg-yellow-100 px-4 pt-4 pb-3">
+          <View className="flex-row items-center justify-between mb-3">
+            <TouchableOpacity onPress={() => setStep("info")}>
+              <View className="border-2 border-gray-200 rounded-xl px-3 py-1.5">
+                <Text className="text-sm font-bold text-gray-700">Menu Order</Text>
+              </View>
+            </TouchableOpacity>
+            <Text className="text-xs font-bold text-gray-400">
+              {customerName} · {seat}
+            </Text>
+          </View>
 
-        <View className="flex-row items-center gap-2">
-          <TouchableOpacity
-            onPress={() => setCategoryIndex((i) => Math.max(0, i - 1))}
-            disabled={categoryIndex === 0}
-          >
-            <ChevronLeft size={22} color={categoryIndex === 0 ? "#ccc" : "#333"} />
-          </TouchableOpacity>
+          <View className="flex-row items-center gap-2">
+            <TouchableOpacity
+              onPress={() => setCategoryIndex((i) => Math.max(0, i - 1))}
+              disabled={categoryIndex === 0}
+            >
+              <ChevronLeft size={22} color={categoryIndex === 0 ? "#ccc" : "#333"} />
+            </TouchableOpacity>
 
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} className="flex-1">
-            <View className="flex-row gap-2">
-              {CATEGORIES.map((cat, idx) => (
-                <TouchableOpacity
-                  key={cat}
-                  onPress={() => setCategoryIndex(idx)}
-                  className={`border-2 rounded-xl px-3 py-1.5 ${
-                    idx === categoryIndex
-                      ? "border-green-500 bg-green-50"
-                      : "border-gray-200 bg-white"
-                  }`}
-                >
-                  <Text
-                    className={`text-sm font-bold ${
-                      idx === categoryIndex ? "text-green-600" : "text-gray-600"
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} className="flex-1">
+              <View className="flex-row gap-2">
+                {CATEGORIES.map((cat, idx) => (
+                  <TouchableOpacity
+                    key={cat}
+                    onPress={() => setCategoryIndex(idx)}
+                    className={`border-2 rounded-xl px-3 py-1.5 ${
+                      idx === categoryIndex
+                        ? "border-green-500 bg-green-50"
+                        : "border-gray-200 bg-white"
                     }`}
                   >
-                    {cat}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-          </ScrollView>
+                    <Text
+                      className={`text-sm font-bold ${
+                        idx === categoryIndex ? "text-green-600" : "text-gray-600"
+                      }`}
+                    >
+                      {cat}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </ScrollView>
 
-          <TouchableOpacity
-            onPress={() =>
-              setCategoryIndex((i) => Math.min(CATEGORIES.length - 1, i + 1))
-            }
-            disabled={categoryIndex === CATEGORIES.length - 1}
-          >
-            <ChevronRight
-              size={22}
-              color={categoryIndex === CATEGORIES.length - 1 ? "#ccc" : "#333"}
-            />
-          </TouchableOpacity>
-        </View>
-      </View>
-
-      <ScrollView
-        contentContainerStyle={{ padding: 16, paddingBottom: 160 }}
-        showsVerticalScrollIndicator={false}
-      >
-        {categoryItems.map((item) => {
-          const qty = quantities[item.id] ?? 0;
-          return (
-            <View
-              key={item.id}
-              className="bg-yellow-100 rounded-2xl px-4 py-4 mb-3 flex-row items-center justify-between shadow-sm"
+            <TouchableOpacity
+              onPress={() =>
+                setCategoryIndex((i) => Math.min(CATEGORIES.length - 1, i + 1))
+              }
+              disabled={categoryIndex === CATEGORIES.length - 1}
             >
-              <View className="flex-1">
-                <Text className="text-sm font-bold text-gray-900">{item.name}</Text>
-                <Text className="text-xs font-bold text-gray-400 mt-0.5">
-                  {formatRupiah(item.price)}
-                </Text>
-              </View>
-
-              <View className="flex-row items-center gap-3">
-                {qty > 0 && (
-                  <>
-                    <TouchableOpacity onPress={() => decrement(item.id)}>
-                      <Minus size={18} color="#555" />
-                    </TouchableOpacity>
-                    <Text className="text-sm font-extrabold text-gray-900 w-5 text-center">
-                      {qty}
-                    </Text>
-                  </>
-                )}
-                <TouchableOpacity onPress={() => increment(item.id)}>
-                  <Plus size={18} color="#555" />
-                </TouchableOpacity>
-              </View>
-            </View>
-          );
-        })}
-        <View className="mx-1 mt-2 mb-4">
-          <Text className="text-[10px] font-extrabold text-gray-400 uppercase tracking-widest mb-2 px-1">
-            Order Note (optional)
-          </Text>
-          <TextInput
-            className="bg-yellow-100 border-2 border-yellow-200 rounded-2xl px-4 py-3 font-bold text-sm text-gray-800"
-            placeholder="e.g. No spicy, extra rice, less sugar..."
-            value={note}
-            onChangeText={setNote}
-            placeholderTextColor="#bbb"
-            multiline
-            numberOfLines={3}
-            textAlignVertical="top"
-          />
+              <ChevronRight
+                size={22}
+                color={categoryIndex === CATEGORIES.length - 1 ? "#ccc" : "#333"}
+              />
+            </TouchableOpacity>
+          </View>
         </View>
-      </ScrollView>
 
-      {/* Error message */}
-      {!!error && (
-        <View className="mx-4 mb-2 bg-red-50 border border-red-100 rounded-2xl px-4 py-3">
-          <Text className="text-xs font-bold text-red-500 text-center">{error}</Text>
-        </View>
-      )}
-
-      {/* Bottom summary bar */}
-      {totalItems > 0 && (
-        <View className="absolute bottom-0 left-0 right-0">
-          <TouchableOpacity
-            onPress={() => setSummaryOpen((o) => !o)}
-            disabled={saving}
-            className="mx-4 mb-2 bg-green-400 rounded-3xl px-5 py-4 shadow shadow-green-600/30"
-          >
-            {summaryOpen && (
-              <View className="mb-3">
-                {selectedItems.map((item) => (
-                  <View key={item.menuId} className="flex-row justify-between mb-1">
-                    <Text className="text-sm font-bold text-white">
-                      {item.quantity}x {item.name}
-                    </Text>
-                    <Text className="text-sm font-bold text-white">
-                      {formatRupiah(item.price * item.quantity)}
+        <ScrollView
+          contentContainerStyle={{ padding: 16, paddingBottom: 160 }}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+        >
+          {categoryItems.map((item) => {
+            const qty = quantities[item.id] ?? 0;
+            return (
+              <View
+                key={item.id}
+                className="bg-yellow-100 rounded-2xl px-4 py-4 mb-3 shadow-sm"
+              >
+                {/* Top Row: Name, Price, Adjusters */}
+                <View className="flex-row items-center justify-between">
+                  <View className="flex-1">
+                    <Text className="text-sm font-bold text-gray-900">{item.name}</Text>
+                    <Text className="text-xs font-bold text-gray-400 mt-0.5">
+                      {formatRupiah(item.price)}
                     </Text>
                   </View>
-                ))}
-                <View className="h-px bg-white/30 my-2" />
-                <View className="flex-row justify-between">
-                  <Text className="text-sm font-extrabold text-white">Total</Text>
-                  <Text className="text-sm font-extrabold text-white">
-                    {formatRupiah(subtotal)}
-                  </Text>
+
+                  <View className="flex-row items-center gap-3">
+                    {qty > 0 && (
+                      <>
+                        <TouchableOpacity onPress={() => decrement(item.id)}>
+                          <Minus size={18} color="#555" />
+                        </TouchableOpacity>
+                        <Text className="text-sm font-extrabold text-gray-900 w-5 text-center">
+                          {qty}
+                        </Text>
+                      </>
+                    )}
+                    <TouchableOpacity onPress={() => increment(item.id)}>
+                      <Plus size={18} color="#555" />
+                    </TouchableOpacity>
+                  </View>
                 </View>
 
-                <TouchableOpacity
-                  onPress={handleConfirm}
-                  disabled={saving}
-                  className="mt-3 bg-white rounded-xl py-3 items-center"
-                >
-                  {saving ? (
-                    <ActivityIndicator size="small" color="#22c55e" />
-                  ) : (
-                    <Text className="text-sm font-extrabold text-green-600">
-                      Confirm Order
-                    </Text>
-                  )}
-                </TouchableOpacity>
+                {/* Bottom Row: Note Input (Appears only if qty > 0) */}
+                {qty > 0 && (
+                  <View className="mt-3 pt-3 border-t border-yellow-200/50">
+                    <TextInput
+                      className="w-full bg-white/70 rounded-xl px-3 py-2 text-xs font-bold text-gray-800"
+                      placeholder={`Notes for ${item.name} (optional)`}
+                      placeholderTextColor="#9ca3af"
+                      value={notes[item.id] || ""}
+                      onChangeText={(text) => handleNoteChange(item.id, text)}
+                    />
+                  </View>
+                )}
               </View>
-            )}
+            );
+          })}
+        </ScrollView>
 
-            <View className="flex-row items-center gap-2">
-              <View className="border-2 border-white/60 rounded-xl px-3 py-1">
-                <Text className="text-sm font-extrabold text-white">
-                  {totalItems} Items
+        {/* Error message */}
+        {!!error && (
+          <View className="mx-4 mb-2 bg-red-50 border border-red-100 rounded-2xl px-4 py-3">
+            <Text className="text-xs font-bold text-red-500 text-center">{error}</Text>
+          </View>
+        )}
+
+        {/* Bottom summary bar */}
+        {totalItems > 0 && (
+          <View className="absolute bottom-0 left-0 right-0">
+            <View className="mx-4 mb-2 bg-green-400 rounded-3xl px-5 py-4 shadow-sm">
+              
+              {/* The Expanded Summary */}
+              {summaryOpen && (
+                <View className="mb-3 max-h-60">
+                  <ScrollView showsVerticalScrollIndicator={false}>
+                    {selectedItems.map((item) => (
+                      <View key={item.menuId} className="mb-2">
+                        <View className="flex-row justify-between mb-0.5">
+                          <Text className="text-sm font-bold text-white flex-1 pr-2">
+                            {item.quantity}x {item.name}
+                          </Text>
+                          <Text className="text-sm font-bold text-white">
+                            {formatRupiah(item.price * item.quantity)}
+                          </Text>
+                        </View>
+                        {!!item.note && (
+                          <Text className="text-xs font-bold text-white/80 italic">
+                            └ Note: {item.note}
+                          </Text>
+                        )}
+                      </View>
+                    ))}
+                  </ScrollView>
+                  <View className="h-px bg-white/30 my-2" />
+                  <View className="flex-row justify-between">
+                    <Text className="text-sm font-extrabold text-white">Total</Text>
+                    <Text className="text-sm font-extrabold text-white">
+                      {formatRupiah(subtotal)}
+                    </Text>
+                  </View>
+
+                  {/* Confirm Button - Now it will actually click! */}
+                  <TouchableOpacity
+                    onPress={handleConfirm}
+                    disabled={saving}
+                    className="mt-3 bg-white rounded-xl py-3 items-center"
+                  >
+                    {saving ? (
+                      <ActivityIndicator size="small" color="#22c55e" />
+                    ) : (
+                      <Text className="text-sm font-extrabold text-green-600">
+                        Confirm Order
+                      </Text>
+                    )}
+                  </TouchableOpacity>
+                </View>
+              )}
+
+              {/* Toggle Button - Only this part controls the opening/closing now */}
+              <TouchableOpacity 
+                onPress={() => setSummaryOpen((o) => !o)}
+                disabled={saving}
+                className="flex-row items-center gap-2"
+              >
+                <View className="border-2 border-white/60 rounded-xl px-3 py-1">
+                  <Text className="text-sm font-extrabold text-white">
+                    {totalItems} Items
+                  </Text>
+                </View>
+                <Text className="text-white/70 text-xs font-bold">
+                  {summaryOpen ? "▼ tap to collapse" : "▲ tap to review"}
                 </Text>
-              </View>
-              <Text className="text-white/70 text-xs font-bold">
-                {summaryOpen ? "▼ tap to collapse" : "▲ tap to review"}
-              </Text>
+              </TouchableOpacity>
+
             </View>
-          </TouchableOpacity>
-        </View>
-      )}
+          </View>
+        )}
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }

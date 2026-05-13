@@ -69,13 +69,17 @@ export function OrderProvider({ children }: { children: ReactNode }) {
         discount: o.discount,
         status: o.status,
         createdAt: new Date(o.created_at),
-        note: o.note ?? null,
         items: o.order_items.map((i: any) => ({
             menuId: i.menu_id,
             name: i.name,
             price: i.price,
             quantity: i.quantity,
             category: i.category,
+            // Updated to map from DB snake_case to app camelCase
+            isSent: i.is_sent ?? false,
+            isCancelled: i.is_cancelled ?? false,
+            printBatch: i.print_batch ?? 1,
+            note: i.notes ?? null,
         })),
         }))
     );
@@ -111,7 +115,6 @@ export function OrderProvider({ children }: { children: ReactNode }) {
         seat: order.seat,
         discount: order.discount,
         status: order.status,
-        note: order.note ?? null,
         })
         .select()
         .single();
@@ -120,6 +123,7 @@ export function OrderProvider({ children }: { children: ReactNode }) {
         return { error: "Failed to create order. Please try again." };
     }
 
+    // Include new fields in the insert payload
     const { error: itemsError } = await supabase.from("order_items").insert(
         order.items.map((item) => ({
         order_id: newOrder.id,
@@ -127,6 +131,10 @@ export function OrderProvider({ children }: { children: ReactNode }) {
         name: item.name,
         price: item.price,
         quantity: item.quantity,
+        is_sent: item.isSent ?? false,
+        is_cancelled: item.isCancelled ?? false,
+        print_batch: item.printBatch ?? 1,
+        notes: item.note ?? null,
         }))
     );
 
@@ -163,7 +171,6 @@ export function OrderProvider({ children }: { children: ReactNode }) {
         ...(updated.seat && { seat: updated.seat }),
         ...(updated.discount !== undefined && { discount: updated.discount }),
         ...(updated.status && { status: updated.status }),
-        ...(updated.note !== undefined && { note: updated.note }),
       })
       .eq("id", id);
 
@@ -173,6 +180,8 @@ export function OrderProvider({ children }: { children: ReactNode }) {
 
     if (updated.items) {
       await supabase.from("order_items").delete().eq("order_id", id);
+      
+      // Include new fields in the re-insert payload
       const { error: itemsError } = await supabase.from("order_items").insert(
         updated.items.map((item) => ({
           order_id: id,
@@ -180,6 +189,10 @@ export function OrderProvider({ children }: { children: ReactNode }) {
           name: item.name,
           price: item.price,
           quantity: item.quantity,
+          is_sent: item.isSent ?? false,
+          is_cancelled: item.isCancelled ?? false,
+          print_batch: item.printBatch ?? 1,
+          notes: item.note ?? null,
         }))
       );
 
