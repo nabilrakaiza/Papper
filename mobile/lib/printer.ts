@@ -93,24 +93,52 @@ export async function connectToPrinter(address: string): Promise<{ error: string
   }
 }
 async function printCustomerReceipt(order: Order): Promise<void> {
+  // 1. Synchronized calculation logic
   const subtotal = order.items.reduce((sum, i) => sum + i.price * i.quantity, 0);
-  const total = subtotal * (1 - order.discount / 100);
+  
+  const safeDiscountPct = Math.min(Math.max(0, order.discount || 0), 100);
+  const discountAmount = subtotal * (safeDiscountPct / 100);
+  
+  const taxableAmount = subtotal - discountAmount;
+  const taxRate = 0.1; // 10%
+  const taxAmount = taxableAmount * taxRate;
+  
+  const total = Math.round(taxableAmount + taxAmount);
 
+  // 2. Print Header
   await BluetoothEscposPrinter.printerAlign(BluetoothEscposPrinter.ALIGN.CENTER);
-  await BluetoothEscposPrinter.printText('Nabawi Cafe\n', {
-    encoding: 'GBK', codepage: 0, widthtimes: 2, heigthtimes: 2, fonttype: 1,
-  });
-  await BluetoothEscposPrinter.printText('--------------------------------\n', {});
+  
+  // Increased widthtimes and heigthtimes to 4 for bigger text. 
+  // fonttype: 1 often acts as a bolder/alternate font on most thermal printers.
+  await BluetoothEscposPrinter.printText('Nabawi Cafe\n\n', {});
 
+  // Address Section (Still centered)
+  await BluetoothEscposPrinter.printText('Jl. Sentul-Jonggol Karang Tengah\n', {});
+  await BluetoothEscposPrinter.printText('Kab. Bogor, Jawa Barat, 16810\n', {});
+  await BluetoothEscposPrinter.printText('Tel: 0897-9173-349\n', {});
+  
+  await BluetoothEscposPrinter.printText('--------------------------------\n', {});
   await BluetoothEscposPrinter.printerAlign(BluetoothEscposPrinter.ALIGN.LEFT);
   await BluetoothEscposPrinter.printText(`Customer: ${order.customerName}\n`, {});
   await BluetoothEscposPrinter.printText(`Seat    : ${order.seat}\n`, {});
-  await BluetoothEscposPrinter.printText(`Date    : ${new Date().toLocaleDateString('id-ID')}\n`, {});
+  
+  // Format Date and Time to Asia/Jakarta (WIB)
+  const jktDateTime = new Date().toLocaleString('id-ID', {
+    timeZone: 'Asia/Jakarta',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+  
+  await BluetoothEscposPrinter.printText(`Date    : ${jktDateTime}\n`, {});
   await BluetoothEscposPrinter.printText('--------------------------------\n', {});
 
+  // 3. Print Items
   for (const item of order.items) {
     await BluetoothEscposPrinter.printColumn(
-      [20, 12], // can change this value to make it better
+      [20, 12], // 32 characters total width for 58mm printer
       [BluetoothEscposPrinter.ALIGN.LEFT, BluetoothEscposPrinter.ALIGN.RIGHT],
       [`${item.quantity}x ${item.name}`, formatRupiah(item.price * item.quantity)],
       {}
@@ -119,15 +147,35 @@ async function printCustomerReceipt(order: Order): Promise<void> {
 
   await BluetoothEscposPrinter.printText('--------------------------------\n', {});
 
+  // 4. Print Subtotal (Helpful when there are multiple modifiers like discount and tax)
+  await BluetoothEscposPrinter.printColumn(
+    [20, 12],
+    [BluetoothEscposPrinter.ALIGN.LEFT, BluetoothEscposPrinter.ALIGN.RIGHT],
+    ['Subtotal', formatRupiah(subtotal)],
+    {}
+  );
+
+  // 5. Print Discount (if applicable)
   if (order.discount > 0) {
     await BluetoothEscposPrinter.printColumn(
       [20, 12],
       [BluetoothEscposPrinter.ALIGN.LEFT, BluetoothEscposPrinter.ALIGN.RIGHT],
-      [`Discount ${order.discount}%`, `-${formatRupiah(subtotal - total)}`],
+      [`Discount ${order.discount}%`, `-${formatRupiah(discountAmount)}`],
       {}
     );
   }
 
+  // 6. Print Tax
+  await BluetoothEscposPrinter.printColumn(
+    [20, 12],
+    [BluetoothEscposPrinter.ALIGN.LEFT, BluetoothEscposPrinter.ALIGN.RIGHT],
+    ['Tax 10%', formatRupiah(taxAmount)],
+    {}
+  );
+
+  await BluetoothEscposPrinter.printText('--------------------------------\n', {});
+
+  // 7. Print Final Total
   await BluetoothEscposPrinter.printColumn(
     [20, 12],
     [BluetoothEscposPrinter.ALIGN.LEFT, BluetoothEscposPrinter.ALIGN.RIGHT],
@@ -135,11 +183,7 @@ async function printCustomerReceipt(order: Order): Promise<void> {
     {}
   );
 
-  // if (order.note) {
-  //   await BluetoothEscposPrinter.printText('--------------------------------\n', {});
-  //   await BluetoothEscposPrinter.printText(`Note: ${order.note}\n`, {});
-  // }
-
+  // 8. Print Footer
   await BluetoothEscposPrinter.printerAlign(BluetoothEscposPrinter.ALIGN.CENTER);
   await BluetoothEscposPrinter.printText('--------------------------------\n', {});
   await BluetoothEscposPrinter.printText('Thank you!\n', {});
@@ -148,6 +192,17 @@ async function printCustomerReceipt(order: Order): Promise<void> {
 
 // Simplified kitchen ticket — no prices
 async function printKitchenTicket(order: Order): Promise<void> {
+  // 1. Find the maximum print batch number (fallback to 1 if no items)
+  const maxBatch = Math.max(...(order.items.map(i => i.printBatch) ?? [1]), 1);
+
+  // 2. Filter items to only include the latest batch and order that hasn't been sent
+  const latestBatchItems = order.items.filter(
+    (i) => i.printBatch === maxBatch || i.isSent === false
+  );
+
+  // 3. Optional: Exit early if there are no items to print
+  if (latestBatchItems.length === 0) return;
+
   await BluetoothEscposPrinter.printerAlign(BluetoothEscposPrinter.ALIGN.CENTER);
   await BluetoothEscposPrinter.printText('KITCHEN\n', {
     encoding: 'GBK', codepage: 0, widthtimes: 2, heigthtimes: 2, fonttype: 1,
@@ -160,7 +215,8 @@ async function printKitchenTicket(order: Order): Promise<void> {
   await BluetoothEscposPrinter.printText(`Time    : ${new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}\n`, {});
   await BluetoothEscposPrinter.printText('--------------------------------\n', {});
 
-  for (const item of order.items) {
+  // 4. Loop through the filtered array instead of all items
+  for (const item of latestBatchItems) {
     await BluetoothEscposPrinter.printText(`${item.quantity}x ${item.name}\n`, {
       fonttype: 1, widthtimes: 1, heigthtimes: 1,
     });

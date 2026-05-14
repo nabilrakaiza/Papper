@@ -4,7 +4,6 @@ import {
   Text,
   ScrollView,
   TouchableOpacity,
-//   SafeAreaView,
   TextInput,
   ActivityIndicator,
 } from "react-native";
@@ -34,15 +33,27 @@ export default function PaymentScreen() {
     );
   }
 
+  // --- FIXED CALCULATION LOGIC ---
   const subtotal = order.items.reduce((sum, i) => sum + i.price * i.quantity, 0);
   const discountPct = parseFloat(discount) || 0;
-  const total = subtotal * (1 - discountPct / 100);
+
+  // Prevent discount from exceeding 100% or dropping below 0%
+  const safeDiscountPct = Math.min(Math.max(0, discountPct), 100);
+  const discountAmount = subtotal * (safeDiscountPct / 100);
+  
+  const taxableAmount = subtotal - discountAmount;
+  const taxRate = 0.1; // 10%
+  const taxAmount = taxableAmount * taxRate;
+  
+  // Math.round fixes floating point precision errors (e.g., 10.00000000001)
+  const total = Math.round(taxableAmount + taxAmount);
+  // -------------------------------
 
   const handleConfirm = async () => {
     setSaving(true);
     setError("");
 
-    const { error } = await markPaid(order.id, discountPct);
+    const { error } = await markPaid(order.id, safeDiscountPct);
 
     if (error) {
       setError(error);
@@ -77,13 +88,6 @@ export default function PaymentScreen() {
             Seat{"             "}: {order.seat}
           </Text>
         </View>
-
-        {order.note && (
-          <View className="bg-blue-50 border border-blue-100 rounded-2xl px-4 py-3 mb-4">
-            <Text className="text-xs font-extrabold text-blue-400 mb-1">Note</Text>
-            <Text className="text-sm font-bold text-blue-600">{order.note}</Text>
-          </View>
-        )}
 
         {/* Order summary */}
         <View className="bg-yellow-100 rounded-3xl px-5 py-5 shadow-sm">
@@ -120,6 +124,16 @@ export default function PaymentScreen() {
               editable={!saving}
             />
             <Text className="text-sm font-bold text-gray-500">%</Text>
+          </View>
+
+          {/* Tax */}
+          <View className="flex-row items-center gap-3 mb-3">
+            <View className="border-2 border-gray-200 rounded-xl px-3 py-1.5 bg-white/60">
+              <Text className="text-sm font-bold text-gray-600">Tax</Text>
+            </View>
+           <View className="border-2 border-gray-200 rounded-xl px-3 py-1.5 bg-white/60">
+              <Text className="text-sm font-bold text-gray-600">10 %</Text>
+            </View>
           </View>
 
           {/* Total */}

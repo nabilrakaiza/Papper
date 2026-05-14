@@ -80,6 +80,7 @@ export function OrderProvider({ children }: { children: ReactNode }) {
             isCancelled: i.is_cancelled ?? false,
             printBatch: i.print_batch ?? 1,
             note: i.notes ?? null,
+            isStockDeducted: i.is_stock_deducted,
         })),
         }))
     );
@@ -135,6 +136,7 @@ export function OrderProvider({ children }: { children: ReactNode }) {
         is_cancelled: item.isCancelled ?? false,
         print_batch: item.printBatch ?? 1,
         notes: item.note ?? null,
+        is_stock_deducted: false,
         }))
     );
 
@@ -204,11 +206,21 @@ export function OrderProvider({ children }: { children: ReactNode }) {
           is_cancelled: item.isCancelled ?? false,
           print_batch: item.printBatch ?? 1,
           notes: item.note ?? null,
+          is_stock_deducted: item.isStockDeducted ?? false
         }))
       );
 
       if (itemsError) {
         return { error: "Failed to update order items. Please try again." };
+      }
+
+      // --- NEW: Call the deduct RPC after updating items ---
+      const { error: stockError } = await supabase.rpc("deduct_stock_for_order", {
+        p_order_id: id,
+      });
+      
+      if (stockError && stockError.message.includes("Insufficient stock")) {
+        return { error: "Update blocked — one or more new ingredients are out of stock." };
       }
     }
 

@@ -50,9 +50,24 @@ export default function EditOrderScreen() {
   };
 
   // Initialize quantities AND existing notes from the current order
-  const [quantities, setQuantities] = useState<Record<number, number>>(
-    Object.fromEntries(order?.items.map((i) => [i.menuId, i.quantity]) ?? [])
-  );
+  const [quantities, setQuantities] = useState<Record<number, number>>(() => {
+    // 1. Fallback to an empty array if order or items are undefined
+    const items = order?.items ?? [];
+
+    // 2. Reduce the array into a single object, adding quantities together
+    const aggregatedQuantities = items.reduce((acc, item) => {
+      // If we've already seen this menuId, add the new quantity to the existing total
+      if (acc[item.menuId]) {
+        acc[item.menuId] += item.quantity;
+      } else {
+        // If it's the first time seeing this menuId, set the initial quantity
+        acc[item.menuId] = item.quantity;
+      }
+      return acc;
+    }, {} as Record<number, number>); // Initialize as an empty object with your types
+
+    return aggregatedQuantities;
+  });
   
   const [notes, setNotes] = useState<Record<number, string>>(
     Object.fromEntries(order?.items.map((i) => [i.menuId, i.note || ""]) ?? [])
@@ -112,7 +127,7 @@ export default function EditOrderScreen() {
     if (finalQty === oldTotalQty) {
       // CASE A: No quantity change. Just keep existing entries.
       existingEntries.forEach((entry) => {
-        selectedItems.push({ ...entry, note: currentNote });
+        selectedItems.push({ ...entry, note: entry.note });
       });
       
     } else if (finalQty > oldTotalQty) {
@@ -323,7 +338,7 @@ export default function EditOrderScreen() {
                 <View className="mb-3 max-h-60">
                   <ScrollView showsVerticalScrollIndicator={false}>
                     {selectedItems.map((item) => (
-                      <View key={item.menuId} className="mb-2">
+                      <View key={`${item.menuId}-${item.printBatch}`} className="mb-2">
                         <View className="flex-row justify-between mb-0.5">
                           <Text className="text-sm font-bold text-white flex-1 pr-2">
                             {item.quantity}x {item.name}

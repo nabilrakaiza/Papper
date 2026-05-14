@@ -88,7 +88,7 @@ function OrderCard({ order, onPrintKitchenPress, onPrintBillPress }: OrderCardPr
 }
 
 export default function CashierHomeScreen() {
-  const { orders, loading, error, refetch } = useOrders();
+  const { orders, loading, error, refetch, updateOrder } = useOrders();
   const { cashierPrinter, kitchenPrinter, setPrinter } = usePrinter();
 
   const [printerSelectorVisible, setPrinterSelectorVisible] = useState(false);
@@ -133,20 +133,42 @@ export default function CashierHomeScreen() {
 
     let printErr = null;
 
-    // TODO: You may need to adapt your `printReceipt` function inside lib/printer to accept a "print type" 
-    // or create two separate functions (e.g., printKitchenTicket() and printCustomerBill()).
-    // For now, this passes the specific printer targeted by the button press.
     if (type === "kitchen") {
       const targetPrinter = specificPrinter || kitchenPrinter;
       const { error } = await printReceipt(order, null, targetPrinter); // Passing null to cashier to prevent dual-printing
       printErr = error;
+
+      // --- NEW: Handle is_sent after a successful kitchen print ---
+      if (!error) {
+        // Create a new array with all items marked as sent
+        const updatedItems = order.items.map(item => ({
+          ...item,
+          isSent: true 
+        }));
+
+        // Call your existing update function to sync it to Supabase
+        const { error: updateError } = await updateOrder(order.id, { 
+          items: updatedItems 
+        });
+
+        if (updateError) {
+          // If the print worked but the DB failed, we should probably let the user know
+          printErr = "Printed successfully, but failed to update 'sent' status in system.";
+        }
+      }
+      // -------------------------------------------------------------
+
     } else {
       const targetPrinter = specificPrinter || cashierPrinter;
       const { error } = await printReceipt(order, targetPrinter, null); // Passing null to kitchen to prevent dual-printing
       printErr = error;
     }
 
-    if (printErr) setPrintError(`Failed to print ${type}. Make sure printer is on and connected.`);
+    if (printErr) {
+      // If it's our custom string error, show that. Otherwise show the default connection error.
+      setPrintError(typeof printErr === "string" ? printErr : `Failed to print ${type}. Make sure printer is on and connected.`);
+    }
+    
     setPrinting(false);
   };
 

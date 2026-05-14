@@ -9,6 +9,7 @@ export type OrderItem = {
   isSent: boolean;
   isCancelled: boolean;
   printBatch: number;
+  isStockDeducted?: boolean;
   note?: string;
 };
 
