@@ -64,6 +64,17 @@ export default function PaymentScreen() {
     router.back();
   };
 
+  const groupedItems = Object.values(
+    order.items.reduce<Record<string, typeof order.items[0]>>((acc, item) => {
+      if (acc[item.menuId]) {
+        acc[item.menuId] = { ...acc[item.menuId], quantity: acc[item.menuId].quantity + item.quantity };
+      } else {
+        acc[item.menuId] = { ...item };
+      }
+      return acc;
+    }, {})
+  );
+
   return (
     <SafeAreaView className="flex-1 bg-gray-100">
       {/* Header */}
@@ -95,8 +106,8 @@ export default function PaymentScreen() {
             <Text className="text-sm font-bold text-gray-700">Order Summary</Text>
           </View>
 
-          {order.items.map((item, index) => (
-            <View key={`${item.menuId}-${index}`} className="flex-row justify-between items-start mb-4">
+          {groupedItems.map((item) => (
+            <View key={item.menuId} className="flex-row justify-between items-start mb-4">
               <Text className="text-sm font-bold text-gray-800 flex-1">{item.name}</Text>
               <View className="items-end">
                 <Text className="text-sm font-bold text-gray-800">

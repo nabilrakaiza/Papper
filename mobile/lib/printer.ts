@@ -105,6 +105,17 @@ async function printCustomerReceipt(order: Order): Promise<void> {
   
   const total = Math.round(taxableAmount + taxAmount);
 
+  const groupedItems = Object.values(
+    order.items.reduce<Record<string, typeof order.items[0]>>((acc, item) => {
+      if (acc[item.menuId]) {
+        acc[item.menuId] = { ...acc[item.menuId], quantity: acc[item.menuId].quantity + item.quantity };
+      } else {
+        acc[item.menuId] = { ...item };
+      }
+      return acc;
+    }, {})
+  );
+
   // 2. Print Header
   await BluetoothEscposPrinter.printerAlign(BluetoothEscposPrinter.ALIGN.CENTER);
   
@@ -136,7 +147,7 @@ async function printCustomerReceipt(order: Order): Promise<void> {
   await BluetoothEscposPrinter.printText('--------------------------------\n', {});
 
   // 3. Print Items
-  for (const item of order.items) {
+  for (const item of groupedItems) {
     await BluetoothEscposPrinter.printColumn(
       [20, 12], // 32 characters total width for 58mm printer
       [BluetoothEscposPrinter.ALIGN.LEFT, BluetoothEscposPrinter.ALIGN.RIGHT],

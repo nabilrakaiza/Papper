@@ -46,7 +46,7 @@ function PeriodToggle({
         <TouchableOpacity
           key={key}
           onPress={() => onChange(key)}
-          className={`px-3 py-1.5 rounded-xl ${period === key ? "bg-white shadow" : ""}`}
+          className={`px-3 py-1.5 rounded-xl ${period === key ? "bg-white" : ""}`}
         >
           <Text
             className={`text-xs font-extrabold ${
@@ -117,17 +117,23 @@ function groupOrders(
 }
 
 export default function AdminSalesScreen() {
-  const [period, setPeriod] = useState<SalesPeriod>("daily");
+  // 1. Split state into two independent periods
+  const [salesPeriod, setSalesPeriod] = useState<SalesPeriod>("daily");
+  const [topSellingPeriod, setTopSellingPeriod] = useState<SalesPeriod>("daily");
+  
   const [chartData, setChartData] = useState<SalesDataPoint[]>([]);
-  const [topMenu, setTopMenu] = useState<TopMenuItem[]>([]);
   const [totalSales, setTotalSales] = useState(0);
-  const [loading, setLoading] = useState(true);
+  const [topMenu, setTopMenu] = useState<TopMenuItem[]>([]);
+  
+  // Optional: Split loading states so one chart doesn't block the other visually
+  const [loadingSales, setLoadingSales] = useState(true);
+  const [loadingTopSelling, setLoadingTopSelling] = useState(true);
 
-  const fetchSales = async (p: SalesPeriod) => {
-    setLoading(true);
+  // 2. Separate fetch function for Sales Chart
+  const fetchSalesData = async (p: SalesPeriod) => {
+    setLoadingSales(true);
     const { from, to } = getDateRange(p);
 
-    // Fetch paid orders in range
     const { data: orders } = await supabase
       .from("orders")
       .select("id, created_at, discount")
@@ -137,35 +143,55 @@ export default function AdminSalesScreen() {
 
     if (!orders || orders.length === 0) {
       setChartData([]);
-      setTopMenu([]);
       setTotalSales(0);
-      setLoading(false);
+      setLoadingSales(false);
       return;
     }
 
-    // Fetch order items for those orders
     const orderIds = orders.map((o) => o.id);
     const { data: items } = await supabase
       .from("order_items")
-      .select("order_id, name, price, quantity")
+      .select("order_id, price, quantity")
       .in("order_id", orderIds);
 
-    // Calculate total per order (with discount)
     const ordersWithTotal = orders.map((order) => {
       const orderItems = (items ?? []).filter((i) => i.order_id === order.id);
       const subtotal = orderItems.reduce((sum, i) => sum + i.price * i.quantity, 0);
-      const total = subtotal * (1 - order.discount / 100);
+      const tax = 0.1;
+      const total = subtotal * (1 - order.discount / 100) * (1 + tax);
       return { created_at: order.created_at, total };
     });
 
-    // Total sales
     const total = ordersWithTotal.reduce((sum, o) => sum + o.total, 0);
     setTotalSales(total);
-
-    // Chart data
     setChartData(groupOrders(ordersWithTotal, p));
+    setLoadingSales(false);
+  };
 
-    // Top menu items
+  // 3. Separate fetch function for Top Selling Menu
+  const fetchTopSellingData = async (p: SalesPeriod) => {
+    setLoadingTopSelling(true);
+    const { from, to } = getDateRange(p);
+
+    const { data: orders } = await supabase
+      .from("orders")
+      .select("id")
+      .eq("status", "paid")
+      .gte("created_at", from)
+      .lte("created_at", to);
+
+    if (!orders || orders.length === 0) {
+      setTopMenu([]);
+      setLoadingTopSelling(false);
+      return;
+    }
+
+    const orderIds = orders.map((o) => o.id);
+    const { data: items } = await supabase
+      .from("order_items")
+      .select("name, quantity")
+      .in("order_id", orderIds);
+
     const itemCount: Record<string, { name: string; qty: number }> = {};
     (items ?? []).forEach((item) => {
       if (!itemCount[item.name]) {
@@ -173,36 +199,52 @@ export default function AdminSalesScreen() {
       }
       itemCount[item.name].qty += item.quantity;
     });
+
     const top = Object.values(itemCount)
       .sort((a, b) => b.qty - a.qty)
       .slice(0, 5)
       .map((i) => ({ name: i.name, quantity: i.qty }));
+      
     setTopMenu(top);
-
-    setLoading(false);
+    setLoadingTopSelling(false);
   };
 
   useEffect(() => {
-    fetchSales(period);
+    // Initial fetch for both
+    fetchSalesData(salesPeriod);
+    fetchTopSellingData(topSellingPeriod);
 
+    // Subscribe to realtime updates and refresh both using their current individual states
     const subscription = supabase
       .channel("sales-channel")
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "orders" },
-        () => fetchSales(period)
+        () => {
+          fetchSalesData(salesPeriod);
+          fetchTopSellingData(topSellingPeriod);
+        }
       )
       .subscribe();
 
     return () => {
       supabase.removeChannel(subscription);
     };
-  }, [period]);
+  }, [salesPeriod, topSellingPeriod]);
 
-  const handlePeriodChange = (p: SalesPeriod) => {
-    setPeriod(p);
-    fetchSales(p);
+  // Handlers for respective Period Toggles
+  const handleSalesPeriodChange = (p: SalesPeriod) => {
+    setSalesPeriod(p);
+    fetchSalesData(p);
   };
+
+  const handleTopSellingPeriodChange = (p: SalesPeriod) => {
+    setTopSellingPeriod(p);
+    fetchTopSellingData(p);
+  };
+
+  // Show full screen loader only if BOTH are loading on initial render
+  const isInitialLoading = loadingSales && loadingTopSelling && chartData.length === 0 && topMenu.length === 0;
 
   return (
     <SafeAreaView className="flex-1 bg-gray-100">
@@ -214,7 +256,7 @@ export default function AdminSalesScreen() {
         </View>
       </View>
 
-      {loading ? (
+      {isInitialLoading ? (
         <View className="flex-1 items-center justify-center">
           <ActivityIndicator size="large" color="#3a7bd5" />
         </View>
@@ -226,15 +268,20 @@ export default function AdminSalesScreen() {
           {/* Sales Graph Card */}
           <View className="bg-yellow-100 rounded-3xl px-4 pt-4 pb-5 mb-4 shadow-sm shadow-yellow-300/30">
             <View className="flex-row items-center justify-between mb-4">
-              <PeriodToggle period={period} onChange={handlePeriodChange} />
+              {/* Pass the specific sales state and handler */}
+              <PeriodToggle period={salesPeriod} onChange={handleSalesPeriodChange} />
               <Text className="text-lg font-black text-gray-900">Total Sales</Text>
             </View>
 
-            <View className="bg-cyan-100 rounded-2xl overflow-hidden">
-              {chartData.length > 0 ? (
+            <View className="bg-cyan-100 rounded-2xl overflow-hidden min-h-[200px]">
+              {loadingSales ? (
+                 <View className="h-40 items-center justify-center">
+                   <ActivityIndicator size="small" color="#3a7bd5" />
+                 </View>
+              ) : chartData.length > 0 ? (
                 <View collapsable={false}>
                   <VictoryChart
-                    key={period}
+                    key={salesPeriod}
                     width={width - 64}
                     height={200}
                     theme={VictoryTheme.material}
@@ -270,25 +317,32 @@ export default function AdminSalesScreen() {
                 </View>
               )}
 
-              <View className="mx-4 mb-4">
-                <View className="border border-gray-300 rounded-xl px-4 py-2 self-start bg-white/70">
-                  <Text className="text-sm font-extrabold text-gray-800">
-                    Total Sales : {formatRupiahFull(totalSales)}
-                  </Text>
+              {!loadingSales && (
+                <View className="mx-4 mb-4 mt-2">
+                  <View className="border border-gray-300 rounded-xl px-4 py-2 self-start bg-white/70">
+                    <Text className="text-sm font-extrabold text-gray-800">
+                      Total Sales : {formatRupiahFull(totalSales)}
+                    </Text>
+                  </View>
                 </View>
-              </View>
+              )}
             </View>
           </View>
 
           {/* Top Selling Menu Card */}
           <View className="bg-yellow-100 rounded-3xl px-4 pt-4 pb-5 shadow-sm shadow-yellow-300/30">
             <View className="flex-row items-center justify-between mb-4">
-              <PeriodToggle period={period} onChange={handlePeriodChange} />
+               {/* Pass the specific top selling state and handler */}
+              <PeriodToggle period={topSellingPeriod} onChange={handleTopSellingPeriodChange} />
               <Text className="text-lg font-black text-gray-900">Top Selling</Text>
             </View>
 
-            <View className="bg-cyan-100 rounded-2xl px-4 py-2">
-              {topMenu.length === 0 ? (
+            <View className="bg-cyan-100 rounded-2xl px-4 py-2 min-h-[100px] justify-center">
+              {loadingTopSelling ? (
+                <View className="py-6 items-center">
+                  <ActivityIndicator size="small" color="#3a7bd5" />
+                </View>
+              ) : topMenu.length === 0 ? (
                 <View className="py-6 items-center">
                   <Text className="text-gray-400 font-bold text-sm">No data for this period</Text>
                 </View>

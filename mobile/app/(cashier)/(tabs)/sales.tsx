@@ -31,6 +31,8 @@ export default function CashierSalesScreen() {
   const [orders, setOrders] = useState<OrderRow[]>([]);
   const [loading, setLoading] = useState(true);
 
+  const tax = 0.1;
+
   const fetchTodaySales = async () => {
     setLoading(true);
 
@@ -71,7 +73,8 @@ export default function CashierSalesScreen() {
     const orderRows: OrderRow[] = ordersData.map((order) => {
       const orderItems = (items ?? []).filter((i) => i.order_id === order.id);
       const subtotal = orderItems.reduce((sum, i) => sum + i.price * i.quantity, 0);
-      const total = subtotal * (1 - order.discount / 100);
+      const total = subtotal * (1 - order.discount / 100) * (1+tax);
+      
 
       if (order.status === "paid") paidTotal += total;
       else unpaidTotal += total;
@@ -145,7 +148,7 @@ export default function CashierSalesScreen() {
   return (
     <SafeAreaView className="flex-1 bg-gray-100">
       <View className="px-5 pt-4 pb-3">
-        <Text className="text-2xl font-black text-gray-900">Todays Sales</Text>
+        <Text className="text-2xl font-black text-gray-900">Today Sales</Text>
       </View>
 
       <ScrollView
