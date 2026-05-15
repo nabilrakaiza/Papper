@@ -9,7 +9,8 @@ import {
   ActivityIndicator,
 } from "react-native";
 import BottomSheet, { BottomSheetScrollView } from "@gorhom/bottom-sheet";
-import { Check, Search, X } from "lucide-react-native";
+import { Check, Search, X, Calendar } from "lucide-react-native"; // <-- Added Calendar icon
+import DateTimePicker from "@react-native-community/datetimepicker"; // <-- Added library
 import { supabase } from "@/lib/supabase";
 import { StockItem } from "@/types/stock";
 
@@ -22,7 +23,7 @@ type StockDefinition = {
 type PriceMode = "total" | "per-unit";
 
 type Props = {
-  onAdd: (item: Omit<StockItem, "id">) => Promise<void>;
+  onAdd: (item: Omit<StockItem, "id"> & { purchaseDate?: string }) => Promise<void>;
   sheetRef: React.RefObject<BottomSheet>;
 };
 
@@ -34,6 +35,11 @@ export default function AddStockSheet({ onAdd, sheetRef }: Props) {
   const [quantity, setQuantity] = useState("");
   const [priceMode, setPriceMode] = useState<PriceMode>("total");
   const [priceInput, setPriceInput] = useState("");
+  
+  // NEW: Store an actual Date object instead of a string
+  const [purchaseDate, setPurchaseDate] = useState(new Date());
+  const [showDatePicker, setShowDatePicker] = useState(false);
+  
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
 
@@ -70,6 +76,8 @@ export default function AddStockSheet({ onAdd, sheetRef }: Props) {
     setQuantity("");
     setPriceInput("");
     setPriceMode("total");
+    setPurchaseDate(new Date()); // Reset to today
+    setShowDatePicker(false);
     setError("");
     setSaving(false);
   };
@@ -83,6 +91,18 @@ export default function AddStockSheet({ onAdd, sheetRef }: Props) {
   const handleClearSelection = () => {
     setSelected(null);
     setSearch("");
+  };
+
+  // NEW: Handle the calendar selection
+  const handleDateChange = (event: any, selectedDate?: Date) => {
+    // Android requires manually hiding the picker after selection
+    if (Platform.OS === 'android') {
+      setShowDatePicker(false);
+    }
+    
+    if (selectedDate) {
+      setPurchaseDate(selectedDate);
+    }
   };
 
   const handleSave = async () => {
@@ -101,6 +121,8 @@ export default function AddStockSheet({ onAdd, sheetRef }: Props) {
         quantity: qty,
         unit: selected.unit,
         pricePerUnit: Math.round(computedPricePerUnit),
+        // Convert the Date object to ISO string for your backend
+        purchaseDate: purchaseDate.toISOString(),
       });
       reset();
       sheetRef.current?.close();
@@ -117,11 +139,18 @@ export default function AddStockSheet({ onAdd, sheetRef }: Props) {
 
   const showDropdown = !selected && search.length > 0 && filtered.length > 0;
 
+  // Format the date nicely for the UI (e.g., "15 May 2026")
+  const formattedDate = purchaseDate.toLocaleDateString("en-GB", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+
   return (
     <BottomSheet
       ref={sheetRef}
       index={-1}
-      snapPoints={["70%"]}
+      snapPoints={["75%"]}
       enablePanDownToClose
       onClose={reset}
       backgroundStyle={{ borderRadius: 24, backgroundColor: "white" }}
@@ -226,7 +255,7 @@ export default function AddStockSheet({ onAdd, sheetRef }: Props) {
             )}
 
             {/* Quantity */}
-            <Text className="text-[10px] font-extrabold text-gray-400 uppercase tracking-widest mb-1">
+            <Text className="text-[10px] font-extrabold text-gray-400 uppercase tracking-widest mb-1 mt-2">
               Quantity
             </Text>
             <TextInput
@@ -277,6 +306,33 @@ export default function AddStockSheet({ onAdd, sheetRef }: Props) {
               placeholderTextColor="#ccc"
               editable={!saving}
             />
+
+            <Text className="text-[10px] font-extrabold text-gray-400 uppercase tracking-widest mb-1 mt-2">
+              Date of Purchase
+            </Text>
+            
+            {/* NEW: Clickable Date Button */}
+            <TouchableOpacity
+              onPress={() => setShowDatePicker(true)}
+              disabled={saving}
+              className="flex-row items-center justify-between w-full bg-gray-50 border-2 border-gray-100 rounded-xl px-3 py-3 mb-3"
+            >
+              <Text className="font-bold text-sm text-gray-900">
+                {formattedDate}
+              </Text>
+              <Calendar size={18} color="#aaa" />
+            </TouchableOpacity>
+
+            {/* NEW: The Native Date Picker Component */}
+            {showDatePicker && (
+              <DateTimePicker
+                value={purchaseDate}
+                mode="date"
+                display="default" // Shows modal on Android, inline/spinner on iOS
+                onChange={handleDateChange}
+                maximumDate={new Date()} // Prevents admin from picking future dates
+              />
+            )}
 
             {/* Price preview */}
             {computedPricePerUnit !== null && computedPricePerUnit > 0 && (

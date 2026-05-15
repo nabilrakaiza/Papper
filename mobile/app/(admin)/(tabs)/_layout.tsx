@@ -1,5 +1,5 @@
 import { Tabs } from "expo-router";
-import { Package, TrendingDown, BarChart2, UserCircle } from "lucide-react-native";
+import { Package, TrendingDown, BarChart2, UserCircle, BookText } from "lucide-react-native";
 
 export default function AdminTabLayout() {
   return (
@@ -33,6 +33,13 @@ export default function AdminTabLayout() {
         options={{
           title: "COGS",
           tabBarIcon: ({ color, size }) => <TrendingDown size={size} color={color} />,
+        }}
+      />
+      <Tabs.Screen
+        name="purchase"
+        options={{
+          title: "Purchase",
+          tabBarIcon: ({ color, size }) => <BookText size={size} color={color} />,
         }}
       />
       <Tabs.Screen

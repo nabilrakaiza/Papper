@@ -69,9 +69,14 @@ export default function StockScreen() {
     };
   }, [fetchStock]);
 
-  const handleAdd = async (incoming: Omit<StockItem, "id">) => {
+  const handleAdd = async (
+    incoming: Omit<StockItem, "id"> & { purchaseDate?: string }
+  ) => {
     setSaving(true);
     setError(null);
+
+    // Use the admin's selected date, or default to the exact moment right now
+    const expenseDate = incoming.purchaseDate || new Date().toISOString();
 
     const existing = items.find(
       (i) =>
@@ -84,8 +89,9 @@ export default function StockScreen() {
         .from("stock")
         .update({
           quantity: existing.quantity + incoming.quantity,
-          price_per_unit: incoming.pricePerUnit,
+          price_per_unit: incoming.pricePerUnit, // Note: assuming your incoming object uses camelCase
           updated_at: new Date().toISOString(),
+          last_purchase_date: expenseDate, // <-- Passes the date to the trigger
         })
         .eq("id", existing.id);
 
@@ -100,6 +106,7 @@ export default function StockScreen() {
         quantity: incoming.quantity,
         unit: incoming.unit,
         price_per_unit: incoming.pricePerUnit,
+        last_purchase_date: expenseDate, // <-- Passes the date to the trigger
       });
 
       if (error) {
