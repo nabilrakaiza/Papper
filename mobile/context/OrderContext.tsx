@@ -7,8 +7,8 @@ type OrderContextType = {
   menu: MenuItem[];
   loading: boolean;
   error: string | null;
-  addOrder: (order: Omit<Order, "id" | "createdAt">) => Promise<{ error: string | null }>;
-  updateOrder: (id: number, order: Partial<Order>) => Promise<{ error: string | null }>;
+  addOrder: (order: Omit<Order, "id" | "createdAt">, force?: boolean) => Promise<{ error: string | null; stockWarning?: string }>;
+  updateOrder: (id: number, order: Partial<Order>, force?: boolean) => Promise<{ error: string | null; stockWarning?: string }>;
   markPaid: (id: number, discount: number) => Promise<{ error: string | null }>;
   toggleMenuAvailability: (menuId: number) => Promise<void>;
   refetch: () => Promise<void>;
@@ -108,25 +108,50 @@ export function OrderProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  const addOrder = async (order: Omit<Order, "id" | "createdAt">): Promise<{ error: string | null }> => {
+  const addOrder = async (
+    order: Omit<Order, "id" | "createdAt">,
+    force = false
+  ): Promise<{ error: string | null; stockWarning?: string }> => {
+
+    // 1. Pre-check stock BEFORE inserting anything (only if not forcing)
+    if (!force) {
+      const { data: checkData, error: checkError } = await supabase.rpc(
+        "check_stock_for_order",
+        {
+          p_items: order.items.map((i) => ({
+            menu_id: i.menuId,
+            quantity: i.quantity,
+          })),
+        }
+      );
+
+      if (!checkError && checkData?.shortages?.length > 0) {
+        const names = checkData.shortages.map((s: any) => s.stock_name).join(", ");
+        return {
+          error: null,
+          stockWarning: `Low stock: ${names}. Proceed anyway?`,
+        };
+      }
+    }
+
+    // 2. Insert order (same as before)
     const { data: newOrder, error: orderError } = await supabase
-        .from("orders")
-        .insert({
+      .from("orders")
+      .insert({
         customer_name: order.customerName,
         seat: order.seat,
         discount: order.discount,
         status: order.status,
-        })
-        .select()
-        .single();
+      })
+      .select()
+      .single();
 
     if (orderError || !newOrder) {
-        return { error: "Failed to create order. Please try again." };
+      return { error: "Failed to create order. Please try again." };
     }
 
-    // Include new fields in the insert payload
     const { error: itemsError } = await supabase.from("order_items").insert(
-        order.items.map((item) => ({
+      order.items.map((item) => ({
         order_id: newOrder.id,
         menu_id: item.menuId,
         name: item.name,
@@ -137,35 +162,38 @@ export function OrderProvider({ children }: { children: ReactNode }) {
         print_batch: item.printBatch ?? 1,
         notes: item.note ?? null,
         is_stock_deducted: false,
-        }))
+      }))
     );
 
     if (itemsError) {
-        await supabase.from("orders").delete().eq("id", newOrder.id);
-        return { error: "Failed to save order items. Please try again." };
+      await supabase.from("orders").delete().eq("id", newOrder.id);
+      return { error: "Failed to save order items. Please try again." };
     }
 
-    // Deduct stock
+    // 3. Deduct stock — pass p_force if user confirmed
     const { error: stockError } = await supabase.rpc("deduct_stock_for_order", {
-        p_order_id: newOrder.id,
+      p_order_id: newOrder.id,
+      p_force: force,
     });
 
     if (stockError) {
-        // Rollback order and items
-        await supabase.from("orders").delete().eq("id", newOrder.id);
-
-        if (stockError.message.includes("Insufficient stock")) {
+      await supabase.from("orders").delete().eq("id", newOrder.id);
+      if (stockError.message.includes("Insufficient stock")) {
         return { error: "Order blocked — one or more ingredients are out of stock." };
-        }
-        return { error: "Failed to update stock. Please try again." };
+      }
+      return { error: "Failed to update stock. Please try again." };
     }
 
     await fetchOrders();
-
     return { error: null };
-    };
+  };
 
-  const updateOrder = async (id: number, updated: Partial<Order>): Promise<{ error: string | null }> => {
+  const updateOrder = async (
+    id: number,
+    updated: Partial<Order>,
+    force = false
+  ): Promise<{ error: string | null; stockWarning?: string }> => {
+    // 1. Update order-level fields
     const { error: updateError } = await supabase
       .from("orders")
       .update({
@@ -180,6 +208,7 @@ export function OrderProvider({ children }: { children: ReactNode }) {
       return { error: "Failed to update order. Please try again." };
     }
 
+    // 2. Handle cancellation
     if (updated.status === "cancelled") {
       const { error: cancelItemsError } = await supabase
         .from("order_items")
@@ -191,10 +220,65 @@ export function OrderProvider({ children }: { children: ReactNode }) {
       }
     }
 
+    // 3. Handle item updates
     if (updated.items) {
-      await supabase.from("order_items").delete().eq("order_id", id);
-      
-      // Include new fields in the re-insert payload
+      // Fetch original items first so we can revert if something goes wrong
+      const { data: originalData, error: fetchError } = await supabase
+        .from("order_items")
+        .select("*")
+        .eq("order_id", id);
+
+      if (fetchError || !originalData) {
+        return { error: "Failed to fetch existing order items. Please try again." };
+      }
+
+      const originalItems = originalData.map((i: any) => ({
+        order_id: id,
+        menu_id: i.menu_id,
+        name: i.name,
+        price: i.price,
+        quantity: i.quantity,
+        category: i.category,
+        is_sent: i.is_sent ?? false,
+        is_cancelled: i.is_cancelled ?? false,
+        print_batch: i.print_batch ?? 1,
+        notes: i.notes ?? null,
+        is_stock_deducted: i.is_stock_deducted ?? false,
+      }));
+
+      // Pre-check stock before touching anything (skip if forcing)
+      if (!force) {
+        const { data: checkData, error: checkError } = await supabase.rpc(
+          "check_stock_for_order",
+          {
+            p_items: updated.items.map((i) => ({
+              menu_id: i.menuId,
+              quantity: i.quantity,
+            })),
+          }
+        );
+
+        if (!checkError && checkData?.shortages?.length > 0) {
+          const names = checkData.shortages
+            .map((s: any) => s.stock_name)
+            .join(", ");
+          return {
+            error: null,
+            stockWarning: `Low stock: ${names}. Proceed anyway?`,
+          };
+        }
+      }
+
+      // Replace items
+      const { error: deleteError } = await supabase
+        .from("order_items")
+        .delete()
+        .eq("order_id", id);
+
+      if (deleteError) {
+        return { error: "Failed to update order items. Please try again." };
+      }
+
       const { error: itemsError } = await supabase.from("order_items").insert(
         updated.items.map((item) => ({
           order_id: id,
@@ -206,26 +290,41 @@ export function OrderProvider({ children }: { children: ReactNode }) {
           is_cancelled: item.isCancelled ?? false,
           print_batch: item.printBatch ?? 1,
           notes: item.note ?? null,
-          is_stock_deducted: item.isStockDeducted ?? false
+          is_stock_deducted: false,
         }))
       );
 
       if (itemsError) {
+        // Revert to original items
+        await supabase.from("order_items").insert(originalItems);
         return { error: "Failed to update order items. Please try again." };
       }
 
-      // --- NEW: Call the deduct RPC after updating items ---
+      // Deduct stock
       const { error: stockError } = await supabase.rpc("deduct_stock_for_order", {
         p_order_id: id,
+        p_force: force,
       });
-      
-      if (stockError && stockError.message.includes("Insufficient stock")) {
-        return { error: "Update blocked — one or more new ingredients are out of stock." };
+
+      if (stockError) {
+        // Revert to original items
+        await supabase.from("order_items").delete().eq("order_id", id);
+        const { error: revertError } = await supabase
+          .from("order_items")
+          .insert(originalItems);
+
+        if (revertError) {
+          console.error("CRITICAL: Failed to revert order items after stock error:", revertError);
+        }
+
+        if (stockError.message.includes("Insufficient stock")) {
+          return { error: "Update blocked — one or more ingredients are out of stock." };
+        }
+        return { error: "Failed to update stock. Please try again." };
       }
     }
 
     await fetchOrders();
-
     return { error: null };
   };
 

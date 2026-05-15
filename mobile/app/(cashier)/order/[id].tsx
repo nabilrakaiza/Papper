@@ -7,6 +7,7 @@ import {
   TextInput,
   KeyboardAvoidingView,
   Platform,
+  ActivityIndicator,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { router, useLocalSearchParams } from "expo-router";
@@ -24,51 +25,22 @@ export default function EditOrderScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { orders, menu, updateOrder } = useOrders();
   const order = orders.find((o) => o.id === Number(id));
-  
+
   const [categoryIndex, setCategoryIndex] = useState(0);
   const [summaryOpen, setSummaryOpen] = useState(false);
   const [saving, setSaving] = useState(false);
-
-  // Handling cancel
+  const [error, setError] = useState<string | null>(null);
+  const [stockWarning, setStockWarning] = useState<string | null>(null);
   const [showCancelDialog, setShowCancelDialog] = useState(false);
-  const [cancelError, setCancelError] = useState<string | null>(null);
 
-  const handleCancel = async () => {
-    if (!order) return;
-    setSaving(true); // Reuse your saving state to prevent multi-taps
-    
-    const { error } = await updateOrder(order.id, { status: "cancelled" });
-    
-    setSaving(false);
-    if (error) {
-      setCancelError(error);
-      setShowCancelDialog(false);
-    } else {
-      setShowCancelDialog(false);
-      router.back(); // Kick them back to the index screen after canceling
-    }
-  };
-
-  // Initialize quantities AND existing notes from the current order
   const [quantities, setQuantities] = useState<Record<number, number>>(() => {
-    // 1. Fallback to an empty array if order or items are undefined
     const items = order?.items ?? [];
-
-    // 2. Reduce the array into a single object, adding quantities together
-    const aggregatedQuantities = items.reduce((acc, item) => {
-      // If we've already seen this menuId, add the new quantity to the existing total
-      if (acc[item.menuId]) {
-        acc[item.menuId] += item.quantity;
-      } else {
-        // If it's the first time seeing this menuId, set the initial quantity
-        acc[item.menuId] = item.quantity;
-      }
+    return items.reduce((acc, item) => {
+      acc[item.menuId] = (acc[item.menuId] ?? 0) + item.quantity;
       return acc;
-    }, {} as Record<number, number>); // Initialize as an empty object with your types
-
-    return aggregatedQuantities;
+    }, {} as Record<number, number>);
   });
-  
+
   const [notes, setNotes] = useState<Record<number, string>>(
     Object.fromEntries(order?.items.map((i) => [i.menuId, i.note || ""]) ?? [])
   );
@@ -81,8 +53,6 @@ export default function EditOrderScreen() {
     setQuantities((prev) => {
       const current = prev[menuId] ?? 0;
       if (current <= 0) return prev;
-      
-      // Clear the note if quantity drops to 0
       if (current - 1 === 0) {
         setNotes((prevNotes) => {
           const newNotes = { ...prevNotes };
@@ -90,13 +60,12 @@ export default function EditOrderScreen() {
           return newNotes;
         });
       }
-      
       return { ...prev, [menuId]: current - 1 };
     });
   }, []);
 
-  const handleNoteChange = useCallback((id: number, text: string) => {
-    setNotes((prev) => ({ ...prev, [id]: text }));
+  const handleNoteChange = useCallback((menuId: number, text: string) => {
+    setNotes((prev) => ({ ...prev, [menuId]: text }));
   }, []);
 
   if (!order) {
@@ -112,62 +81,45 @@ export default function EditOrderScreen() {
     (m) => m.category === currentCategory && m.available
   );
 
-  const currentMaxBatch = Math.max(...(order?.items.map(i => i.printBatch) ?? [1]), 1);
+  const currentMaxBatch = Math.max(...(order.items.map((i) => i.printBatch) ?? [1]), 1);
   const selectedItems: OrderItem[] = [];
 
   menu.forEach((m) => {
     const finalQty = quantities[m.id] ?? 0;
-    if (finalQty === 0) return; // Item completely removed
+    if (finalQty === 0) return;
 
-    // Find all existing rows for this specific menu item
-    const existingEntries = order?.items.filter((i) => i.menuId === m.id) ?? [];
+    const existingEntries = order.items.filter((i) => i.menuId === m.id);
     const oldTotalQty = existingEntries.reduce((sum, i) => sum + i.quantity, 0);
     const currentNote = notes[m.id] || "";
 
     if (finalQty === oldTotalQty) {
-      // CASE A: No quantity change. Just keep existing entries.
       existingEntries.forEach((entry) => {
         selectedItems.push({ ...entry, note: entry.note });
       });
-      
     } else if (finalQty > oldTotalQty) {
-      // CASE B: Quantity increased! (The Delta)
-      // First, keep the old entries exactly as they were
       existingEntries.forEach((entry) => {
         selectedItems.push({ ...entry, note: entry.note });
       });
-
-      // Then, add the difference as a brand new batch!
-      const addedQty = finalQty - oldTotalQty;
       selectedItems.push({
         menuId: m.id,
         name: m.name,
         price: m.price,
-        quantity: addedQty,
+        quantity: finalQty - oldTotalQty,
         category: m.category,
         note: currentNote,
-        isSent: false, // This ensures it will trigger the kitchen printer again
+        isSent: false,
         isCancelled: false,
-        printBatch: currentMaxBatch + 1, // Increment the batch!
+        printBatch: currentMaxBatch + 1,
       });
-      
     } else {
-      // CASE C: Quantity decreased. 
-      // We need to remove items. Best practice: remove from the newest batches first.
       let remainingToKeep = finalQty;
-      
-      // Sort oldest to newest (Batch 1, then Batch 2...)
       const sortedEntries = [...existingEntries].sort((a, b) => a.printBatch - b.printBatch);
-
       sortedEntries.forEach((entry) => {
         if (remainingToKeep <= 0) return;
-
         if (entry.quantity <= remainingToKeep) {
-          // Keep this whole batch
           selectedItems.push({ ...entry, note: entry.note });
           remainingToKeep -= entry.quantity;
         } else {
-          // Keep a partial amount of this batch
           selectedItems.push({ ...entry, quantity: remainingToKeep, note: entry.note });
           remainingToKeep = 0;
         }
@@ -178,19 +130,49 @@ export default function EditOrderScreen() {
   const totalItems = selectedItems.reduce((sum, i) => sum + i.quantity, 0);
   const subtotal = selectedItems.reduce((sum, i) => sum + i.price * i.quantity, 0);
 
-  const handleSave = async () => {
+  const handleSave = async (force = false) => {
     if (selectedItems.length === 0) return;
     setSaving(true);
-    await updateOrder(order.id, { 
-      items: selectedItems,
-    });
+    setError(null);
+
+    const { error, stockWarning } = await updateOrder(
+      order.id,
+      { items: selectedItems },
+      force
+    );
+
+    if (stockWarning) {
+      setStockWarning(stockWarning);
+      setSaving(false);
+      return;
+    }
+
+    if (error) {
+      setError(error);
+      setSaving(false);
+      return;
+    }
+
     setSaving(false);
     router.back();
   };
 
+  const handleCancel = async () => {
+    setSaving(true);
+    const { error } = await updateOrder(order.id, { status: "cancelled" });
+    setSaving(false);
+    if (error) {
+      setError(error);
+      setShowCancelDialog(false);
+    } else {
+      setShowCancelDialog(false);
+      router.back();
+    }
+  };
+
   return (
     <SafeAreaView className="flex-1 bg-gray-100">
-      <KeyboardAvoidingView 
+      <KeyboardAvoidingView
         behavior={Platform.OS === "ios" ? "padding" : undefined}
         className="flex-1"
       >
@@ -207,8 +189,8 @@ export default function EditOrderScreen() {
               <Text className="text-xs font-bold text-gray-400">
                 {order.customerName} · {order.seat}
               </Text>
-              <TouchableOpacity 
-                onPress={() => setShowCancelDialog(true)} 
+              <TouchableOpacity
+                onPress={() => setShowCancelDialog(true)}
                 className="bg-red-100 rounded-xl px-3 py-1.5"
               >
                 <Text className="text-sm font-extrabold text-red-600">X</Text>
@@ -216,11 +198,9 @@ export default function EditOrderScreen() {
             </View>
           </View>
 
-          {cancelError && (
-            <View className="mx-4 mt-3 bg-red-50 border border-red-100 rounded-2xl px-4 py-3">
-              <Text className="text-xs font-bold text-red-500">
-                {cancelError}
-              </Text>
+          {!!error && (
+            <View className="mb-3 bg-red-50 border border-red-100 rounded-2xl px-4 py-3">
+              <Text className="text-xs font-bold text-red-500">{error}</Text>
             </View>
           )}
 
@@ -284,7 +264,6 @@ export default function EditOrderScreen() {
                 key={item.id}
                 className="bg-yellow-100 rounded-2xl px-4 py-4 mb-3 shadow-sm"
               >
-                {/* Top Row: Info & Controls */}
                 <View className="flex-row items-center justify-between">
                   <View className="flex-1">
                     <Text className="text-sm font-bold text-gray-900">{item.name}</Text>
@@ -310,7 +289,6 @@ export default function EditOrderScreen() {
                   </View>
                 </View>
 
-                {/* Bottom Row: Notes Input */}
                 {qty > 0 && (
                   <View className="mt-3 pt-3 border-t border-yellow-200/50">
                     <TextInput
@@ -330,10 +308,7 @@ export default function EditOrderScreen() {
         {/* Bottom bar */}
         {totalItems > 0 && (
           <View className="absolute bottom-0 left-0 right-0 px-4 pb-4">
-            {/* Swapped TouchableOpacity for a View to fix nested tap issues */}
             <View className="bg-green-400 rounded-3xl px-5 py-4 shadow-sm">
-              
-              {/* Expanded Summary */}
               {summaryOpen && (
                 <View className="mb-3 max-h-60">
                   <ScrollView showsVerticalScrollIndicator={false}>
@@ -355,32 +330,35 @@ export default function EditOrderScreen() {
                       </View>
                     ))}
                   </ScrollView>
-                  
+
                   <View className="h-px bg-white/30 my-2" />
-                  
+
                   <View className="flex-row justify-between">
                     <Text className="text-sm font-extrabold text-white">Total</Text>
                     <Text className="text-sm font-extrabold text-white">
                       {formatRupiah(subtotal)}
                     </Text>
                   </View>
-                  
-                  {/* Save Button */}
+
                   <TouchableOpacity
-                    onPress={handleSave}
+                    onPress={() => handleSave(false)}
                     disabled={saving}
-                    className={`mt-3 bg-white rounded-xl py-3 items-center ${saving ? 'opacity-50' : ''}`}
+                    className="mt-3 bg-white rounded-xl py-3 items-center"
                   >
-                    <Text className="text-sm font-extrabold text-green-600">
-                      {saving ? "Saving..." : "Save Changes"}
-                    </Text>
+                    {saving ? (
+                      <ActivityIndicator size="small" color="#22c55e" />
+                    ) : (
+                      <Text className="text-sm font-extrabold text-green-600">
+                        Save Changes
+                      </Text>
+                    )}
                   </TouchableOpacity>
                 </View>
               )}
 
-              {/* Toggle Area */}
               <TouchableOpacity
                 onPress={() => setSummaryOpen((o) => !o)}
+                disabled={saving}
                 className="flex-row items-center gap-2"
               >
                 <View className="border-2 border-white/60 rounded-xl px-3 py-1">
@@ -392,7 +370,39 @@ export default function EditOrderScreen() {
                   {summaryOpen ? "▼ collapse" : "▲ review & save"}
                 </Text>
               </TouchableOpacity>
-              
+            </View>
+          </View>
+        )}
+
+        {/* Stock Warning Modal */}
+        {!!stockWarning && (
+          <View className="absolute inset-0 bg-black/50 items-center justify-center px-6">
+            <View className="bg-white rounded-3xl px-6 py-6 w-full shadow-xl">
+              <Text className="text-base font-black text-gray-900 mb-2">
+                ⚠️ Stock Warning
+              </Text>
+              <Text className="text-sm font-bold text-gray-600 mb-5">
+                {stockWarning}
+              </Text>
+              <View className="flex-row gap-3">
+                <TouchableOpacity
+                  onPress={() => setStockWarning(null)}
+                  className="flex-1 border-2 border-gray-200 rounded-2xl py-3 items-center"
+                >
+                  <Text className="text-sm font-extrabold text-gray-600">Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={() => {
+                    setStockWarning(null);
+                    handleSave(true);
+                  }}
+                  className="flex-1 bg-yellow-400 rounded-2xl py-3 items-center"
+                >
+                  <Text className="text-sm font-extrabold text-gray-900">
+                    Proceed Anyway
+                  </Text>
+                </TouchableOpacity>
+              </View>
             </View>
           </View>
         )}
@@ -407,7 +417,6 @@ export default function EditOrderScreen() {
           onConfirm={handleCancel}
           onCancel={() => setShowCancelDialog(false)}
         />
-
       </KeyboardAvoidingView>
     </SafeAreaView>
   );

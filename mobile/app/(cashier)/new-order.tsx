@@ -26,15 +26,13 @@ export default function NewOrderScreen() {
   const [customerName, setCustomerName] = useState("");
   const [seat, setSeat] = useState("");
   const [categoryIndex, setCategoryIndex] = useState(0);
-  
-  // State for quantities and notes tied to item IDs
   const [quantities, setQuantities] = useState<Record<number, number>>({});
-  const [notes, setNotes] = useState<Record<number, string>>({}); 
-  
+  const [notes, setNotes] = useState<Record<number, string>>({});
   const [summaryOpen, setSummaryOpen] = useState(false);
   const [step, setStep] = useState<"info" | "menu">("info");
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
+  const [stockWarning, setStockWarning] = useState<string | null>(null);
 
   const currentCategory: MenuCategory = CATEGORIES[categoryIndex];
   const categoryItems = menu.filter(
@@ -49,7 +47,7 @@ export default function NewOrderScreen() {
       price: m.price,
       quantity: quantities[m.id],
       category: m.category,
-      note: notes[m.id] || "", // Attach the note to the specific item
+      note: notes[m.id] || "",
       isSent: false,
       isCancelled: false,
       printBatch: 1,
@@ -66,8 +64,6 @@ export default function NewOrderScreen() {
     setQuantities((prev) => {
       const current = prev[id] ?? 0;
       if (current <= 0) return prev;
-      
-      // Optional cleanup: if quantity drops to 0, clear the note
       if (current - 1 === 0) {
         setNotes((prevNotes) => {
           const newNotes = { ...prevNotes };
@@ -75,7 +71,6 @@ export default function NewOrderScreen() {
           return newNotes;
         });
       }
-      
       return { ...prev, [id]: current - 1 };
     });
   }, []);
@@ -84,19 +79,28 @@ export default function NewOrderScreen() {
     setNotes((prev) => ({ ...prev, [id]: text }));
   }, []);
 
-  const handleConfirm = async () => {
+  const handleConfirm = async (force = false) => {
     if (selectedItems.length === 0) return;
     setSaving(true);
     setError("");
 
     try {
-      const { error } = await addOrder({
-        customerName,
-        seat,
-        items: selectedItems,
-        discount: 0,
-        status: "unpaid",
-      });
+      const { error, stockWarning } = await addOrder(
+        {
+          customerName,
+          seat,
+          items: selectedItems,
+          discount: 0,
+          status: "unpaid",
+        },
+        force
+      );
+
+      if (stockWarning) {
+        setStockWarning(stockWarning);
+        setSaving(false);
+        return;
+      }
 
       if (error) {
         setError(error);
@@ -109,7 +113,7 @@ export default function NewOrderScreen() {
     } catch (err: any) {
       console.error("Unhandled crash during order:", err);
       setError(err.message || "An unexpected error occurred.");
-      setSaving(false); // Stops the infinite loading!
+      setSaving(false);
     }
   };
 
@@ -181,7 +185,7 @@ export default function NewOrderScreen() {
   // Step 2: menu selection
   return (
     <SafeAreaView className="flex-1 bg-gray-100">
-      <KeyboardAvoidingView 
+      <KeyboardAvoidingView
         behavior={Platform.OS === "ios" ? "padding" : undefined}
         className="flex-1"
       >
@@ -255,7 +259,6 @@ export default function NewOrderScreen() {
                 key={item.id}
                 className="bg-yellow-100 rounded-2xl px-4 py-4 mb-3 shadow-sm"
               >
-                {/* Top Row: Name, Price, Adjusters */}
                 <View className="flex-row items-center justify-between">
                   <View className="flex-1">
                     <Text className="text-sm font-bold text-gray-900">{item.name}</Text>
@@ -281,7 +284,6 @@ export default function NewOrderScreen() {
                   </View>
                 </View>
 
-                {/* Bottom Row: Note Input (Appears only if qty > 0) */}
                 {qty > 0 && (
                   <View className="mt-3 pt-3 border-t border-yellow-200/50">
                     <TextInput
@@ -298,19 +300,15 @@ export default function NewOrderScreen() {
           })}
         </ScrollView>
 
-        {/* Error message */}
         {!!error && (
           <View className="mx-4 mb-2 bg-red-50 border border-red-100 rounded-2xl px-4 py-3">
             <Text className="text-xs font-bold text-red-500 text-center">{error}</Text>
           </View>
         )}
 
-        {/* Bottom summary bar */}
         {totalItems > 0 && (
           <View className="absolute bottom-0 left-0 right-0">
             <View className="mx-4 mb-2 bg-green-400 rounded-3xl px-5 py-4 shadow-sm">
-              
-              {/* The Expanded Summary */}
               {summaryOpen && (
                 <View className="mb-3 max-h-60">
                   <ScrollView showsVerticalScrollIndicator={false}>
@@ -340,9 +338,8 @@ export default function NewOrderScreen() {
                     </Text>
                   </View>
 
-                  {/* Confirm Button - Now it will actually click! */}
                   <TouchableOpacity
-                    onPress={handleConfirm}
+                    onPress={() => handleConfirm(false)}
                     disabled={saving}
                     className="mt-3 bg-white rounded-xl py-3 items-center"
                   >
@@ -357,8 +354,7 @@ export default function NewOrderScreen() {
                 </View>
               )}
 
-              {/* Toggle Button - Only this part controls the opening/closing now */}
-              <TouchableOpacity 
+              <TouchableOpacity
                 onPress={() => setSummaryOpen((o) => !o)}
                 disabled={saving}
                 className="flex-row items-center gap-2"
@@ -372,7 +368,39 @@ export default function NewOrderScreen() {
                   {summaryOpen ? "▼ tap to collapse" : "▲ tap to review"}
                 </Text>
               </TouchableOpacity>
+            </View>
+          </View>
+        )}
 
+        {/* Stock Warning Modal */}
+        {!!stockWarning && (
+          <View className="absolute inset-0 bg-black/50 items-center justify-center px-6">
+            <View className="bg-white rounded-3xl px-6 py-6 w-full shadow-xl">
+              <Text className="text-base font-black text-gray-900 mb-2">
+                ⚠️ Stock Warning
+              </Text>
+              <Text className="text-sm font-bold text-gray-600 mb-5">
+                {stockWarning}
+              </Text>
+              <View className="flex-row gap-3">
+                <TouchableOpacity
+                  onPress={() => setStockWarning(null)}
+                  className="flex-1 border-2 border-gray-200 rounded-2xl py-3 items-center"
+                >
+                  <Text className="text-sm font-extrabold text-gray-600">Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={() => {
+                    setStockWarning(null);
+                    handleConfirm(true);
+                  }}
+                  className="flex-1 bg-yellow-400 rounded-2xl py-3 items-center"
+                >
+                  <Text className="text-sm font-extrabold text-gray-900">
+                    Proceed Anyway
+                  </Text>
+                </TouchableOpacity>
+              </View>
             </View>
           </View>
         )}
