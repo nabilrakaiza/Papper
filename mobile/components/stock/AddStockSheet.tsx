@@ -46,8 +46,8 @@ export default function AddStockSheet({ onAdd, sheetRef }: Props) {
   useEffect(() => {
     const fetchDefinitions = async () => {
       const { data } = await supabase
-        .from("stock_definitions")
-        .select("*")
+        .from("stock")
+        .select("id, name, unit")
         .order("name", { ascending: true });
       if (data) setDefinitions(data);
       setLoadingDefs(false);
