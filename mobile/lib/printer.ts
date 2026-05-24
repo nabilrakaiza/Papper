@@ -1,6 +1,9 @@
 import { BluetoothEscposPrinter, BluetoothManager } from '@vardrz/react-native-bluetooth-escpos-printer';
-import { PermissionsAndroid, Platform, Linking } from 'react-native';
+import { PermissionsAndroid, Platform, Linking, Image } from 'react-native';
 import { Order } from '../types/order';
+import RNFS from 'react-native-fs';
+import { Asset } from 'expo-asset';
+import { readAsStringAsync, EncodingType } from 'expo-file-system/legacy';
 
 function formatRupiah(amount: number): string {
   return 'Rp ' + Math.round(amount).toLocaleString('id-ID');
@@ -116,7 +119,18 @@ async function printCustomerReceipt(order: Order): Promise<void> {
     }, {})
   );
 
+  const [asset] = await Asset.loadAsync(require('../assets/images/logonabawi.png'));
+  const base64Image = await readAsStringAsync(asset.localUri || asset.uri, {
+    encoding: EncodingType.Base64,
+  });
+
   // 2. Print Header
+  await BluetoothEscposPrinter.printerAlign(BluetoothEscposPrinter.ALIGN.CENTER);
+  await BluetoothEscposPrinter.printPic(base64Image, {
+    width: 200,
+    left: 0,
+  });
+
   await BluetoothEscposPrinter.printerAlign(BluetoothEscposPrinter.ALIGN.CENTER);
   
   // Increased widthtimes and heigthtimes to 4 for bigger text. 
@@ -144,7 +158,11 @@ async function printCustomerReceipt(order: Order): Promise<void> {
   });
   
   await BluetoothEscposPrinter.printText(`Date    : ${jktDateTime}\n`, {});
+  await BluetoothEscposPrinter.printText('Cashier : Pak Mbappe\n', {});
   await BluetoothEscposPrinter.printText('--------------------------------\n', {});
+  
+  await BluetoothEscposPrinter.printerAlign(BluetoothEscposPrinter.ALIGN.CENTER);
+  await BluetoothEscposPrinter.printText('*Dine In/Take Away\n', {});
 
   // 3. Print Items
   for (const item of groupedItems) {
@@ -194,10 +212,23 @@ async function printCustomerReceipt(order: Order): Promise<void> {
     {}
   );
 
+  const colWidths = [20, 12];
+  const colAligns = [
+    BluetoothEscposPrinter.ALIGN.LEFT,
+    BluetoothEscposPrinter.ALIGN.RIGHT
+  ];
+
+  await BluetoothEscposPrinter.printColumn(colWidths, colAligns, ['Payment Method', 'Cash/QRIS'], {});
+  await BluetoothEscposPrinter.printColumn(colWidths, colAligns, ['Money Given', formatRupiah(200000)], {});
+  await BluetoothEscposPrinter.printColumn(colWidths, colAligns, ['Change', formatRupiah(20000)], {});
+
   // 8. Print Footer
   await BluetoothEscposPrinter.printerAlign(BluetoothEscposPrinter.ALIGN.CENTER);
   await BluetoothEscposPrinter.printText('--------------------------------\n', {});
   await BluetoothEscposPrinter.printText('Thank you!\n', {});
+  await BluetoothEscposPrinter.printText('\n', {});
+  await BluetoothEscposPrinter.printText('Instagram  : @nabawicafe\n', {});
+  await BluetoothEscposPrinter.printText('TikTok  : @nabawicafe\n', {});
   await BluetoothEscposPrinter.printText('\n\n\n', {});
 }
 
