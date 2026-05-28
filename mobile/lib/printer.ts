@@ -1,7 +1,6 @@
 import { BluetoothEscposPrinter, BluetoothManager } from '@vardrz/react-native-bluetooth-escpos-printer';
-import { PermissionsAndroid, Platform, Linking, Image } from 'react-native';
+import { PermissionsAndroid, Platform, Linking } from 'react-native';
 import { Order } from '../types/order';
-import RNFS from 'react-native-fs';
 import { Asset } from 'expo-asset';
 import { readAsStringAsync, EncodingType } from 'expo-file-system/legacy';
 
@@ -160,7 +159,7 @@ async function printCustomerReceipt(order: Order): Promise<void> {
   await BluetoothEscposPrinter.printText(`Date    : ${jktDateTime}\n`, {});
   await BluetoothEscposPrinter.printText('Cashier : Pak Mbappe\n', {});
   await BluetoothEscposPrinter.printText('--------------------------------\n', {});
-  
+
   await BluetoothEscposPrinter.printerAlign(BluetoothEscposPrinter.ALIGN.CENTER);
   await BluetoothEscposPrinter.printText('*Dine In/Take Away\n', {});
 
