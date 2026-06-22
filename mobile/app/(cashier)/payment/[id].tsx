@@ -28,7 +28,7 @@ export default function PaymentScreen() {
   if (!order) {
     return (
       <SafeAreaView className="flex-1 bg-gray-100 items-center justify-center">
-        <Text className="text-gray-400 font-bold">Order not found</Text>
+        <Text className="text-gray-400 font-bold">Order tidak ditemukan</Text>
       </SafeAreaView>
     );
   }
@@ -93,17 +93,17 @@ export default function PaymentScreen() {
         {/* Customer info */}
         <View className="bg-green-400 rounded-2xl px-4 py-3 mb-4 self-start shadow shadow-green-600/30">
           <Text className="text-sm font-bold text-white">
-            Customer Name : {order.customerName}
+            Nama Customer : {order.customerName}
           </Text>
           <Text className="text-sm font-bold text-white">
-            Seat{"             "}: {order.seat}
+            Tempat Duduk{"    "}: {order.seat}
           </Text>
         </View>
 
         {/* Order summary */}
         <View className="bg-yellow-100 rounded-3xl px-5 py-5 shadow-sm">
           <View className="border-2 border-gray-200 rounded-xl px-3 py-1.5 self-start mb-4 bg-white/60">
-            <Text className="text-sm font-bold text-gray-700">Order Summary</Text>
+            <Text className="text-sm font-bold text-gray-700">Order Customer</Text>
           </View>
 
           {groupedItems.map((item) => (
@@ -140,7 +140,7 @@ export default function PaymentScreen() {
           {/* Tax */}
           <View className="flex-row items-center gap-3 mb-3">
             <View className="border-2 border-gray-200 rounded-xl px-3 py-1.5 bg-white/60">
-              <Text className="text-sm font-bold text-gray-600">Tax</Text>
+              <Text className="text-sm font-bold text-gray-600">Tax/Pajak</Text>
             </View>
            <View className="border-2 border-gray-200 rounded-xl px-3 py-1.5 bg-white/60">
               <Text className="text-sm font-bold text-gray-600">10 %</Text>

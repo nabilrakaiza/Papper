@@ -289,7 +289,7 @@ export default function CashierHomeScreen() {
             onPress={() => router.push("/(cashier)/new-order")}
             className="w-full bg-cyan-200 rounded-2xl py-4 items-center shadow shadow-cyan-400/20"
           >
-            <Text className="text-sm font-extrabold text-gray-600">Add New Order</Text>
+            <Text className="text-sm font-extrabold text-gray-600">Tambah order baru</Text>
           </TouchableOpacity>
         </View>
       )}

@@ -112,7 +112,7 @@ export default function NewOrderScreen() {
       router.back();
     } catch (err: any) {
       console.error("Unhandled crash during order:", err);
-      setError(err.message || "An unexpected error occurred.");
+      setError(err.message || "Ada error terjadi.");
       setSaving(false);
     }
   };
@@ -129,13 +129,13 @@ export default function NewOrderScreen() {
             <TouchableOpacity onPress={() => router.back()}>
               <ChevronLeft size={24} color="#333" />
             </TouchableOpacity>
-            <Text className="text-xl font-black text-gray-900">New Order</Text>
+            <Text className="text-xl font-black text-gray-900">Order Baru</Text>
           </View>
 
           <View className="px-5 mt-4">
             <View className="bg-yellow-100 rounded-3xl px-5 py-6 shadow-sm">
               <Text className="text-[10px] font-extrabold text-gray-400 uppercase tracking-widest mb-1">
-                Customer Name
+                Nama Customer
               </Text>
               <TextInput
                 className="w-full bg-white border-2 border-gray-100 rounded-xl px-4 py-3 font-bold text-sm text-gray-900 mb-4"
@@ -147,7 +147,7 @@ export default function NewOrderScreen() {
               />
 
               <Text className="text-[10px] font-extrabold text-gray-400 uppercase tracking-widest mb-1">
-                Seat
+                Tempat Duduk / Seat
               </Text>
               <TextInput
                 className="w-full bg-white border-2 border-gray-100 rounded-xl px-4 py-3 font-bold text-sm text-gray-900 mb-2"
@@ -172,7 +172,7 @@ export default function NewOrderScreen() {
                 className="bg-green-500 rounded-2xl py-4 items-center mt-2 shadow shadow-green-600/30"
               >
                 <Text className="text-sm font-extrabold text-white">
-                  Next → Select Menu
+                  Pilih Menu
                 </Text>
               </TouchableOpacity>
             </View>
@@ -288,7 +288,7 @@ export default function NewOrderScreen() {
                   <View className="mt-3 pt-3 border-t border-yellow-200/50">
                     <TextInput
                       className="w-full bg-white/70 rounded-xl px-3 py-2 text-xs font-bold text-gray-800"
-                      placeholder={`Notes for ${item.name} (optional)`}
+                      placeholder={`Catatan untuk ${item.name} (opsional)`}
                       placeholderTextColor="#9ca3af"
                       value={notes[item.id] || ""}
                       onChangeText={(text) => handleNoteChange(item.id, text)}
@@ -365,7 +365,7 @@ export default function NewOrderScreen() {
                   </Text>
                 </View>
                 <Text className="text-white/70 text-xs font-bold">
-                  {summaryOpen ? "▼ tap to collapse" : "▲ tap to review"}
+                  {summaryOpen ? "▼ tekan untuk tutup" : "▲ tekan untuk review"}
                 </Text>
               </TouchableOpacity>
             </View>
@@ -377,7 +377,7 @@ export default function NewOrderScreen() {
           <View className="absolute inset-0 bg-black/50 items-center justify-center px-6">
             <View className="bg-white rounded-3xl px-6 py-6 w-full shadow-xl">
               <Text className="text-base font-black text-gray-900 mb-2">
-                ⚠️ Stock Warning
+                ⚠️ Stock Warning - Stock bisa saja habis
               </Text>
               <Text className="text-sm font-bold text-gray-600 mb-5">
                 {stockWarning}
@@ -397,7 +397,7 @@ export default function NewOrderScreen() {
                   className="flex-1 bg-yellow-400 rounded-2xl py-3 items-center"
                 >
                   <Text className="text-sm font-extrabold text-gray-900">
-                    Proceed Anyway
+                    Lanjutkan saja
                   </Text>
                 </TouchableOpacity>
               </View>

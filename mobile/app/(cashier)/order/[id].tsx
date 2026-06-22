@@ -71,7 +71,7 @@ export default function EditOrderScreen() {
   if (!order) {
     return (
       <SafeAreaView className="flex-1 bg-gray-100 items-center justify-center">
-        <Text className="text-gray-400 font-bold">Order not found</Text>
+        <Text className="text-gray-400 font-bold">Order tidak ditemukan</Text>
       </SafeAreaView>
     );
   }
@@ -293,7 +293,7 @@ export default function EditOrderScreen() {
                   <View className="mt-3 pt-3 border-t border-yellow-200/50">
                     <TextInput
                       className="w-full bg-white/70 rounded-xl px-3 py-2 text-xs font-bold text-gray-800"
-                      placeholder={`Notes for ${item.name} (optional)`}
+                      placeholder={`Catatan untuk ${item.name} (optional)`}
                       placeholderTextColor="#9ca3af"
                       value={notes[item.id] || ""}
                       onChangeText={(text) => handleNoteChange(item.id, text)}
@@ -349,7 +349,7 @@ export default function EditOrderScreen() {
                       <ActivityIndicator size="small" color="#22c55e" />
                     ) : (
                       <Text className="text-sm font-extrabold text-green-600">
-                        Save Changes
+                        Simpan Order
                       </Text>
                     )}
                   </TouchableOpacity>
@@ -367,7 +367,7 @@ export default function EditOrderScreen() {
                   </Text>
                 </View>
                 <Text className="text-white/70 text-xs font-bold">
-                  {summaryOpen ? "▼ collapse" : "▲ review & save"}
+                  {summaryOpen ? "▼ tutup" : "▲ review & simpan"}
                 </Text>
               </TouchableOpacity>
             </View>
@@ -379,7 +379,7 @@ export default function EditOrderScreen() {
           <View className="absolute inset-0 bg-black/50 items-center justify-center px-6">
             <View className="bg-white rounded-3xl px-6 py-6 w-full shadow-xl">
               <Text className="text-base font-black text-gray-900 mb-2">
-                ⚠️ Stock Warning
+                ⚠️ Stock Warning - Stock bisa saja habis
               </Text>
               <Text className="text-sm font-bold text-gray-600 mb-5">
                 {stockWarning}
@@ -399,7 +399,7 @@ export default function EditOrderScreen() {
                   className="flex-1 bg-yellow-400 rounded-2xl py-3 items-center"
                 >
                   <Text className="text-sm font-extrabold text-gray-900">
-                    Proceed Anyway
+                    Lanjutkan saja
                   </Text>
                 </TouchableOpacity>
               </View>
@@ -410,9 +410,9 @@ export default function EditOrderScreen() {
         <ConfirmDialog
           visible={showCancelDialog}
           title="Cancel Order"
-          message="Are you sure you want to cancel this order? This cannot be undone."
-          confirmLabel="Yes, Cancel"
-          cancelLabel="Keep"
+          message="Apakah anda yakin untuk menghapus order ini? aksi ini tidak bisa dibatalkan"
+          confirmLabel="Iya, Cancel"
+          cancelLabel="Tidak"
           destructive
           onConfirm={handleCancel}
           onCancel={() => setShowCancelDialog(false)}

@@ -24,7 +24,7 @@ export default function AvailabilityScreen() {
     <SafeAreaView className="flex-1 bg-gray-100">
       {/* Header */}
       <View className="px-5 pt-4 pb-3">
-        <Text className="text-2xl font-black text-gray-900">Availability</Text>
+        <Text className="text-2xl font-black text-gray-900">Availability / Ketersediaan</Text>
       </View>
 
       <ScrollView
@@ -93,7 +93,7 @@ export default function AvailabilityScreen() {
       <View className="absolute bottom-0 left-0 right-0 px-4 pb-6">
         <TouchableOpacity className="w-full bg-green-400 rounded-2xl py-4 items-center shadow shadow-green-600/30">
           <Text className="text-sm font-extrabold text-white">
-            Confirm Availability
+            Simpan Ketersediaan
           </Text>
         </TouchableOpacity>
       </View>
