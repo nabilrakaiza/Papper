@@ -1,7 +1,6 @@
 import {
   View,
   Text,
-//   SafeAreaView,
   TouchableOpacity,
   ActivityIndicator,
 } from "react-native";

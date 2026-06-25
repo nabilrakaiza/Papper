@@ -9,7 +9,7 @@ import * as NavigationBar from 'expo-navigation-bar';
 
 // app/_layout.tsx
 function RootNavigator() {
-  const { session, role, loading } = useAuth();
+  const { session, profile, loading } = useAuth();
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
@@ -40,17 +40,17 @@ function RootNavigator() {
     if (!session) {
       // console.log("p1") 
       router.replace("/(auth)/login");
-    } else if (role === "admin") {
+    } else if (profile?.role === "admin") {
       // console.log("p2")
       router.replace("/(admin)/(tabs)");
-    } else if (role === "cashier") {
+    } else if (profile?.role === "cashier") {
       // console.log("p3")
       router.replace("/(cashier)/(tabs)");
     } else {
       // console.log("p4")
       router.replace("/(auth)/login");
     }
-  }, [session, role, ready]);
+  }, [session, profile, ready]);
 
   if (!ready) {
     return (

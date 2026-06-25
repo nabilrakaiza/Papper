@@ -25,6 +25,7 @@ export default function NewOrderScreen() {
 
   const [customerName, setCustomerName] = useState("");
   const [seat, setSeat] = useState("");
+  const [isDineIn, setIsDineIn] = useState(true);
   const [categoryIndex, setCategoryIndex] = useState(0);
   const [quantities, setQuantities] = useState<Record<number, number>>({});
   const [notes, setNotes] = useState<Record<number, string>>({});
@@ -92,6 +93,9 @@ export default function NewOrderScreen() {
           items: selectedItems,
           discount: 0,
           status: "unpaid",
+          methodOfPayment: null, // TODO, add the UI
+          isDineIn: isDineIn,
+          paymentAmount: 0
         },
         force
       );
@@ -157,6 +161,35 @@ export default function NewOrderScreen() {
                 placeholderTextColor="#ccc"
                 autoCapitalize="characters"
               />
+
+              <Text className="text-[10px] font-extrabold text-gray-400 uppercase tracking-widest mb-1">
+                Dine in / Take away
+              </Text>
+              <View className="flex-row w-full gap-2 mb-2 mt-2">
+                <TouchableOpacity
+                  className={`flex-1 py-3 rounded-xl border-2 items-center justify-center ${
+                    isDineIn ? 'bg-gray-900 border-gray-900' : 'bg-white border-gray-100'
+                  }`}
+                  onPress={() => setIsDineIn(true)}
+                  activeOpacity={0.7}
+                >
+                  <Text className={`font-bold text-sm ${isDineIn ? 'text-white' : 'text-gray-900'}`}>
+                    Dine In
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  className={`flex-1 py-3 rounded-xl border-2 items-center justify-center ${
+                    !isDineIn ? 'bg-gray-900 border-gray-900' : 'bg-white border-gray-100'
+                  }`}
+                  onPress={() => setIsDineIn(false)}
+                  activeOpacity={0.7}
+                >
+                  <Text className={`font-bold text-sm ${!isDineIn ? 'text-white' : 'text-gray-900'}`}>
+                    Takeaway
+                  </Text>
+                </TouchableOpacity>
+              </View>
 
               {!!error && (
                 <Text className="text-xs font-bold text-red-500 mb-2">{error}</Text>

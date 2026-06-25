@@ -9,7 +9,7 @@ type OrderContextType = {
   error: string | null;
   addOrder: (order: Omit<Order, "id" | "createdAt">, force?: boolean) => Promise<{ error: string | null; stockWarning?: string }>;
   updateOrder: (id: number, order: Partial<Order>, force?: boolean) => Promise<{ error: string | null; stockWarning?: string }>;
-  markPaid: (id: number, discount: number) => Promise<{ error: string | null }>;
+  markPaid: (id: number, discount: number, methodOfPayment: string, paymentAmount: number) => Promise<{ error: string | null }>;
   toggleMenuAvailability: (menuId: number) => Promise<void>;
   refetch: () => Promise<void>;
 };
@@ -69,6 +69,9 @@ export function OrderProvider({ children }: { children: ReactNode }) {
         discount: o.discount,
         status: o.status,
         createdAt: new Date(o.created_at),
+        methodOfPayment: o.method_of_payment,
+        isDineIn: o.is_dine_in,
+        paymentAmount: o.payment_amount,
         items: o.order_items.map((i: any) => ({
             menuId: i.menu_id,
             name: i.name,
@@ -142,6 +145,9 @@ export function OrderProvider({ children }: { children: ReactNode }) {
         seat: order.seat,
         discount: order.discount,
         status: order.status,
+        method_of_payment: order.methodOfPayment,
+        is_dine_in: order.isDineIn,
+        payment_amount: order.paymentAmount
       })
       .select()
       .single();
@@ -328,10 +334,10 @@ export function OrderProvider({ children }: { children: ReactNode }) {
     return { error: null };
   };
 
-  const markPaid = async (id: number, discount: number): Promise<{ error: string | null }> => {
+  const markPaid = async (id: number, discount: number, methodOfPayment: string, paymentAmount: number): Promise<{ error: string | null }> => {
     const { error } = await supabase
       .from("orders")
-      .update({ status: "paid", discount })
+      .update({ status: "paid", discount: discount, method_of_payment: methodOfPayment, payment_amount: Math.round(paymentAmount)})
       .eq("id", id);
 
     if (error) {

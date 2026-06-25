@@ -3,9 +3,19 @@ import { PermissionsAndroid, Platform, Linking } from 'react-native';
 import { Order } from '../types/order';
 import { Asset } from 'expo-asset';
 import { readAsStringAsync, EncodingType } from 'expo-file-system/legacy';
+import { CurrentUser } from '@/hooks/useUser';
 
-function formatRupiah(amount: number): string {
+function formatRupiah(amount: number | null): string {
+  if (amount === null){
+    return '';
+  }
   return 'Rp ' + Math.round(amount).toLocaleString('id-ID');
+}
+
+function orderTotal(order: Order): number {
+  const subtotal = order.items.reduce((sum, i) => sum + i.price * i.quantity, 0);
+  const tax = 0.1
+  return subtotal * (1 - order.discount / 100) * (1 + tax);
 }
 
 async function requestBluetoothPermissions(): Promise<{
@@ -94,7 +104,7 @@ export async function connectToPrinter(address: string): Promise<{ error: string
     return { error: e.message };
   }
 }
-async function printCustomerReceipt(order: Order): Promise<void> {
+async function printCustomerReceipt(order: Order, user: CurrentUser, totalPrice: number, moneyGiven: number | null): Promise<void> {
   // 1. Synchronized calculation logic
   const subtotal = order.items.reduce((sum, i) => sum + i.price * i.quantity, 0);
   
@@ -157,11 +167,16 @@ async function printCustomerReceipt(order: Order): Promise<void> {
   });
   
   await BluetoothEscposPrinter.printText(`Date    : ${jktDateTime}\n`, {});
-  await BluetoothEscposPrinter.printText('Cashier : Pak Mbappe\n', {});
+  await BluetoothEscposPrinter.printText(`Cashier : ${user.name}\n`, {});
   await BluetoothEscposPrinter.printText('--------------------------------\n', {});
 
   await BluetoothEscposPrinter.printerAlign(BluetoothEscposPrinter.ALIGN.CENTER);
-  await BluetoothEscposPrinter.printText('*Dine In/Take Away\n', {});
+  if (order.isDineIn){
+    await BluetoothEscposPrinter.printText(`* Dine In *\n`, {});
+  }
+  else{
+    await BluetoothEscposPrinter.printText(`* Take Away *\n`, {});
+  }
 
   // 3. Print Items
   for (const item of groupedItems) {
@@ -217,9 +232,17 @@ async function printCustomerReceipt(order: Order): Promise<void> {
     BluetoothEscposPrinter.ALIGN.RIGHT
   ];
 
-  await BluetoothEscposPrinter.printColumn(colWidths, colAligns, ['Payment Method', 'Cash/QRIS'], {});
-  await BluetoothEscposPrinter.printColumn(colWidths, colAligns, ['Money Given', formatRupiah(200000)], {});
-  await BluetoothEscposPrinter.printColumn(colWidths, colAligns, ['Change', formatRupiah(20000)], {});
+  if (order.status === 'paid') {
+    await BluetoothEscposPrinter.printColumn(colWidths, colAligns, ['Payment Method', `${order.methodOfPayment}`], {});
+
+    if (order.methodOfPayment === 'Cash' && moneyGiven != null){
+      await BluetoothEscposPrinter.printColumn(colWidths, colAligns, ['Payment Amount', formatRupiah(moneyGiven)], {});
+      await BluetoothEscposPrinter.printColumn(colWidths, colAligns, ['Change', formatRupiah(totalPrice - moneyGiven)], {});
+    }
+    else {
+      await BluetoothEscposPrinter.printColumn(colWidths, colAligns, ['Payment Amount', formatRupiah(moneyGiven)], {});
+    }
+  }
 
   // 8. Print Footer
   await BluetoothEscposPrinter.printerAlign(BluetoothEscposPrinter.ALIGN.CENTER);
@@ -277,6 +300,7 @@ export async function printReceipt(
   order: Order,
   cashierPrinter: { address: string } | null,
   kitchenPrinter: { address: string } | null,
+  user: CurrentUser,
 ): Promise<{ error: string | null }> {
   let errors: string[] = [];
 
@@ -284,7 +308,7 @@ export async function printReceipt(
   if (cashierPrinter) {
     try {
       await BluetoothManager.connect(cashierPrinter.address);
-      await printCustomerReceipt(order);
+      await printCustomerReceipt(order, user, orderTotal(order), order.paymentAmount);
     } catch (e: any) {
       errors.push(`Cashier Printer Error: ${e.message}`);
     }

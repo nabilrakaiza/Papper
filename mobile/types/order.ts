@@ -21,6 +21,9 @@ export type Order = {
   discount: number;
   status: OrderStatus;
   createdAt: Date;
+  methodOfPayment: string | null;
+  isDineIn: boolean;
+  paymentAmount: number | null;
 };
 
 export type MenuCategory = "Ayam" | "Nasi" | "Sapi" | "Udang"| 

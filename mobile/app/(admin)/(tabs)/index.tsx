@@ -4,7 +4,6 @@ import {
   Text,
   FlatList,
   TouchableOpacity,
-  // SafeAreaView,
   ActivityIndicator,
   TextInput,
 } from "react-native";

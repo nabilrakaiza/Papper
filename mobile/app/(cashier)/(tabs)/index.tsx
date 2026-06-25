@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   View,
   Text,
@@ -16,6 +16,7 @@ import PrinterSelector from "../../../components/PrinterSelector";
 // Note: You might need to update your printReceipt function in lib/printer 
 // to handle printing to just one specific printer based on the action.
 import { printReceipt } from "../../../lib/printer";
+import { useUser } from "@/hooks/useUser";
 
 function formatRupiah(amount: number): string {
   return "Rp " + Math.round(amount).toLocaleString("id-ID");
@@ -33,6 +34,34 @@ type OrderCardProps = {
   onPrintBillPress: (order: Order) => void;
 };
 
+function useOrderTimer(createdAt: Date) {
+  const [elapsedMinutes, setElapsedMinutes] = useState(
+    Math.floor((Date.now() - createdAt.getTime()) / 60000)
+  );
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setElapsedMinutes(Math.floor((Date.now() - createdAt.getTime()) / 60000));
+    }, 60000);
+    return () => clearInterval(interval);
+  }, [createdAt]);
+
+  return elapsedMinutes;
+}
+
+function TimerDot({ createdAt }: { createdAt: Date }) {
+  const elapsed = useOrderTimer(createdAt);
+  const color = elapsed < 30 ? "#22c55e" : elapsed < 60 ? "#eab308" : "#ef4444";
+  const label = elapsed >= 60 ? `${Math.floor(elapsed / 60)}h ${elapsed % 60}m` : `${elapsed}m`;
+
+  return (
+    <View style={{ flexDirection: "row", alignItems: "center", marginLeft: 6, gap: 4 }}>
+      <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: color }} />
+      <Text style={{ fontSize: 11, fontWeight: "600", color }}>{label}</Text>
+    </View>
+  );
+}
+
 function OrderCard({ order, onPrintKitchenPress, onPrintBillPress }: OrderCardProps) {
   const isPaid = order.status === "paid";
 
@@ -45,23 +74,22 @@ function OrderCard({ order, onPrintKitchenPress, onPrintBillPress }: OrderCardPr
       }`}
     >
       <View className="flex-row items-center justify-between">
-        <View className={`rounded-xl px-3 py-1.5 ${isPaid ? "bg-white/20" : "bg-white/80"}`}>
+        <View className={`flex-row items-center rounded-xl px-3 py-1.5 ${isPaid ? "bg-white/20" : "bg-white/80"}`}>
           <Text className={`text-sm font-bold ${isPaid ? "text-white" : "text-gray-800"}`}>
             Order : {order.customerName}
           </Text>
+          {!isPaid && <TimerDot createdAt={order.createdAt} />}
         </View>
 
         <View className="flex-row items-center gap-5">
-          {/* Kitchen Print Action */}
           <TouchableOpacity onPress={() => onPrintKitchenPress(order)}>
-            <Utensils size={20} color="#FF6B6B" /> 
+            <Utensils size={20} color="#FF6B6B" />
           </TouchableOpacity>
 
-          {/* Bill Print Action */}
           <TouchableOpacity onPress={() => onPrintBillPress(order)}>
             <Receipt size={20} color={isPaid ? "green" : "#555"} />
           </TouchableOpacity>
-          
+
           {!isPaid && (
             <>
               <TouchableOpacity onPress={() => router.push(`/(cashier)/order/${order.id}`)}>
@@ -104,6 +132,8 @@ export default function CashierHomeScreen() {
 
   const unpaid = orders.filter((o) => o.status === "unpaid");
   const paid = orders.filter((o) => o.status === "paid");
+  
+  const { user, loading: userLoading } = useUser();
 
   // Unified handler to route to the correct printer logic
   const handlePrint = async (order: Order, type: "kitchen" | "bill") => {
@@ -134,9 +164,9 @@ export default function CashierHomeScreen() {
 
     let printErr = null;
 
-    if (type === "kitchen") {
+    if (type === "kitchen" && user) {
       const targetPrinter = specificPrinter || kitchenPrinter;
-      const { error } = await printReceipt(order, null, targetPrinter); // Passing null to cashier to prevent dual-printing
+      const { error } = await printReceipt(order, null, targetPrinter, user); // Passing null to cashier to prevent dual-printing
       printErr = error;
 
       // --- NEW: Handle is_sent after a successful kitchen print ---
@@ -159,9 +189,9 @@ export default function CashierHomeScreen() {
       }
       // -------------------------------------------------------------
 
-    } else {
+    } else if (user) {
       const targetPrinter = specificPrinter || cashierPrinter;
-      const { error } = await printReceipt(order, targetPrinter, null); // Passing null to kitchen to prevent dual-printing
+      const { error } = await printReceipt(order, targetPrinter, null, user); // Passing null to kitchen to prevent dual-printing
       printErr = error;
     }
 
