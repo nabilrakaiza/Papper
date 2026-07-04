@@ -9,6 +9,7 @@ type OrderContextType = {
   error: string | null;
   addOrder: (order: Omit<Order, "id" | "createdAt">, force?: boolean) => Promise<{ error: string | null; stockWarning?: string }>;
   updateOrder: (id: number, order: Partial<Order>, force?: boolean) => Promise<{ error: string | null; stockWarning?: string }>;
+  cancelOrderWithPin: (orderId: number, pin: string) => Promise<{ error: string | null }>;
   markPaid: (id: number, discount: number, methodOfPayment: string, paymentAmount: number) => Promise<{ error: string | null }>;
   toggleMenuAvailability: (menuId: number) => Promise<void>;
   refetch: () => Promise<void>;
@@ -334,6 +335,23 @@ export function OrderProvider({ children }: { children: ReactNode }) {
     return { error: null };
   };
 
+  const cancelOrderWithPin = async (orderId: number, pin: string) => {
+    const { data, error } = await supabase.rpc("cancel_order_with_pin", {
+      p_order_id: orderId,
+      p_pin: pin,
+    });
+
+    if (error) return { success: false, error: "Terjadi kesalahan" };
+    if (!data) return { success: false, error: "PIN salah" };
+
+    // sync local state the same way updateOrder does
+    setOrders((prev) =>
+      prev.map((o) => (o.id === orderId ? { ...o, status: "cancelled" } : o))
+    );
+
+    return { success: true, error: null };
+  };
+
   const markPaid = async (id: number, discount: number, methodOfPayment: string, paymentAmount: number): Promise<{ error: string | null }> => {
     const { error } = await supabase
       .from("orders")
@@ -380,6 +398,7 @@ export function OrderProvider({ children }: { children: ReactNode }) {
         error,
         addOrder,
         updateOrder,
+        cancelOrderWithPin,
         markPaid,
         toggleMenuAvailability,
         refetch: fetchOrders,

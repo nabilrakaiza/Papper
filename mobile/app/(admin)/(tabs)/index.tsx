@@ -119,9 +119,9 @@ export default function StockScreen() {
     fetchStock();
   };
 
-  const filtered = items.filter((i) =>
-    i.name.toLowerCase().includes(search.toLowerCase())
-  );
+  const filtered = items
+    .filter((i) => i.name.toLowerCase().includes(search.toLowerCase()))
+    .sort((a, b) => a.quantity - b.quantity);
 
   return (
     <SafeAreaView className="flex-1 bg-gray-100">
@@ -131,12 +131,6 @@ export default function StockScreen() {
           <Text className="text-blue-500 text-xl font-black">✛</Text>
           <Text className="text-2xl font-black text-gray-900">Stock</Text>
         </View>
-        {/* <TouchableOpacity
-          onPress={signOut}
-          className="w-10 h-10 rounded-full bg-gray-900 items-center justify-center"
-        >
-          <User size={18} color="white" />
-        </TouchableOpacity> */}
       </View>
 
       {/* Search */}
@@ -199,7 +193,7 @@ export default function StockScreen() {
 
       {/* Add Button */}
       {!loading && (
-        <View className="absolute bottom-6 left-4 right-4">
+        <View className="absolute bottom-0 left-0 right-0 bg-gray-100 pt-3 pb-3 px-4" style={{ elevation: 4 }}>
           <TouchableOpacity
             onPress={() => sheetRef.current?.expand()}
             disabled={saving}

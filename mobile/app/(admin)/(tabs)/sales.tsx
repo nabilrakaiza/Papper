@@ -210,37 +210,34 @@ export default function AdminSalesScreen() {
   };
 
   useEffect(() => {
-    // Initial fetch for both
     fetchSalesData(salesPeriod);
-    fetchTopSellingData(topSellingPeriod);
+  }, [salesPeriod]);
 
-    // Subscribe to realtime updates and refresh both using their current individual states
+  useEffect(() => {
+    fetchTopSellingData(topSellingPeriod);
+  }, [topSellingPeriod]);
+
+  useEffect(() => {
     const subscription = supabase
       .channel("sales-channel")
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "orders" },
-        () => {
-          fetchSalesData(salesPeriod);
-          fetchTopSellingData(topSellingPeriod);
-        }
-      )
+      .on("postgres_changes", { event: "*", schema: "public", table: "orders" }, () => {
+        fetchSalesData(salesPeriod);
+        fetchTopSellingData(topSellingPeriod);
+      })
       .subscribe();
 
     return () => {
       supabase.removeChannel(subscription);
     };
-  }, [salesPeriod, topSellingPeriod]);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Handlers for respective Period Toggles
   const handleSalesPeriodChange = (p: SalesPeriod) => {
     setSalesPeriod(p);
-    fetchSalesData(p);
   };
 
   const handleTopSellingPeriodChange = (p: SalesPeriod) => {
     setTopSellingPeriod(p);
-    fetchTopSellingData(p);
   };
 
   // Show full screen loader only if BOTH are loading on initial render

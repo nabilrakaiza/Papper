@@ -3,7 +3,6 @@ import {
   View,
   Text,
   ScrollView,
-//   SafeAreaView,
   ActivityIndicator,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -77,7 +76,7 @@ export default function CashierSalesScreen() {
       
 
       if (order.status === "paid") paidTotal += total;
-      else unpaidTotal += total;
+      else if (order.status === "unpaid") unpaidTotal += total;
 
       return {
         id: order.id,

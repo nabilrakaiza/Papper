@@ -27,6 +27,11 @@ type Props = {
   sheetRef: React.RefObject<BottomSheet>;
 };
 
+const formatRupiah = (digits: string) => {
+  if (!digits) return "";
+  return digits.replace(/\B(?=(\d{3})+(?!\d))/g, ".");
+};
+
 export default function AddStockSheet({ onAdd, sheetRef }: Props) {
   const [definitions, setDefinitions] = useState<StockDefinition[]>([]);
   const [loadingDefs, setLoadingDefs] = useState(true);
@@ -103,6 +108,21 @@ export default function AddStockSheet({ onAdd, sheetRef }: Props) {
     if (selectedDate) {
       setPurchaseDate(selectedDate);
     }
+  };
+
+  const handleQuantityChange = (text: string) => {
+    // Strip anything that isn't a digit (this alone blocks "-" from ever appearing)
+    let digitsOnly = text.replace(/[^0-9]/g, "");
+
+    // Strip leading zeros (so "0", "00", "01" don't linger) but allow user to still be typing
+    digitsOnly = digitsOnly.replace(/^0+(?=\d)/, "");
+
+    setQuantity(digitsOnly);
+  };
+
+  const handlePriceChange = (text: string) => {
+    const digitsOnly = text.replace(/[^0-9]/g, ""); // strip dots, "Rp", anything non-numeric
+    setPriceInput(digitsOnly);
   };
 
   const handleSave = async () => {
@@ -262,7 +282,7 @@ export default function AddStockSheet({ onAdd, sheetRef }: Props) {
               className="w-full bg-gray-50 border-2 border-gray-100 rounded-xl px-3 py-2.5 font-bold text-sm text-gray-900 mb-3"
               placeholder={`e.g. 3 ${selected?.unit ?? ""}`}
               value={quantity}
-              onChangeText={setQuantity}
+              onChangeText={handleQuantityChange}
               keyboardType="numeric"
               placeholderTextColor="#ccc"
               editable={!saving}
@@ -297,11 +317,11 @@ export default function AddStockSheet({ onAdd, sheetRef }: Props) {
               className="w-full bg-gray-50 border-2 border-gray-100 rounded-xl px-3 py-2.5 font-bold text-sm text-gray-900 mb-2"
               placeholder={
                 priceMode === "total"
-                  ? "e.g. 25000 (total you paid)"
-                  : `e.g. 8333 (per ${selected?.unit ?? "unit"})`
+                  ? "e.g. 25.000 (total you paid)"
+                  : `e.g. 8.333 (per ${selected?.unit ?? "unit"})`
               }
-              value={priceInput}
-              onChangeText={setPriceInput}
+              value={priceInput ? `Rp ${formatRupiah(priceInput)}` : ""}
+              onChangeText={handlePriceChange}
               keyboardType="numeric"
               placeholderTextColor="#ccc"
               editable={!saving}

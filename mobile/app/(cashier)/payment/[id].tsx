@@ -15,6 +15,11 @@ import { Order } from "@/types/order";
 
 type PaymentMethod = "QRIS" | "Bank Transfer" | "Cash";
 
+const formatRupiahInput = (digits: string) => {
+  if (!digits) return "";
+  return digits.replace(/\B(?=(\d{3})+(?!\d))/g, ".");
+};
+
 function formatRupiah(amount: number): string {
   return "Rp " + Math.round(amount).toLocaleString("id-ID");
 }
@@ -62,11 +67,22 @@ export default function PaymentScreen() {
   // -------------------------------
 
   const handleConfirm = async () => {
-    setSaving(true);
     setError("");
 
+    if (methodOfPayment === "Cash") {
+      const paid = parseInt(paymentAmount, 10) || 0;
+      if (paid < total) {
+        setError(
+          `Payment kurang dari total. Butuh ${formatRupiah(total - paid)} lagi.`
+        );
+        return;
+      }
+    }
+
+    setSaving(true);
+
     if (methodOfPayment === "Cash"){
-      const { error } = await markPaid(order.id, safeDiscountPct, methodOfPayment, parseInt(paymentAmount));
+      const { error } = await markPaid(order.id, safeDiscountPct, methodOfPayment, parseInt(paymentAmount, 10));
     }
     else {
       const { error } = await markPaid(order.id, safeDiscountPct, methodOfPayment, orderTotal(order));
@@ -79,6 +95,25 @@ export default function PaymentScreen() {
     }
 
     router.back();
+  };
+
+  const handleDiscountChange = (text: string) => {
+    let digitsOnly = text.replace(/[^0-9]/g, "");
+
+    // Strip leading zeros (e.g. "05" -> "5"), but allow a lone "0"
+    digitsOnly = digitsOnly.replace(/^0+(?=\d)/, "");
+
+    if (digitsOnly === "") {
+      setDiscount("");
+      return;
+    }
+
+    const num = parseInt(digitsOnly, 10);
+    if (num > 100) {
+      setDiscount("100");
+    } else {
+      setDiscount(digitsOnly);
+    }
   };
 
   const groupedItems = Object.values(
@@ -145,7 +180,7 @@ export default function PaymentScreen() {
             <TextInput
               className="bg-white border-2 border-gray-100 rounded-xl px-3 py-1.5 font-bold text-sm text-gray-900 w-20 text-center"
               value={discount}
-              onChangeText={setDiscount}
+              onChangeText={handleDiscountChange}
               keyboardType="numeric"
               placeholder="0"
               placeholderTextColor="#ccc"
@@ -219,7 +254,7 @@ export default function PaymentScreen() {
               placeholder="0"
               placeholderTextColor="#9ca3af"
               keyboardType="numeric"
-              value={paymentAmount}
+              value={paymentAmount ? `Rp ${formatRupiahInput(paymentAmount)}` : ""}
               onChangeText={(text) => setPaymentAmount(text.replace(/[^0-9]/g, ""))}
             />
           </View>

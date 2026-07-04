@@ -5,7 +5,6 @@ import {
   ScrollView,
   TouchableOpacity,
   Switch,
-//   SafeAreaView,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useOrders } from "../../../context/OrderContext";

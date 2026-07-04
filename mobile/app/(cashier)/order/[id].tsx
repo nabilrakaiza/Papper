@@ -16,6 +16,7 @@ import { useOrders } from "../../../context/OrderContext";
 import { CATEGORIES } from "../../../data/menu";
 import { MenuCategory, OrderItem } from "../../../types/order";
 import ConfirmDialog from "@/components/ConfirmDialog";
+import PinOverrideModal from "@/components/PinOverrideModal";
 
 function formatRupiah(amount: number): string {
   return "Rp " + Math.round(amount).toLocaleString("id-ID");
@@ -23,7 +24,7 @@ function formatRupiah(amount: number): string {
 
 export default function EditOrderScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
-  const { orders, menu, updateOrder } = useOrders();
+  const { orders, menu, updateOrder, cancelOrderWithPin } = useOrders();
   const order = orders.find((o) => o.id === Number(id));
 
   const [categoryIndex, setCategoryIndex] = useState(0);
@@ -32,6 +33,7 @@ export default function EditOrderScreen() {
   const [error, setError] = useState<string | null>(null);
   const [stockWarning, setStockWarning] = useState<string | null>(null);
   const [showCancelDialog, setShowCancelDialog] = useState(false);
+  const [showPinModal, setShowPinModal] = useState(false);
 
   const [quantities, setQuantities] = useState<Record<number, number>>(() => {
     const items = order?.items ?? [];
@@ -157,18 +159,23 @@ export default function EditOrderScreen() {
     router.back();
   };
 
-  const handleCancel = async () => {
-    setSaving(true);
-    const { error } = await updateOrder(order.id, { status: "cancelled" });
-    setSaving(false);
-    if (error) {
-      setError(error);
-      setShowCancelDialog(false);
-    } else {
-      setShowCancelDialog(false);
-      router.back();
-    }
+  const handleCancelConfirm = () => {
+    setShowCancelDialog(false);
+    setShowPinModal(true);
   };
+
+  // Step 2: actual cancellation happens only after correct PIN
+  // const handlePinSuccess = async () => {
+  //   setSaving(true);
+  //   const { error } = await cancelOrderWithPin(order.id, /* pin passed from modal */);
+  //   setSaving(false);
+  //   setShowPinModal(false);
+  //   if (error) {
+  //     setError(error);
+  //   } else {
+  //     router.back();
+  //   }
+  // };
 
   return (
     <SafeAreaView className="flex-1 bg-gray-100">
@@ -414,8 +421,21 @@ export default function EditOrderScreen() {
           confirmLabel="Iya, Cancel"
           cancelLabel="Tidak"
           destructive
-          onConfirm={handleCancel}
+          onConfirm={handleCancelConfirm}
           onCancel={() => setShowCancelDialog(false)}
+        />
+
+        <PinOverrideModal
+          visible={showPinModal}
+          orderId={order.id}
+          onSubmit={async (pin) => {
+            const { error } = await cancelOrderWithPin(order.id, pin);
+            if (error) return { success: false, error };
+            setShowPinModal(false);
+            router.back();
+            return { success: true };
+          }}
+          onClose={() => setShowPinModal(false)}
         />
       </KeyboardAvoidingView>
     </SafeAreaView>

@@ -13,8 +13,6 @@ import { useOrders } from "../../../context/OrderContext";
 import { usePrinter, PrinterRole } from "../../../context/PrinterContext";
 import { Order } from "../../../types/order";
 import PrinterSelector from "../../../components/PrinterSelector";
-// Note: You might need to update your printReceipt function in lib/printer 
-// to handle printing to just one specific printer based on the action.
 import { printReceipt } from "../../../lib/printer";
 import { useUser } from "@/hooks/useUser";
 
