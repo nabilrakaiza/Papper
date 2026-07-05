@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   View,
   Text,
@@ -10,33 +10,50 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { supabase } from "../../lib/supabase";
+import { useAuth } from "../../context/AuthContext"; // adjust path to match your project
 
 export default function LoginScreen() {
+  const { authError, clearAuthError } = useAuth();
+
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
+  // Surface role/platform rejection errors coming from AuthProvider
+  useEffect(() => {
+    if (authError) {
+      setError(authError);
+      setLoading(false);
+    }
+  }, [authError]);
+
   const handleLogin = async () => {
     setError("");
+    clearAuthError();
     const email = username.trim().toLowerCase();
 
     if (!email) {
-      setError("Unknown username");
+      setError("Empty username");
+      return;
+    }
+
+    if (!password) {
+      setError("Empty Password ");
       return;
     }
 
     setLoading(true);
-    const { error: authError } = await supabase.auth.signInWithPassword({
+    const { error: authSignInError } = await supabase.auth.signInWithPassword({
       email,
       password,
     });
-    setLoading(false);
 
-    if (authError) {
+    if (authSignInError) {
       setError("Invalid username or password");
+      setLoading(false);
+      return;
     }
-    // Navigation is handled by the root layout reacting to session change
   };
 
   return (

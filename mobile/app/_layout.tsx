@@ -6,6 +6,7 @@ import { AuthProvider, useAuth } from "../context/AuthContext";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import "../global.css";
 import * as NavigationBar from 'expo-navigation-bar';
+import { BottomSheetModalProvider } from "@gorhom/bottom-sheet";
 
 // app/_layout.tsx
 function RootNavigator() {
@@ -38,16 +39,12 @@ function RootNavigator() {
     if (!ready) return;
 
     if (!session) {
-      // console.log("p1") 
       router.replace("/(auth)/login");
     } else if (profile?.role === "admin") {
-      // console.log("p2")
       router.replace("/(admin)/(tabs)");
     } else if (profile?.role === "cashier") {
-      // console.log("p3")
       router.replace("/(cashier)/(tabs)");
     } else {
-      // console.log("p4")
       router.replace("/(auth)/login");
     }
   }, [session, profile, ready]);
@@ -68,7 +65,9 @@ export default function RootLayout() {
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
         <AuthProvider>
-          <RootNavigator />
+          <BottomSheetModalProvider>
+            <RootNavigator />
+          </BottomSheetModalProvider>
         </AuthProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>

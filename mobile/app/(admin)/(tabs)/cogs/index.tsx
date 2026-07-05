@@ -8,9 +8,9 @@ import {
   TextInput,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useFocusEffect } from "expo-router";
-import { Search, X } from "lucide-react-native";
-import { supabase } from "../../../lib/supabase";
+import { useFocusEffect, router } from "expo-router";
+import { Search, X, Pencil } from "lucide-react-native";
+import { supabase } from "@/lib/supabase";
 
 const ADDITIONAL_COGS_PERCENT = 10;
 
@@ -21,12 +21,16 @@ type Ingredient = {
   pricePerUnit: number;
 };
 
+type CogsMode = "ingredients" | "manual";
+
 type MenuWithCogs = {
   id: number;
   name: string;
   sellingPrice: number;
   ingredients: Ingredient[];
-  cogs: number | null; // raw COGS, before the additional % markup
+  cogsMode: CogsMode;
+  manualCogs: number | null;
+  rawCogs: number | null; // the "before markup" cogs, resolved based on cogsMode. null = not set (manual mode, no value yet)
 };
 
 function formatRupiah(amount: number): string {
@@ -61,8 +65,9 @@ const MenuCard = memo(function MenuCard({
   isExpanded: boolean;
   onToggle: (id: number) => void;
 }) {
-  const { adjustedCogs, additionalCost, grossProfit, profitColor } = useMemo(() => {
-    const rawCogs = item.cogs ?? 0;
+  const { adjustedCogs, additionalCost, grossProfit, profitColor, hasCogs } = useMemo(() => {
+    const hasCogs = item.rawCogs !== null;
+    const rawCogs = item.rawCogs ?? 0;
     const additionalCost = (rawCogs * ADDITIONAL_COGS_PERCENT) / 100;
     const adjustedCogs = rawCogs + additionalCost;
     const grossProfit = item.sellingPrice - adjustedCogs;
@@ -73,10 +78,13 @@ const MenuCard = memo(function MenuCard({
         ? "text-yellow-600"
         : "text-green-600";
 
-    return { adjustedCogs, additionalCost, grossProfit, profitColor };
-  }, [item.cogs, item.sellingPrice]);
+    return { adjustedCogs, additionalCost, grossProfit, profitColor, hasCogs };
+  }, [item.rawCogs, item.sellingPrice]);
 
   const handlePress = useCallback(() => onToggle(item.id), [onToggle, item.id]);
+  const handleEditPress = useCallback(() => {
+    router.push(`/(admin)/(tabs)/cogs/${item.id}`);
+  }, [item.id]);
 
   return (
     <TouchableOpacity
@@ -86,14 +94,23 @@ const MenuCard = memo(function MenuCard({
     >
       {/* Header row */}
       <View className="flex-row items-center justify-between mb-3">
-        <Text className="text-base font-black text-gray-900">{item.name}</Text>
-        {item.cogs !== null ? (
-          <MarginBadge cogs={adjustedCogs} price={item.sellingPrice} />
-        ) : (
-          <View className="bg-gray-100 px-2 py-0.5 rounded-lg">
-            <Text className="text-xs font-extrabold text-gray-400">No ingredients</Text>
-          </View>
-        )}
+        <Text className="text-base font-black text-gray-900 flex-1 mr-2">{item.name}</Text>
+        <View className="flex-row items-center gap-2">
+          {hasCogs ? (
+            <MarginBadge cogs={adjustedCogs} price={item.sellingPrice} />
+          ) : (
+            <View className="bg-gray-100 px-2 py-0.5 rounded-lg">
+              <Text className="text-xs font-extrabold text-gray-400">Not set</Text>
+            </View>
+          )}
+          <TouchableOpacity
+            onPress={handleEditPress}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            className="bg-white/80 rounded-lg p-1.5"
+          >
+            <Pencil size={14} color="#78716c" />
+          </TouchableOpacity>
+        </View>
       </View>
 
       {/* Summary */}
@@ -107,7 +124,7 @@ const MenuCard = memo(function MenuCard({
         <View className="h-px bg-cyan-200" />
         <View className="flex-row justify-between">
           <Text className="text-xs font-bold text-gray-500">COGS</Text>
-          {item.cogs !== null ? (
+          {hasCogs ? (
             <Text className="text-sm font-extrabold text-gray-800">
               {formatRupiah(adjustedCogs)}
             </Text>
@@ -115,7 +132,7 @@ const MenuCard = memo(function MenuCard({
             <Text className="text-sm font-bold text-gray-300">— not set</Text>
           )}
         </View>
-        {item.cogs !== null && (
+        {hasCogs && (
           <>
             <View className="h-px bg-cyan-200" />
             <View className="flex-row justify-between">
@@ -128,42 +145,55 @@ const MenuCard = memo(function MenuCard({
         )}
       </View>
 
-      {/* Ingredients breakdown */}
-      {isExpanded && item.ingredients.length > 0 && (
+      {/* Ingredients breakdown (only meaningful in ingredients mode) */}
+      {isExpanded && item.cogsMode === "ingredients" && (
         <View className="mt-3">
           <Text className="text-[10px] font-extrabold text-gray-400 uppercase tracking-widest mb-2">
             Ingredients
           </Text>
-          {item.ingredients.map((ing) => (
-            <View
-              key={ing.stockId}
-              className="flex-row justify-between items-center py-1.5 border-b border-yellow-200"
-            >
-              <Text className="text-xs font-bold text-gray-600">
-                {ing.stockName} x {ing.quantity}
-              </Text>
-              <Text className="text-xs font-bold text-gray-500">
-                {formatRupiah(ing.quantity * ing.pricePerUnit)}
-              </Text>
-            </View>
-          ))}
-
-          <View className="flex-row justify-between items-center py-1.5 border-b border-yellow-200">
-            <Text className="text-xs font-bold text-gray-600">
-              Additional {ADDITIONAL_COGS_PERCENT}%
+          {item.ingredients.length === 0 ? (
+            <Text className="text-xs font-bold text-gray-400 py-2">
+              No ingredients added yet.
             </Text>
-            <Text className="text-xs font-bold text-gray-500">
-              {formatRupiah(additionalCost)}
-            </Text>
-          </View>
+          ) : (
+            <>
+              {item.ingredients.map((ing) => (
+                <View
+                  key={ing.stockId}
+                  className="flex-row justify-between items-center py-1.5 border-b border-yellow-200"
+                >
+                  <Text className="text-xs font-bold text-gray-600">
+                    {ing.stockName} x {ing.quantity}
+                  </Text>
+                  <Text className="text-xs font-bold text-gray-500">
+                    {formatRupiah(ing.quantity * ing.pricePerUnit)}
+                  </Text>
+                </View>
+              ))}
+              <View className="flex-row justify-between items-center py-1.5 border-b border-yellow-200">
+                <Text className="text-xs font-bold text-gray-600">
+                  Additional {ADDITIONAL_COGS_PERCENT}%
+                </Text>
+                <Text className="text-xs font-bold text-gray-500">
+                  {formatRupiah(additionalCost)}
+                </Text>
+              </View>
+            </>
+          )}
         </View>
       )}
 
-      {item.ingredients.length > 0 && (
-        <Text className="text-[10px] font-bold text-gray-400 text-center mt-2">
-          {isExpanded ? "▲ hide ingredients" : "▼ show ingredients"}
-        </Text>
+      {isExpanded && item.cogsMode === "manual" && (
+        <View className="mt-3">
+          <Text className="text-xs font-bold text-gray-400">
+            COGS entered manually. Tap the pencil icon to edit.
+          </Text>
+        </View>
       )}
+
+      <Text className="text-[10px] font-bold text-gray-400 text-center mt-2">
+        {isExpanded ? "▲ hide details" : "▼ show details"}
+      </Text>
     </TouchableOpacity>
   );
 });
@@ -177,7 +207,9 @@ export default function CogsScreen() {
   const fetchData = useCallback(async (isInitial: boolean) => {
     if (isInitial) setLoading(true);
 
-    const { data: menuData } = await supabase.from("menus").select("id, name, price");
+    const { data: menuData } = await supabase
+      .from("menus")
+      .select("id, name, price, cogs_mode, manual_cogs");
 
     const { data: ingredientData } = await supabase
       .from("menu_ingredients")
@@ -198,17 +230,24 @@ export default function CogsScreen() {
           pricePerUnit: (i.stock as any).price_per_unit,
         }));
 
-      const cogs =
-        ingredients.length > 0
-          ? ingredients.reduce((sum, i) => sum + i.quantity * i.pricePerUnit, 0)
-          : null;
+      const cogsMode = (menu.cogs_mode ?? "ingredients") as CogsMode;
+
+      // Resolve rawCogs strictly based on mode - never mixed
+      const rawCogs =
+        cogsMode === "ingredients"
+          ? ingredients.length > 0
+            ? ingredients.reduce((sum, i) => sum + i.quantity * i.pricePerUnit, 0)
+            : null
+          : menu.manual_cogs;
 
       return {
         id: menu.id,
         name: menu.name,
         sellingPrice: menu.price,
         ingredients,
-        cogs,
+        cogsMode,
+        manualCogs: menu.manual_cogs,
+        rawCogs,
       };
     });
 
@@ -287,8 +326,8 @@ export default function CogsScreen() {
         ListHeaderComponent={
           <View className="bg-blue-50 border border-blue-100 rounded-2xl px-4 py-3 mb-4">
             <Text className="text-xs font-bold text-blue-400 leading-5">
-              COGS is calculated from ingredients linked to stock items.
-              Update stock prices to automatically reflect new COGS.
+              COGS is calculated from ingredients linked to stock items, or entered manually.
+              Tap the pencil icon on a menu card to edit.
             </Text>
           </View>
         }

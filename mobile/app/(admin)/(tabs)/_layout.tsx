@@ -29,7 +29,7 @@ export default function AdminTabLayout() {
         }}
       />
       <Tabs.Screen
-        name="cogs"
+        name="cogs/index"
         options={{
           title: "COGS",
           tabBarIcon: ({ color, size }) => <TrendingDown size={size} color={color} />,
@@ -54,6 +54,13 @@ export default function AdminTabLayout() {
         options={{
           title: "Profile",
           tabBarIcon: ({ color, size }) => <UserCircle size={size} color={color} />,
+        }}
+      />
+
+      <Tabs.Screen
+        name="cogs/[id]"
+        options={{
+          href: null, // hides this route from the tab bar entirely
         }}
       />
     </Tabs>
