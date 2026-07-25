@@ -24,35 +24,35 @@ export default function AdminTabLayout() {
       <Tabs.Screen
         name="index"
         options={{
-          title: "Stock",
+          title: "Stok",
           tabBarIcon: ({ color, size }) => <Package size={size} color={color} />,
         }}
       />
       <Tabs.Screen
         name="cogs/index"
         options={{
-          title: "COGS",
+          title: "HPP",
           tabBarIcon: ({ color, size }) => <TrendingDown size={size} color={color} />,
         }}
       />
       <Tabs.Screen
         name="purchase"
         options={{
-          title: "Purchase",
+          title: "Pembelian",
           tabBarIcon: ({ color, size }) => <BookText size={size} color={color} />,
         }}
       />
       <Tabs.Screen
         name="sales"
         options={{
-          title: "Sales",
+          title: "Penjualan",
           tabBarIcon: ({ color, size }) => <BarChart2 size={size} color={color} />,
         }}
       />
       <Tabs.Screen
         name="profile"
         options={{
-          title: "Profile",
+          title: "Profil",
           tabBarIcon: ({ color, size }) => <UserCircle size={size} color={color} />,
         }}
       />

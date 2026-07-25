@@ -7,6 +7,7 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { supabase } from "../../../lib/supabase";
+import { TAX_RATE } from "../../../lib/constants";
 
 type OrderRow = {
   id: number;
@@ -29,8 +30,6 @@ export default function CashierSalesScreen() {
   const [topItems, setTopItems] = useState<TopMenuItem[]>([]);
   const [orders, setOrders] = useState<OrderRow[]>([]);
   const [loading, setLoading] = useState(true);
-
-  const tax = 0.1;
 
   const fetchTodaySales = async () => {
     setLoading(true);
@@ -72,7 +71,7 @@ export default function CashierSalesScreen() {
     const orderRows: OrderRow[] = ordersData.map((order) => {
       const orderItems = (items ?? []).filter((i) => i.order_id === order.id);
       const subtotal = orderItems.reduce((sum, i) => sum + i.price * i.quantity, 0);
-      const total = subtotal * (1 - order.discount / 100) * (1+tax);
+      const total = subtotal * (1 - order.discount / 100) * (1 + TAX_RATE);
       
 
       if (order.status === "paid") paidTotal += total;
@@ -147,7 +146,7 @@ export default function CashierSalesScreen() {
   return (
     <SafeAreaView className="flex-1 bg-gray-100">
       <View className="px-5 pt-4 pb-3">
-        <Text className="text-2xl font-black text-gray-900">Today Sales / Penjualan Harian</Text>
+        <Text className="text-2xl font-black text-gray-900">Penjualan Harian</Text>
       </View>
 
       <ScrollView
@@ -157,28 +156,28 @@ export default function CashierSalesScreen() {
         {/* Summary cards */}
         <View className="flex-row gap-3 mb-4">
           <View className="flex-1 bg-green-400 rounded-2xl px-4 py-4 shadow shadow-green-600/30">
-            <Text className="text-xs font-extrabold text-white/70 mb-1">Paid / Dibayar</Text>
+            <Text className="text-xs font-extrabold text-white/70 mb-1">Dibayar</Text>
             <Text className="text-base font-black text-white">
               {formatRupiah(totalPaid)}
             </Text>
             <Text className="text-xs text-white/60 mt-0.5">
-              {paidOrders.length} orders
+              {paidOrders.length} pesanan
             </Text>
           </View>
           <View className="flex-1 bg-yellow-100 rounded-2xl px-4 py-4 shadow-sm">
-            <Text className="text-xs font-extrabold text-gray-400 mb-1">Unpaid / Belum bayar</Text>
+            <Text className="text-xs font-extrabold text-gray-400 mb-1">Belum Bayar</Text>
             <Text className="text-base font-black text-gray-800">
               {formatRupiah(totalUnpaid)}
             </Text>
             <Text className="text-xs text-gray-400 mt-0.5">
-              {unpaidOrders.length} orders
+              {unpaidOrders.length} pesanan
             </Text>
           </View>
         </View>
 
         {/* Total */}
         <View className="bg-gray-900 rounded-2xl px-4 py-3 mb-4 flex-row justify-between items-center">
-          <Text className="text-sm font-extrabold text-white/70">Total Today / Hari ini</Text>
+          <Text className="text-sm font-extrabold text-white/70">Total Hari Ini</Text>
           <Text className="text-base font-black text-white">
             {formatRupiah(totalSales)}
           </Text>
@@ -188,7 +187,7 @@ export default function CashierSalesScreen() {
         {topItems.length > 0 && (
           <View className="bg-yellow-100 rounded-3xl px-4 pt-4 pb-5 mb-4 shadow-sm">
             <View className="border-2 border-gray-200 rounded-xl px-3 py-1.5 self-start mb-4 bg-white/60">
-              <Text className="text-sm font-bold text-gray-700">Top Selling / Penjualan</Text>
+              <Text className="text-sm font-bold text-gray-700">Terlaris</Text>
             </View>
             <View className="bg-cyan-100 rounded-2xl px-4 py-2">
               {topItems.map((item, index) => (
@@ -217,7 +216,7 @@ export default function CashierSalesScreen() {
         {unpaidOrders.length > 0 && (
           <>
             <Text className="text-xs font-extrabold text-gray-400 uppercase tracking-widest mb-3 px-1">
-              Unpaid Orders / Order belum selesai
+              Pesanan Belum Selesai
             </Text>
             {unpaidOrders.map((order) => (
               <View
@@ -226,7 +225,7 @@ export default function CashierSalesScreen() {
               >
                 <View>
                   <Text className="text-sm font-bold text-gray-800">{order.customerName}</Text>
-                  <Text className="text-xs font-bold text-gray-400">Seat {order.seat}</Text>
+                  <Text className="text-xs font-bold text-gray-400">Tempat Duduk {order.seat}</Text>
                 </View>
                 <Text className="text-sm font-extrabold text-yellow-600">
                   {formatRupiah(order.total)}
@@ -238,11 +237,11 @@ export default function CashierSalesScreen() {
 
         {/* Paid orders */}
         <Text className="text-xs font-extrabold text-gray-400 uppercase tracking-widest mb-3 px-1 mt-2">
-          Completed Orders / Order selesai
+          Pesanan Selesai
         </Text>
         {paidOrders.length === 0 ? (
           <Text className="text-center text-gray-300 font-bold mb-4">
-            No completed orders today
+            Belum ada pesanan selesai hari ini
           </Text>
         ) : (
           paidOrders.map((order) => (
@@ -252,7 +251,7 @@ export default function CashierSalesScreen() {
             >
               <View>
                 <Text className="text-sm font-bold text-gray-800">{order.customerName}</Text>
-                <Text className="text-xs font-bold text-gray-400">Seat {order.seat}</Text>
+                <Text className="text-xs font-bold text-gray-400">Tempat Duduk {order.seat}</Text>
               </View>
               <Text className="text-sm font-extrabold text-green-600">
                 {formatRupiah(order.total)}

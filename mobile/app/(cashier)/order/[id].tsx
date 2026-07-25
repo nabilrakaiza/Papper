@@ -189,7 +189,7 @@ export default function EditOrderScreen() {
             <TouchableOpacity onPress={() => router.back()}>
               <View className="border-2 border-gray-200 rounded-xl px-3 py-1.5 flex-row items-center gap-1">
                 <ChevronLeft size={16} color="#555" />
-                <Text className="text-sm font-bold text-gray-700">Menu Order</Text>
+                <Text className="text-sm font-bold text-gray-700">Menu Pesanan</Text>
               </View>
             </TouchableOpacity>
             <View className="flex-row items-center gap-3">
@@ -300,7 +300,7 @@ export default function EditOrderScreen() {
                   <View className="mt-3 pt-3 border-t border-yellow-200/50">
                     <TextInput
                       className="w-full bg-white/70 rounded-xl px-3 py-2 text-xs font-bold text-gray-800"
-                      placeholder={`Catatan untuk ${item.name} (optional)`}
+                      placeholder={`Catatan untuk ${item.name} (opsional)`}
                       placeholderTextColor="#9ca3af"
                       value={notes[item.id] || ""}
                       onChangeText={(text) => handleNoteChange(item.id, text)}
@@ -331,7 +331,7 @@ export default function EditOrderScreen() {
                         </View>
                         {!!item.note && (
                           <Text className="text-xs font-bold text-white/80 italic">
-                            └ Note: {item.note}
+                            └ Catatan: {item.note}
                           </Text>
                         )}
                       </View>
@@ -370,7 +370,7 @@ export default function EditOrderScreen() {
               >
                 <View className="border-2 border-white/60 rounded-xl px-3 py-1">
                   <Text className="text-sm font-extrabold text-white">
-                    {totalItems} Items
+                    {totalItems} Item
                   </Text>
                 </View>
                 <Text className="text-white/70 text-xs font-bold">
@@ -386,7 +386,7 @@ export default function EditOrderScreen() {
           <View className="absolute inset-0 bg-black/50 items-center justify-center px-6">
             <View className="bg-white rounded-3xl px-6 py-6 w-full shadow-xl">
               <Text className="text-base font-black text-gray-900 mb-2">
-                ⚠️ Stock Warning - Stock bisa saja habis
+                ⚠️ Peringatan Stok - Stok bisa saja habis
               </Text>
               <Text className="text-sm font-bold text-gray-600 mb-5">
                 {stockWarning}
@@ -396,7 +396,7 @@ export default function EditOrderScreen() {
                   onPress={() => setStockWarning(null)}
                   className="flex-1 border-2 border-gray-200 rounded-2xl py-3 items-center"
                 >
-                  <Text className="text-sm font-extrabold text-gray-600">Cancel</Text>
+                  <Text className="text-sm font-extrabold text-gray-600">Batal</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
                   onPress={() => {
@@ -416,9 +416,9 @@ export default function EditOrderScreen() {
 
         <ConfirmDialog
           visible={showCancelDialog}
-          title="Cancel Order"
+          title="Batalkan Pesanan"
           message="Apakah anda yakin untuk menghapus order ini? aksi ini tidak bisa dibatalkan"
-          confirmLabel="Iya, Cancel"
+          confirmLabel="Iya, Batalkan"
           cancelLabel="Tidak"
           destructive
           onConfirm={handleCancelConfirm}

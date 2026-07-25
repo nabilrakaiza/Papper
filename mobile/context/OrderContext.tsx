@@ -55,7 +55,7 @@ export function OrderProvider({ children }: { children: ReactNode }) {
         .order("created_at", { ascending: false });
 
     if (unpaidError || paidError) {
-        setError("Failed to load orders. Please check your connection.");
+        setError("Gagal memuat pesanan. Periksa koneksi Anda.");
         setLoading(false);
         return;
     }
@@ -133,7 +133,7 @@ export function OrderProvider({ children }: { children: ReactNode }) {
         const names = checkData.shortages.map((s: any) => s.stock_name).join(", ");
         return {
           error: null,
-          stockWarning: `Low stock: ${names}. Proceed anyway?`,
+          stockWarning: `Stok menipis: ${names}. Tetap lanjutkan?`,
         };
       }
     }
@@ -154,7 +154,7 @@ export function OrderProvider({ children }: { children: ReactNode }) {
       .single();
 
     if (orderError || !newOrder) {
-      return { error: "Failed to create order. Please try again." };
+      return { error: "Gagal membuat pesanan. Silakan coba lagi." };
     }
 
     const { error: itemsError } = await supabase.from("order_items").insert(
@@ -174,7 +174,7 @@ export function OrderProvider({ children }: { children: ReactNode }) {
 
     if (itemsError) {
       await supabase.from("orders").delete().eq("id", newOrder.id);
-      return { error: "Failed to save order items. Please try again." };
+      return { error: "Gagal menyimpan item pesanan. Silakan coba lagi." };
     }
 
     // 3. Deduct stock — pass p_force if user confirmed
@@ -186,9 +186,9 @@ export function OrderProvider({ children }: { children: ReactNode }) {
     if (stockError) {
       await supabase.from("orders").delete().eq("id", newOrder.id);
       if (stockError.message.includes("Insufficient stock")) {
-        return { error: "Order blocked — one or more ingredients are out of stock." };
+        return { error: "Pesanan diblokir — satu atau lebih bahan habis." };
       }
-      return { error: "Failed to update stock. Please try again." };
+      return { error: "Gagal memperbarui stok. Silakan coba lagi." };
     }
 
     await fetchOrders();
@@ -212,7 +212,7 @@ export function OrderProvider({ children }: { children: ReactNode }) {
       .eq("id", id);
 
     if (updateError) {
-      return { error: "Failed to update order. Please try again." };
+      return { error: "Gagal memperbarui pesanan. Silakan coba lagi." };
     }
 
     // 2. Handle cancellation
@@ -223,7 +223,7 @@ export function OrderProvider({ children }: { children: ReactNode }) {
         .eq("order_id", id);
 
       if (cancelItemsError) {
-        return { error: "Failed to cancel order items. Please try again." };
+        return { error: "Gagal membatalkan item pesanan. Silakan coba lagi." };
       }
     }
 
@@ -236,7 +236,7 @@ export function OrderProvider({ children }: { children: ReactNode }) {
         .eq("order_id", id);
 
       if (fetchError || !originalData) {
-        return { error: "Failed to fetch existing order items. Please try again." };
+        return { error: "Gagal mengambil item pesanan yang ada. Silakan coba lagi." };
       }
 
       const originalItems = originalData.map((i: any) => ({
@@ -271,7 +271,7 @@ export function OrderProvider({ children }: { children: ReactNode }) {
             .join(", ");
           return {
             error: null,
-            stockWarning: `Low stock: ${names}. Proceed anyway?`,
+            stockWarning: `Stok menipis: ${names}. Tetap lanjutkan?`,
           };
         }
       }
@@ -283,7 +283,7 @@ export function OrderProvider({ children }: { children: ReactNode }) {
         .eq("order_id", id);
 
       if (deleteError) {
-        return { error: "Failed to update order items. Please try again." };
+        return { error: "Gagal memperbarui item pesanan. Silakan coba lagi." };
       }
 
       const { error: itemsError } = await supabase.from("order_items").insert(
@@ -304,7 +304,7 @@ export function OrderProvider({ children }: { children: ReactNode }) {
       if (itemsError) {
         // Revert to original items
         await supabase.from("order_items").insert(originalItems);
-        return { error: "Failed to update order items. Please try again." };
+        return { error: "Gagal memperbarui item pesanan. Silakan coba lagi." };
       }
 
       // Deduct stock
@@ -325,9 +325,9 @@ export function OrderProvider({ children }: { children: ReactNode }) {
         }
 
         if (stockError.message.includes("Insufficient stock")) {
-          return { error: "Update blocked — one or more ingredients are out of stock." };
+          return { error: "Pembaruan diblokir — satu atau lebih bahan habis." };
         }
-        return { error: "Failed to update stock. Please try again." };
+        return { error: "Gagal memperbarui stok. Silakan coba lagi." };
       }
     }
 
@@ -359,7 +359,7 @@ export function OrderProvider({ children }: { children: ReactNode }) {
       .eq("id", id);
 
     if (error) {
-      return { error: "Failed to confirm payment. Please try again." };
+      return { error: "Gagal mengonfirmasi pembayaran. Silakan coba lagi." };
     }
 
     await fetchOrders();

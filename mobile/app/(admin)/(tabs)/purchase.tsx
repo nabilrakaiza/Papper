@@ -68,6 +68,14 @@ function getDateRange(filter: string) {
 
 const FILTER_OPTIONS = ["This Week", "This Month", "Last Month"];
 
+// Display-only labels (Indonesian) — keep the underlying filter keys above
+// unchanged since they're used for date-range logic.
+const FILTER_LABELS: Record<string, string> = {
+  "This Week": "Minggu Ini",
+  "This Month": "Bulan Ini",
+  "Last Month": "Bulan Lalu",
+};
+
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
 function SummaryCard({ expenses, filter }: { expenses: ExpenseItem[], filter: string }) {
@@ -82,37 +90,37 @@ function SummaryCard({ expenses, filter }: { expenses: ExpenseItem[], filter: st
 
   // Sort to find the highest spending category
   const sortedExpenses = Object.entries(groupedByName).sort((a, b) => b[1] - a[1]);
-  const topExpenseName = sortedExpenses.length > 0 ? sortedExpenses[0][0] : "None";
+  const topExpenseName = sortedExpenses.length > 0 ? sortedExpenses[0][0] : "Tidak ada";
   const topExpenseAmount = sortedExpenses.length > 0 ? sortedExpenses[0][1] : 0;
 
   return (
     <View className="bg-yellow-100 rounded-2xl px-4 py-4 mb-3 shadow-sm shadow-yellow-300/30">
       <Text className="text-[10px] font-extrabold text-gray-400 uppercase tracking-widest mb-3">
-        {filter} Insights
+        Wawasan {FILTER_LABELS[filter] ?? filter}
       </Text>
       <View className="bg-cyan-100 rounded-xl px-4 py-3 gap-3">
         <View className="flex-row justify-between items-center">
-          <Text className="text-xs font-bold text-gray-500">Total Spent</Text>
+          <Text className="text-xs font-bold text-gray-500">Total Pengeluaran</Text>
           <Text className="text-lg font-black text-gray-800">{formatRupiah(total)}</Text>
         </View>
         <View className="h-px bg-cyan-200" />
-        
+
         {/* New Insight: Top Spending Item */}
         <View className="flex-row justify-between items-center">
           <View className="flex-row items-center gap-1.5">
             <TrendingUp size={14} color="#ef4444" />
-            <Text className="text-xs font-bold text-gray-500">Top Expense</Text>
+            <Text className="text-xs font-bold text-gray-500">Pengeluaran Tertinggi</Text>
           </View>
           <View className="items-end">
             <Text className="text-sm font-extrabold text-gray-800">{topExpenseName}</Text>
             <Text className="text-[10px] font-bold text-gray-500">{formatRupiah(topExpenseAmount)}</Text>
           </View>
         </View>
-        
+
         <View className="h-px bg-cyan-200" />
         <View className="flex-row justify-between">
-          <Text className="text-xs font-bold text-gray-500">Transactions Logged</Text>
-          <Text className="text-sm font-extrabold text-gray-800">{count} items</Text>
+          <Text className="text-xs font-bold text-gray-500">Transaksi Tercatat</Text>
+          <Text className="text-sm font-extrabold text-gray-800">{count} item</Text>
         </View>
       </View>
     </View>
@@ -149,7 +157,7 @@ function ExpenseCard({ item }: { item: ExpenseItem }) {
           <Text className="text-base font-black text-red-500">-{formatRupiah(item.total_cost)}</Text>
           <View className="bg-gray-100 px-2 py-0.5 rounded-lg mt-0.5">
             <Text className="text-[10px] font-extrabold text-gray-400">
-              Qty: {item.quantity}
+              Jml: {item.quantity}
             </Text>
           </View>
         </View>
@@ -160,12 +168,12 @@ function ExpenseCard({ item }: { item: ExpenseItem }) {
         <View className="mt-1">
           <View className="bg-gray-50 rounded-xl px-4 py-3 gap-2 border border-gray-100">
             <View className="flex-row justify-between">
-              <Text className="text-xs font-bold text-gray-500">Price per Unit</Text>
+              <Text className="text-xs font-bold text-gray-500">Harga per Unit</Text>
               <Text className="text-sm font-extrabold text-gray-800">{formatRupiah(item.price_per_unit)}</Text>
             </View>
             <View className="h-px bg-gray-200" />
             <View className="flex-row justify-between">
-              <Text className="text-xs font-bold text-gray-500">System Entry Date</Text>
+              <Text className="text-xs font-bold text-gray-500">Tanggal Input Sistem</Text>
               <Text className="text-xs font-extrabold text-gray-700">{formatDate(item.created_at)}</Text>
             </View>
           </View>
@@ -173,7 +181,7 @@ function ExpenseCard({ item }: { item: ExpenseItem }) {
       )}
 
       <Text className="text-[10px] font-bold text-gray-400 text-center mt-2">
-        {expanded ? "▲ hide details" : "▼ show details"}
+        {expanded ? "▲ sembunyikan detail" : "▼ tampilkan detail"}
       </Text>
     </TouchableOpacity>
   );
@@ -213,7 +221,7 @@ export default function ExpensesScreen() {
     <SafeAreaView className="flex-1 bg-gray-50">
       {/* Header */}
       <View className="px-5 pt-4 pb-3 flex-row items-center justify-between">
-        <Text className="text-2xl font-black text-gray-900">Expenses</Text>
+        <Text className="text-2xl font-black text-gray-900">Pengeluaran</Text>
       </View>
 
       {/* Filter chips */}
@@ -238,7 +246,7 @@ export default function ExpensesScreen() {
                   activeFilter === f ? "text-white" : "text-gray-500"
                 }`}
               >
-                {f}
+                {FILTER_LABELS[f] ?? f}
               </Text>
             </TouchableOpacity>
           ))}
@@ -262,7 +270,7 @@ export default function ExpensesScreen() {
             <View className="items-center mt-16">
               <ShoppingCart size={32} color="#d1d5db" />
               <Text className="text-gray-400 font-bold text-sm mt-3">
-                No expenses recorded for {activeFilter.toLowerCase()}.
+                Belum ada pengeluaran tercatat untuk {(FILTER_LABELS[activeFilter] ?? activeFilter).toLowerCase()}.
               </Text>
             </View>
           )}

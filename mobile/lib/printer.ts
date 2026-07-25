@@ -4,6 +4,7 @@ import { Order } from '../types/order';
 import { Asset } from 'expo-asset';
 import { readAsStringAsync, EncodingType } from 'expo-file-system/legacy';
 import { CurrentUser } from '@/hooks/useUser';
+import { TAX_RATE } from './constants';
 
 function formatRupiah(amount: number | null): string {
   if (amount === null){
@@ -12,10 +13,17 @@ function formatRupiah(amount: number | null): string {
   return 'Rp ' + Math.round(amount).toLocaleString('id-ID');
 }
 
+// Display-only labels (Indonesian) for the receipt — the underlying
+// order.methodOfPayment value is left untouched since it's stored as-is.
+const PAYMENT_METHOD_PRINT_LABELS: Record<string, string> = {
+  QRIS: 'QRIS',
+  'Bank Transfer': 'Transfer Bank',
+  Cash: 'Tunai',
+};
+
 function orderTotal(order: Order): number {
   const subtotal = order.items.reduce((sum, i) => sum + i.price * i.quantity, 0);
-  const tax = 0.1
-  return subtotal * (1 - order.discount / 100) * (1 + tax);
+  return subtotal * (1 - order.discount / 100) * (1 + TAX_RATE);
 }
 
 async function requestBluetoothPermissions(): Promise<{
@@ -73,13 +81,13 @@ export async function scanAndConnectPrinter(): Promise<{
       Linking.openSettings();
       return {
         devices: [],
-        error: 'Bluetooth permission permanently denied. Please enable it in Settings.',
+        error: 'Izin Bluetooth ditolak secara permanen. Aktifkan di Pengaturan.',
       };
     }
 
     return {
       devices: [],
-      error: 'Bluetooth permission denied.',
+      error: 'Izin Bluetooth ditolak.',
     };
   }
 
@@ -92,7 +100,7 @@ export async function scanAndConnectPrinter(): Promise<{
 
     return { devices, error: null };
   } catch (e: any) {
-    return { devices: [], error: e?.message || 'Bluetooth error' };
+    return { devices: [], error: e?.message || 'Kesalahan Bluetooth' };
   }
 }
 
@@ -112,8 +120,7 @@ async function printCustomerReceipt(order: Order, user: CurrentUser, totalPrice:
   const discountAmount = subtotal * (safeDiscountPct / 100);
   
   const taxableAmount = subtotal - discountAmount;
-  const taxRate = 0.1; // 10%
-  const taxAmount = taxableAmount * taxRate;
+  const taxAmount = taxableAmount * TAX_RATE;
   
   const total = Math.round(taxableAmount + taxAmount);
 
@@ -153,9 +160,9 @@ async function printCustomerReceipt(order: Order, user: CurrentUser, totalPrice:
   
   await BluetoothEscposPrinter.printText('--------------------------------\n', {});
   await BluetoothEscposPrinter.printerAlign(BluetoothEscposPrinter.ALIGN.LEFT);
-  await BluetoothEscposPrinter.printText(`Customer: ${order.customerName}\n`, {});
-  await BluetoothEscposPrinter.printText(`Seat    : ${order.seat}\n`, {});
-  
+  await BluetoothEscposPrinter.printText(`Pelanggan: ${order.customerName}\n`, {});
+  await BluetoothEscposPrinter.printText(`Kursi    : ${order.seat}\n`, {});
+
   // Format Date and Time to Asia/Jakarta (WIB)
   const jktDateTime = new Date().toLocaleString('id-ID', {
     timeZone: 'Asia/Jakarta',
@@ -165,9 +172,9 @@ async function printCustomerReceipt(order: Order, user: CurrentUser, totalPrice:
     hour: '2-digit',
     minute: '2-digit',
   });
-  
-  await BluetoothEscposPrinter.printText(`Date    : ${jktDateTime}\n`, {});
-  await BluetoothEscposPrinter.printText(`Cashier : ${user.name}\n`, {});
+
+  await BluetoothEscposPrinter.printText(`Tanggal  : ${jktDateTime}\n`, {});
+  await BluetoothEscposPrinter.printText(`Kasir    : ${user.name}\n`, {});
   await BluetoothEscposPrinter.printText('--------------------------------\n', {});
 
   await BluetoothEscposPrinter.printerAlign(BluetoothEscposPrinter.ALIGN.CENTER);
@@ -212,7 +219,7 @@ async function printCustomerReceipt(order: Order, user: CurrentUser, totalPrice:
   await BluetoothEscposPrinter.printColumn(
     [20, 12],
     [BluetoothEscposPrinter.ALIGN.LEFT, BluetoothEscposPrinter.ALIGN.RIGHT],
-    ['Tax 10%', formatRupiah(taxAmount)],
+    [`Tax ${TAX_RATE * 100}%`, formatRupiah(taxAmount)],
     {}
   );
 
@@ -233,21 +240,21 @@ async function printCustomerReceipt(order: Order, user: CurrentUser, totalPrice:
   ];
 
   if (order.status === 'paid') {
-    await BluetoothEscposPrinter.printColumn(colWidths, colAligns, ['Payment Method', `${order.methodOfPayment}`], {});
+    await BluetoothEscposPrinter.printColumn(colWidths, colAligns, ['Metode Bayar', PAYMENT_METHOD_PRINT_LABELS[order.methodOfPayment ?? ''] ?? `${order.methodOfPayment}`], {});
 
     if (order.methodOfPayment === 'Cash' && moneyGiven != null){
-      await BluetoothEscposPrinter.printColumn(colWidths, colAligns, ['Payment Amount', formatRupiah(moneyGiven)], {});
-      await BluetoothEscposPrinter.printColumn(colWidths, colAligns, ['Change', formatRupiah(totalPrice - moneyGiven)], {});
+      await BluetoothEscposPrinter.printColumn(colWidths, colAligns, ['Jumlah Bayar', formatRupiah(moneyGiven)], {});
+      await BluetoothEscposPrinter.printColumn(colWidths, colAligns, ['Kembalian', formatRupiah(totalPrice - moneyGiven)], {});
     }
     else {
-      await BluetoothEscposPrinter.printColumn(colWidths, colAligns, ['Payment Amount', formatRupiah(moneyGiven)], {});
+      await BluetoothEscposPrinter.printColumn(colWidths, colAligns, ['Jumlah Bayar', formatRupiah(moneyGiven)], {});
     }
   }
 
   // 8. Print Footer
   await BluetoothEscposPrinter.printerAlign(BluetoothEscposPrinter.ALIGN.CENTER);
   await BluetoothEscposPrinter.printText('--------------------------------\n', {});
-  await BluetoothEscposPrinter.printText('Thank you!\n', {});
+  await BluetoothEscposPrinter.printText('Terima kasih!\n', {});
   await BluetoothEscposPrinter.printText('\n', {});
   await BluetoothEscposPrinter.printText('Instagram  : @nabawicafe\n', {});
   await BluetoothEscposPrinter.printText('TikTok  : @nabawicafe\n', {});
@@ -268,15 +275,15 @@ async function printKitchenTicket(order: Order): Promise<void> {
   if (latestBatchItems.length === 0) return;
 
   await BluetoothEscposPrinter.printerAlign(BluetoothEscposPrinter.ALIGN.CENTER);
-  await BluetoothEscposPrinter.printText('KITCHEN\n', {
+  await BluetoothEscposPrinter.printText('DAPUR\n', {
     encoding: 'GBK', codepage: 0, widthtimes: 2, heigthtimes: 2, fonttype: 1,
   });
   await BluetoothEscposPrinter.printText('--------------------------------\n', {});
 
   await BluetoothEscposPrinter.printerAlign(BluetoothEscposPrinter.ALIGN.LEFT);
-  await BluetoothEscposPrinter.printText(`Customer: ${order.customerName}\n`, {});
-  await BluetoothEscposPrinter.printText(`Seat    : ${order.seat}\n`, {});
-  await BluetoothEscposPrinter.printText(`Time    : ${new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}\n`, {});
+  await BluetoothEscposPrinter.printText(`Pelanggan: ${order.customerName}\n`, {});
+  await BluetoothEscposPrinter.printText(`Kursi    : ${order.seat}\n`, {});
+  await BluetoothEscposPrinter.printText(`Waktu    : ${new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}\n`, {});
   await BluetoothEscposPrinter.printText('--------------------------------\n', {});
 
   // 4. Loop through the filtered array instead of all items
@@ -286,7 +293,7 @@ async function printKitchenTicket(order: Order): Promise<void> {
     });
 
     if (item.note) {
-      await BluetoothEscposPrinter.printText(`NOTE: ${item.note}\n`, {
+      await BluetoothEscposPrinter.printText(`CATATAN: ${item.note}\n`, {
         fonttype: 1, widthtimes: 1, heigthtimes: 1,
       })
     }
@@ -310,7 +317,7 @@ export async function printReceipt(
       await BluetoothManager.connect(cashierPrinter.address);
       await printCustomerReceipt(order, user, orderTotal(order), order.paymentAmount);
     } catch (e: any) {
-      errors.push(`Cashier Printer Error: ${e.message}`);
+      errors.push(`Error Printer Kasir: ${e.message}`);
     }
   }
 
@@ -326,7 +333,7 @@ export async function printReceipt(
       await BluetoothManager.connect(kitchenPrinter.address);
       await printKitchenTicket(order);
     } catch (e: any) {
-      errors.push(`Kitchen Printer Error: ${e.message}`);
+      errors.push(`Error Printer Dapur: ${e.message}`);
     }
   }
 

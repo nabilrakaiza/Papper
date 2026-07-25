@@ -12,8 +12,17 @@ import { router, useLocalSearchParams } from "expo-router";
 import { ChevronLeft } from "lucide-react-native";
 import { useOrders } from "../../../context/OrderContext";
 import { Order } from "@/types/order";
+import { TAX_RATE } from "../../../lib/constants";
 
 type PaymentMethod = "QRIS" | "Bank Transfer" | "Cash";
+
+// Display-only labels (Indonesian) — the underlying values above are kept
+// as-is since they're stored in the database and used for payment logic.
+const PAYMENT_METHOD_LABELS: Record<PaymentMethod, string> = {
+  QRIS: "QRIS",
+  "Bank Transfer": "Transfer Bank",
+  Cash: "Tunai",
+};
 
 const formatRupiahInput = (digits: string) => {
   if (!digits) return "";
@@ -26,8 +35,7 @@ function formatRupiah(amount: number): string {
 
 function orderTotal(order: Order): number {
   const subtotal = order.items.reduce((sum, i) => sum + i.price * i.quantity, 0);
-  const tax = 0.1
-  return subtotal * (1 - order.discount / 100) * (1 + tax);
+  return subtotal * (1 - order.discount / 100) * (1 + TAX_RATE);
 }
 
 export default function PaymentScreen() {
@@ -59,8 +67,7 @@ export default function PaymentScreen() {
   const discountAmount = subtotal * (safeDiscountPct / 100);
   
   const taxableAmount = subtotal - discountAmount;
-  const taxRate = 0.1; // 10%
-  const taxAmount = taxableAmount * taxRate;
+  const taxAmount = taxableAmount * TAX_RATE;
   
   // Math.round fixes floating point precision errors (e.g., 10.00000000001)
   const total = Math.round(taxableAmount + taxAmount);
@@ -73,7 +80,7 @@ export default function PaymentScreen() {
       const paid = parseInt(paymentAmount, 10) || 0;
       if (paid < total) {
         setError(
-          `Payment kurang dari total. Butuh ${formatRupiah(total - paid)} lagi.`
+          `Pembayaran kurang dari total. Butuh ${formatRupiah(total - paid)} lagi.`
         );
         return;
       }
@@ -145,7 +152,7 @@ export default function PaymentScreen() {
         {/* Customer info */}
         <View className="bg-green-400 rounded-2xl px-4 py-3 mb-4 self-start shadow shadow-green-600/30">
           <Text className="text-sm font-bold text-white">
-            Nama Customer : {order.customerName}
+            Nama Pelanggan : {order.customerName}
           </Text>
           <Text className="text-sm font-bold text-white">
             Tempat Duduk{"    "}: {order.seat}
@@ -155,7 +162,7 @@ export default function PaymentScreen() {
         {/* Order summary */}
         <View className="bg-yellow-100 rounded-3xl px-5 py-5 shadow-sm">
           <View className="border-2 border-gray-200 rounded-xl px-3 py-1.5 self-start mb-4 bg-white/60">
-            <Text className="text-sm font-bold text-gray-700">Order Customer</Text>
+            <Text className="text-sm font-bold text-gray-700">Pesanan Pelanggan</Text>
           </View>
 
           {groupedItems.map((item) => (
@@ -175,7 +182,7 @@ export default function PaymentScreen() {
           {/* Discount */}
           <View className="flex-row items-center gap-3 mb-3">
             <View className="border-2 border-gray-200 rounded-xl px-3 py-1.5 bg-white/60">
-              <Text className="text-sm font-bold text-gray-600">Discount</Text>
+              <Text className="text-sm font-bold text-gray-600">Diskon</Text>
             </View>
             <TextInput
               className="bg-white border-2 border-gray-100 rounded-xl px-3 py-1.5 font-bold text-sm text-gray-900 w-20 text-center"
@@ -192,10 +199,10 @@ export default function PaymentScreen() {
           {/* Tax */}
           <View className="flex-row items-center gap-3 mb-3">
             <View className="border-2 border-gray-200 rounded-xl px-3 py-1.5 bg-white/60">
-              <Text className="text-sm font-bold text-gray-600">Tax/Pajak</Text>
+              <Text className="text-sm font-bold text-gray-600">Pajak</Text>
             </View>
            <View className="border-2 border-gray-200 rounded-xl px-3 py-1.5 bg-white/60">
-              <Text className="text-sm font-bold text-gray-600">10 %</Text>
+              <Text className="text-sm font-bold text-gray-600">{TAX_RATE * 100} %</Text>
             </View>
           </View>
 
@@ -210,7 +217,7 @@ export default function PaymentScreen() {
         {/* Payment Method UI */}
         <View className="bg-white rounded-3xl px-5 py-5 shadow-sm mt-4">
           <View className="border-2 border-gray-200 rounded-xl px-3 py-1.5 self-start mb-4 bg-gray-50">
-            <Text className="text-sm font-bold text-gray-700">Payment Method</Text>
+            <Text className="text-sm font-bold text-gray-700">Metode Pembayaran</Text>
           </View>
 
           {paymentOptions.map((method) => {
@@ -238,7 +245,7 @@ export default function PaymentScreen() {
                     isSelected ? 'text-gray-900' : 'text-gray-500'
                   }`}
                 >
-                  {method}
+                  {PAYMENT_METHOD_LABELS[method]}
                 </Text>
               </TouchableOpacity>
             );
@@ -248,7 +255,7 @@ export default function PaymentScreen() {
         {/* Handle cash payment */}
         {methodOfPayment === "Cash" && (
           <View className="mt-1">
-            <Text className="text-sm font-bold text-gray-700 mb-2">Payment Amount</Text>
+            <Text className="text-sm font-bold text-gray-700 mb-2">Jumlah Pembayaran</Text>
             <TextInput
               className="border-2 border-gray-200 rounded-xl px-4 py-2.5 text-sm font-semibold text-gray-900 bg-gray-50"
               placeholder="0"
@@ -280,7 +287,7 @@ export default function PaymentScreen() {
           {saving ? (
             <ActivityIndicator size="small" color="white" />
           ) : (
-            <Text className="text-sm font-extrabold text-white">Confirm Payment</Text>
+            <Text className="text-sm font-extrabold text-white">Konfirmasi Pembayaran</Text>
           )}
         </TouchableOpacity>
       </View>

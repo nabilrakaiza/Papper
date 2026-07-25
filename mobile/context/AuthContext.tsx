@@ -42,7 +42,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     if (Platform.OS === "web" && data.role !== "admin") {
       await supabase.auth.signOut();
-      setAuthError("Only admin accounts can log in on the web version.");
+      setAuthError("Hanya akun admin yang dapat masuk di versi web.");
       return null;
     }
 

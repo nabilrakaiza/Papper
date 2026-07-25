@@ -15,6 +15,7 @@ import { Order } from "../../../types/order";
 import PrinterSelector from "../../../components/PrinterSelector";
 import { printReceipt } from "../../../lib/printer";
 import { useUser } from "@/hooks/useUser";
+import { TAX_RATE } from "../../../lib/constants";
 
 function formatRupiah(amount: number): string {
   return "Rp " + Math.round(amount).toLocaleString("id-ID");
@@ -22,8 +23,7 @@ function formatRupiah(amount: number): string {
 
 function orderTotal(order: Order): number {
   const subtotal = order.items.reduce((sum, i) => sum + i.price * i.quantity, 0);
-  const tax = 0.1
-  return subtotal * (1 - order.discount / 100) * (1 + tax);
+  return subtotal * (1 - order.discount / 100) * (1 + TAX_RATE);
 }
 
 type OrderCardProps = {
@@ -50,7 +50,7 @@ function useOrderTimer(createdAt: Date) {
 function TimerDot({ createdAt }: { createdAt: Date }) {
   const elapsed = useOrderTimer(createdAt);
   const color = elapsed < 30 ? "#22c55e" : elapsed < 60 ? "#eab308" : "#ef4444";
-  const label = elapsed >= 60 ? `${Math.floor(elapsed / 60)}h ${elapsed % 60}m` : `${elapsed}m`;
+  const label = elapsed >= 60 ? `${Math.floor(elapsed / 60)}j ${elapsed % 60}m` : `${elapsed}m`;
 
   return (
     <View style={{ flexDirection: "row", alignItems: "center", marginLeft: 6, gap: 4 }}>
@@ -74,7 +74,7 @@ function OrderCard({ order, onPrintKitchenPress, onPrintBillPress }: OrderCardPr
       <View className="flex-row items-center justify-between">
         <View className={`flex-row items-center rounded-xl px-3 py-1.5 ${isPaid ? "bg-white/20" : "bg-white/80"}`}>
           <Text className={`text-sm font-bold ${isPaid ? "text-white" : "text-gray-800"}`}>
-            Order : {order.customerName}
+            Pesanan : {order.customerName}
           </Text>
           {!isPaid && <TimerDot createdAt={order.createdAt} />}
         </View>
@@ -104,7 +104,7 @@ function OrderCard({ order, onPrintKitchenPress, onPrintBillPress }: OrderCardPr
 
       <View className="flex-row justify-between mt-2 px-1">
         <Text className={`text-xs font-bold ${isPaid ? "text-white/70" : "text-gray-400"}`}>
-          Seat: {order.seat}
+          Tempat Duduk: {order.seat}
         </Text>
         <Text className={`text-xs font-bold ${isPaid ? "text-white/70" : "text-gray-400"}`}>
           {formatRupiah(orderTotal(order))}
@@ -172,17 +172,17 @@ export default function CashierHomeScreen() {
         // Create a new array with all items marked as sent
         const updatedItems = order.items.map(item => ({
           ...item,
-          isSent: true 
+          isSent: true
         }));
 
         // Call your existing update function to sync it to Supabase
-        const { error: updateError } = await updateOrder(order.id, { 
-          items: updatedItems 
+        const { error: updateError } = await updateOrder(order.id, {
+          items: updatedItems
         });
 
         if (updateError) {
           // If the print worked but the DB failed, we should probably let the user know
-          printErr = "Printed successfully, but failed to update 'sent' status in system.";
+          printErr = "Berhasil dicetak, tetapi gagal memperbarui status 'terkirim' di sistem.";
         }
       }
       // -------------------------------------------------------------
@@ -195,7 +195,7 @@ export default function CashierHomeScreen() {
 
     if (printErr) {
       // If it's our custom string error, show that. Otherwise show the default connection error.
-      setPrintError(typeof printErr === "string" ? printErr : `Failed to print ${type}. Make sure printer is on and connected.`);
+      setPrintError(typeof printErr === "string" ? printErr : `Gagal mencetak ${type === "kitchen" ? "dapur" : "bon"}. Pastikan printer menyala dan terhubung.`);
     }
     
     setPrinting(false);
@@ -224,7 +224,7 @@ export default function CashierHomeScreen() {
       <View className="flex-row items-center justify-between px-5 pt-4 pb-3">
         <View className="flex-row items-center gap-2">
           <Text className="text-blue-500 text-xl font-black">✛</Text>
-          <Text className="text-2xl font-black text-gray-900">Orders</Text>
+          <Text className="text-2xl font-black text-gray-900">Pesanan</Text>
         </View>
 
         {/* Printer status indicators */}
@@ -237,7 +237,7 @@ export default function CashierHomeScreen() {
           >
             <Printer size={13} color={cashierPrinter ? "#3a7bd5" : "#aaa"} />
             <Text className={`text-xs font-extrabold ${cashierPrinter ? "text-blue-500" : "text-gray-400"}`}>
-              {cashierPrinter ? cashierPrinter.name : "Cashier"}
+              {cashierPrinter ? cashierPrinter.name : "Kasir"}
             </Text>
           </TouchableOpacity>
 
@@ -249,7 +249,7 @@ export default function CashierHomeScreen() {
           >
             <ChefHat size={13} color={kitchenPrinter ? "#f97316" : "#aaa"} />
             <Text className={`text-xs font-extrabold ${kitchenPrinter ? "text-orange-500" : "text-gray-400"}`}>
-              {kitchenPrinter ? kitchenPrinter.name : "Kitchen"}
+              {kitchenPrinter ? kitchenPrinter.name : "Dapur"}
             </Text>
           </TouchableOpacity>
         </View>
@@ -271,7 +271,7 @@ export default function CashierHomeScreen() {
       {printing && (
         <View className="mx-4 mb-2 bg-blue-50 border border-blue-100 rounded-2xl px-4 py-3 flex-row items-center gap-2">
           <ActivityIndicator size="small" color="#3a7bd5" />
-          <Text className="text-xs font-bold text-blue-500">Printing...</Text>
+          <Text className="text-xs font-bold text-blue-500">Sedang mencetak...</Text>
         </View>
       )}
 
@@ -279,7 +279,7 @@ export default function CashierHomeScreen() {
       {loading ? (
         <View className="flex-1 items-center justify-center">
           <ActivityIndicator size="large" color="#3a7bd5" />
-          <Text className="text-gray-400 font-bold text-sm mt-3">Loading orders...</Text>
+          <Text className="text-gray-400 font-bold text-sm mt-3">Memuat pesanan...</Text>
         </View>
       ) : (
         <ScrollView
@@ -288,7 +288,7 @@ export default function CashierHomeScreen() {
         >
           {orders.length === 0 && (
             <View className="items-center mt-24">
-              <Text className="text-gray-300 font-bold text-sm">No orders yet.</Text>
+              <Text className="text-gray-300 font-bold text-sm">Belum ada pesanan.</Text>
             </View>
           )}
           {unpaid.map((o) => (

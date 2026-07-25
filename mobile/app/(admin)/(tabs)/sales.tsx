@@ -11,6 +11,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { VictoryBar, VictoryChart, VictoryAxis, VictoryTheme } from "victory-native";
 import { supabase } from "../../../lib/supabase";
 import { SalesPeriod } from "../../../types/sales";
+import { TAX_RATE } from "../../../lib/constants";
 
 const { width } = Dimensions.get("window");
 
@@ -28,9 +29,9 @@ function formatRupiahFull(amount: number): string {
 }
 
 const PERIOD_LABELS: { key: SalesPeriod; label: string }[] = [
-  { key: "daily", label: "Daily" },
-  { key: "weekly", label: "Weekly" },
-  { key: "monthly", label: "Monthly" },
+  { key: "daily", label: "Harian" },
+  { key: "weekly", label: "Mingguan" },
+  { key: "monthly", label: "Bulanan" },
 ];
 
 function PeriodToggle({
@@ -157,8 +158,7 @@ export default function AdminSalesScreen() {
     const ordersWithTotal = orders.map((order) => {
       const orderItems = (items ?? []).filter((i) => i.order_id === order.id);
       const subtotal = orderItems.reduce((sum, i) => sum + i.price * i.quantity, 0);
-      const tax = 0.1;
-      const total = subtotal * (1 - order.discount / 100) * (1 + tax);
+      const total = subtotal * (1 - order.discount / 100) * (1 + TAX_RATE);
       return { created_at: order.created_at, total };
     });
 
@@ -267,7 +267,7 @@ export default function AdminSalesScreen() {
             <View className="flex-row items-center justify-between mb-4">
               {/* Pass the specific sales state and handler */}
               <PeriodToggle period={salesPeriod} onChange={handleSalesPeriodChange} />
-              <Text className="text-lg font-black text-gray-900">Total Sales</Text>
+              <Text className="text-lg font-black text-gray-900">Total Penjualan</Text>
             </View>
 
             <View className="bg-cyan-100 rounded-2xl overflow-hidden min-h-[200px]">
@@ -310,7 +310,7 @@ export default function AdminSalesScreen() {
                 </View>
               ) : (
                 <View className="h-40 items-center justify-center">
-                  <Text className="text-gray-400 font-bold text-sm">No sales data for this period</Text>
+                  <Text className="text-gray-400 font-bold text-sm">Tidak ada data penjualan untuk periode ini</Text>
                 </View>
               )}
 
@@ -318,7 +318,7 @@ export default function AdminSalesScreen() {
                 <View className="mx-4 mb-4 mt-2">
                   <View className="border border-gray-300 rounded-xl px-4 py-2 self-start bg-white/70">
                     <Text className="text-sm font-extrabold text-gray-800">
-                      Total Sales : {formatRupiahFull(totalSales)}
+                      Total Penjualan : {formatRupiahFull(totalSales)}
                     </Text>
                   </View>
                 </View>
@@ -331,7 +331,7 @@ export default function AdminSalesScreen() {
             <View className="flex-row items-center justify-between mb-4">
                {/* Pass the specific top selling state and handler */}
               <PeriodToggle period={topSellingPeriod} onChange={handleTopSellingPeriodChange} />
-              <Text className="text-lg font-black text-gray-900">Top Selling</Text>
+              <Text className="text-lg font-black text-gray-900">Terlaris</Text>
             </View>
 
             <View className="bg-cyan-100 rounded-2xl px-4 py-2 min-h-[100px] justify-center">
@@ -341,7 +341,7 @@ export default function AdminSalesScreen() {
                 </View>
               ) : topMenu.length === 0 ? (
                 <View className="py-6 items-center">
-                  <Text className="text-gray-400 font-bold text-sm">No data for this period</Text>
+                  <Text className="text-gray-400 font-bold text-sm">Tidak ada data untuk periode ini</Text>
                 </View>
               ) : (
                 topMenu.map((item, index) => (

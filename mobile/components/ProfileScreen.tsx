@@ -40,7 +40,7 @@ export default function ProfileScreen() {
     fetchProfile();
   }, [session]);
 
-  const roleLabel = profile?.role === "admin" ? "Admin" : "Cashier";
+  const roleLabel = profile?.role === "admin" ? "Admin" : "Kasir";
   const roleColor =
     profile?.role === "admin" ? "bg-blue-100 text-blue-600" : "bg-green-100 text-green-600";
 
@@ -48,7 +48,7 @@ export default function ProfileScreen() {
     <SafeAreaView className="flex-1 bg-gray-100">
       {/* Header */}
       <View className="px-5 pt-4 pb-3">
-        <Text className="text-2xl font-black text-gray-900">Profile</Text>
+        <Text className="text-2xl font-black text-gray-900">Profil</Text>
       </View>
 
       {loading ? (
@@ -89,7 +89,7 @@ export default function ProfileScreen() {
               </View>
               <View>
                 <Text className="text-[10px] font-extrabold text-gray-400 uppercase tracking-widest">
-                  Role
+                  Peran
                 </Text>
                 <Text className="text-sm font-bold text-gray-800">{roleLabel}</Text>
               </View>
@@ -102,7 +102,7 @@ export default function ProfileScreen() {
             className="w-full bg-red-50 border-2 border-red-100 rounded-2xl py-4 flex-row items-center justify-center gap-2"
           >
             <LogOut size={18} color="#ef4444" />
-            <Text className="text-sm font-extrabold text-red-500">Sign Out</Text>
+            <Text className="text-sm font-extrabold text-red-500">Keluar</Text>
           </TouchableOpacity>
         </View>
       )}

@@ -34,9 +34,9 @@ export default function PrinterSelector({ visible, onClose, onConnected, initial
     const { devices: found, error } = await scanAndConnectPrinter();
 
     if (error) {
-      setError("Failed to scan. Make sure Bluetooth is enabled.");
+      setError("Gagal memindai. Pastikan Bluetooth aktif.");
     } else if (found.length === 0) {
-      setError("No paired devices found. Pair your printer in Android Bluetooth settings first.");
+      setError("Tidak ada perangkat berpasangan ditemukan. Pasangkan printer Anda di pengaturan Bluetooth Android terlebih dahulu.");
     } else {
       setDevices(found);
     }
@@ -51,7 +51,7 @@ export default function PrinterSelector({ visible, onClose, onConnected, initial
     const { error } = await connectToPrinter(device.address);
 
     if (error) {
-      setError(`Failed to connect to ${device.name}. Make sure it's turned on.`);
+      setError(`Gagal terhubung ke ${device.name}. Pastikan perangkat menyala.`);
       setConnecting(null);
       return;
     }
@@ -80,7 +80,7 @@ export default function PrinterSelector({ visible, onClose, onConnected, initial
           <View className="flex-row items-center justify-between mb-4">
             <View className="flex-row items-center gap-2">
               <Printer size={20} color="#333" />
-              <Text className="text-lg font-black text-gray-900">Select Printer</Text>
+              <Text className="text-lg font-black text-gray-900">Pilih Printer</Text>
             </View>
             <TouchableOpacity onPress={handleClose}>
               <X size={20} color="#aaa" />
@@ -89,7 +89,7 @@ export default function PrinterSelector({ visible, onClose, onConnected, initial
 
           {/* Role selector */}
           <Text className="text-[10px] font-extrabold text-gray-400 uppercase tracking-widest mb-2">
-            Printer Type
+            Jenis Printer
           </Text>
           <View className="flex-row bg-gray-100 rounded-xl p-1 mb-4 gap-1">
             <TouchableOpacity
@@ -100,7 +100,7 @@ export default function PrinterSelector({ visible, onClose, onConnected, initial
             >
               <Printer size={14} color={role === "cashier" ? "#3a7bd5" : "#aaa"} />
               <Text className={`text-xs font-extrabold ${role === "cashier" ? "text-blue-500" : "text-gray-400"}`}>
-                Cashier
+                Kasir
               </Text>
             </TouchableOpacity>
             <TouchableOpacity
@@ -111,7 +111,7 @@ export default function PrinterSelector({ visible, onClose, onConnected, initial
             >
               <ChefHat size={14} color={role === "kitchen" ? "#f97316" : "#aaa"} />
               <Text className={`text-xs font-extrabold ${role === "kitchen" ? "text-orange-500" : "text-gray-400"}`}>
-                Kitchen
+                Dapur
               </Text>
             </TouchableOpacity>
           </View>
@@ -128,7 +128,7 @@ export default function PrinterSelector({ visible, onClose, onConnected, initial
               <RefreshCw size={16} color="#3a7bd5" />
             )}
             <Text className="text-sm font-extrabold text-blue-500">
-              {scanning ? "Scanning..." : "Scan for Printers"}
+              {scanning ? "Memindai..." : "Pindai Printer"}
             </Text>
           </TouchableOpacity>
 
@@ -162,7 +162,7 @@ export default function PrinterSelector({ visible, onClose, onConnected, initial
                     <ActivityIndicator size="small" color="#3a7bd5" />
                   ) : (
                     <Text className="text-xs font-extrabold text-blue-500">
-                      Set as {role === "cashier" ? "Cashier" : "Kitchen"}
+                      Jadikan {role === "cashier" ? "Kasir" : "Dapur"}
                     </Text>
                   )}
                 </TouchableOpacity>
@@ -175,7 +175,7 @@ export default function PrinterSelector({ visible, onClose, onConnected, initial
             <View className="items-center py-6">
               <Printer size={32} color="#ddd" />
               <Text className="text-gray-300 font-bold text-sm mt-2">
-                Tap scan to find nearby printers
+                Ketuk pindai untuk mencari printer di sekitar
               </Text>
             </View>
           )}

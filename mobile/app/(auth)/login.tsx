@@ -34,12 +34,12 @@ export default function LoginScreen() {
     const email = username.trim().toLowerCase();
 
     if (!email) {
-      setError("Empty username");
+      setError("Nama pengguna kosong");
       return;
     }
 
     if (!password) {
-      setError("Empty Password ");
+      setError("Kata sandi kosong");
       return;
     }
 
@@ -50,7 +50,7 @@ export default function LoginScreen() {
     });
 
     if (authSignInError) {
-      setError("Invalid username or password");
+      setError("Nama pengguna atau kata sandi salah");
       setLoading(false);
       return;
     }
@@ -67,7 +67,7 @@ export default function LoginScreen() {
           <Text className="text-blue-500 text-4xl font-black mb-1">✛</Text>
           <Text className="text-3xl font-black text-gray-900">Papper</Text>
           <Text className="text-sm font-bold text-gray-400 mt-1">
-            Sign in to continue
+            Masuk untuk melanjutkan
           </Text>
         </View>
 
@@ -75,11 +75,11 @@ export default function LoginScreen() {
         <View className="bg-yellow-100 rounded-3xl px-6 py-8 shadow-sm shadow-yellow-300/30">
           {/* Username */}
           <Text className="text-[10px] font-extrabold text-gray-400 uppercase tracking-widest mb-1">
-            Username
+            Nama Pengguna
           </Text>
           <TextInput
             className="w-full bg-white border-2 border-gray-100 rounded-xl px-4 py-3 font-bold text-sm text-gray-900 mb-4"
-            placeholder="e.g. admin"
+            placeholder="cth. admin"
             value={username}
             onChangeText={setUsername}
             autoCapitalize="none"
@@ -89,7 +89,7 @@ export default function LoginScreen() {
 
           {/* Password */}
           <Text className="text-[10px] font-extrabold text-gray-400 uppercase tracking-widest mb-1">
-            Password
+            Kata Sandi
           </Text>
           <TextInput
             className="w-full bg-white border-2 border-gray-100 rounded-xl px-4 py-3 font-bold text-sm text-gray-900 mb-2"
@@ -116,7 +116,7 @@ export default function LoginScreen() {
             {loading ? (
               <ActivityIndicator color="white" />
             ) : (
-              <Text className="text-sm font-extrabold text-white">Sign In</Text>
+              <Text className="text-sm font-extrabold text-white">Masuk</Text>
             )}
           </TouchableOpacity>
         </View>

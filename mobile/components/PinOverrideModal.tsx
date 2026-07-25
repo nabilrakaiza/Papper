@@ -47,7 +47,7 @@ export default function PinOverrideModal({ visible, orderId, onClose, onSubmit }
             ))}
           </View>
 
-          {error && <Text className="text-red-500 text-center mb-2">Incorrect PIN</Text>}
+          {error && <Text className="text-red-500 text-center mb-2">PIN Salah</Text>}
 
           <View className="flex-row flex-wrap justify-center">
             {keys.map((k, idx) => (
@@ -67,12 +67,12 @@ export default function PinOverrideModal({ visible, orderId, onClose, onSubmit }
 
           {pin.length === 6 && !loading && (
             <TouchableOpacity onPress={submit} className="bg-blue-600 rounded-lg p-3 mt-4">
-              <Text className="text-white text-center font-semibold">Confirm</Text>
+              <Text className="text-white text-center font-semibold">Konfirmasi</Text>
             </TouchableOpacity>
           )}
 
           <TouchableOpacity onPress={onClose} className="mt-3">
-            <Text className="text-zinc-400 text-center">Cancel</Text>
+            <Text className="text-zinc-400 text-center">Batal</Text>
           </TouchableOpacity>
         </View>
       </View>

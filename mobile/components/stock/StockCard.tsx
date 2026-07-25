@@ -51,9 +51,9 @@ function StockCard({ item, lowStockThreshold = 5 }: Props) {
 
       <View className="flex-row items-center justify-between mt-2">
         {isOutOfStock ? (
-          <Text className="text-xs font-extrabold text-white">⚠ Out of stock</Text>
+          <Text className="text-xs font-extrabold text-white">⚠ Stok habis</Text>
         ) : isLowStock ? (
-          <Text className="text-xs font-extrabold text-yellow-950">⚠ Low stock</Text>
+          <Text className="text-xs font-extrabold text-yellow-950">⚠ Stok menipis</Text>
         ) : (
           <View />
         )}

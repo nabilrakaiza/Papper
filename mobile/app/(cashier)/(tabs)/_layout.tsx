@@ -24,28 +24,28 @@ export default function CashierTabLayout() {
       <Tabs.Screen
         name="index"
         options={{
-          title: "Orders",
+          title: "Pesanan",
           tabBarIcon: ({ color, size }) => <ShoppingBag size={size} color={color} />,
         }}
       />
       <Tabs.Screen
         name="availability"
         options={{
-          title: "Availability",
+          title: "Ketersediaan",
           tabBarIcon: ({ color, size }) => <ToggleLeft size={size} color={color} />,
         }}
       />
       <Tabs.Screen
         name="sales"
         options={{
-          title: "Sales",
+          title: "Penjualan",
           tabBarIcon: ({ color, size }) => <BarChart2 size={size} color={color} />,
         }}
       />
       <Tabs.Screen
         name="profile"
         options={{
-          title: "Profile",
+          title: "Profil",
           tabBarIcon: ({ color, size }) => <UserCircle size={size} color={color} />,
         }}
       />

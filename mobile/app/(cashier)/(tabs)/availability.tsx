@@ -23,7 +23,7 @@ export default function AvailabilityScreen() {
     <SafeAreaView className="flex-1 bg-gray-100">
       {/* Header */}
       <View className="px-5 pt-4 pb-3">
-        <Text className="text-2xl font-black text-gray-900">Availability / Ketersediaan</Text>
+        <Text className="text-2xl font-black text-gray-900">Ketersediaan</Text>
       </View>
 
       <ScrollView
@@ -46,7 +46,7 @@ export default function AvailabilityScreen() {
                 <View className="flex-row items-center justify-between">
                   <View className="border-2 border-gray-200 rounded-xl px-3 py-1.5 bg-white/60">
                     <Text className="text-sm font-bold text-gray-700">
-                      {category} Selections
+                      Pilihan {category}
                     </Text>
                   </View>
                   <Text className="text-gray-400 font-bold text-sm">

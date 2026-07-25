@@ -75,7 +75,7 @@ const StockRow = memo(function StockRow({
         </Text>
       </View>
       {isAdded && (
-        <Text className="text-[10px] font-extrabold text-gray-400">Already added</Text>
+        <Text className="text-[10px] font-extrabold text-gray-400">Sudah ditambahkan</Text>
       )}
     </TouchableOpacity>
   );
@@ -159,12 +159,12 @@ export default function CogsEditScreen() {
       e.preventDefault();
 
       Alert.alert(
-        "Discard changes?",
-        "You have unsaved changes. If you leave now, they will be lost.",
+        "Buang perubahan?",
+        "Anda memiliki perubahan yang belum disimpan. Jika keluar sekarang, perubahan akan hilang.",
         [
-          { text: "Keep editing", style: "cancel" },
+          { text: "Lanjut edit", style: "cancel" },
           {
-            text: "Discard",
+            text: "Buang",
             style: "destructive",
             onPress: () => navigation.dispatch(e.data.action),
           },
@@ -260,7 +260,7 @@ export default function CogsEditScreen() {
 
     const parsed = parseFloat(newQuantity);
     if (!parsed || parsed <= 0) {
-      setError("Quantity must be greater than 0.");
+      setError("Jumlah harus lebih besar dari 0.");
       return;
     }
 
@@ -295,14 +295,14 @@ export default function CogsEditScreen() {
     if (cogsMode === "ingredients") {
       const invalid = ingredients.some((i) => !i.quantity || i.quantity <= 0);
       if (invalid) {
-        setError("All ingredient quantities must be greater than 0.");
+        setError("Semua jumlah bahan harus lebih besar dari 0.");
         setSaving(false);
         return;
       }
     } else {
       const value = manualCogsInput === "" ? null : parseFloat(manualCogsInput);
       if (value !== null && value < 0) {
-        setError("Manual COGS cannot be negative.");
+        setError("HPP manual tidak boleh negatif.");
         setSaving(false);
         return;
       }
@@ -315,7 +315,7 @@ export default function CogsEditScreen() {
         .delete()
         .in("id", deletedRowIds);
       if (delError) {
-        setError("Failed to remove some ingredients.");
+        setError("Gagal menghapus beberapa bahan.");
         setSaving(false);
         return;
       }
@@ -334,7 +334,7 @@ export default function CogsEditScreen() {
         }))
       );
       if (insertError) {
-        setError("Failed to add some ingredients.");
+        setError("Gagal menambahkan beberapa bahan.");
         setSaving(false);
         return;
       }
@@ -346,7 +346,7 @@ export default function CogsEditScreen() {
         .update({ quantity: row.quantity })
         .eq("id", row.rowId);
       if (updateError) {
-        setError("Failed to update some ingredient quantities.");
+        setError("Gagal memperbarui beberapa jumlah bahan.");
         setSaving(false);
         return;
       }
@@ -360,7 +360,7 @@ export default function CogsEditScreen() {
       .eq("id", menuId);
 
     if (menuError) {
-      setError("Failed to save COGS mode.");
+      setError("Gagal menyimpan mode HPP.");
       setSaving(false);
       return;
     }
@@ -385,14 +385,14 @@ export default function CogsEditScreen() {
         <TouchableOpacity onPress={() => router.back()}>
           <ChevronLeft size={24} color="#333" />
         </TouchableOpacity>
-        <Text className="text-xl font-black text-gray-900">Edit COGS</Text>
+        <Text className="text-xl font-black text-gray-900">Edit HPP</Text>
         <View className="w-6" />
       </View>
 
       {isDirty && (
         <View className="mx-4 mb-2 bg-amber-50 border border-amber-100 rounded-2xl px-4 py-2.5">
           <Text className="text-xs font-bold text-amber-600 text-center">
-            You have unsaved changes.
+            Anda memiliki perubahan yang belum disimpan.
           </Text>
         </View>
       )}
@@ -405,7 +405,7 @@ export default function CogsEditScreen() {
         <View className="bg-white rounded-2xl px-4 py-3 mb-4">
           <Text className="text-lg font-black text-gray-900">{menuName}</Text>
           <Text className="text-xs font-bold text-gray-400 mt-1">
-            Selling price: {formatRupiah(sellingPrice)}
+            Harga jual: {formatRupiah(sellingPrice)}
           </Text>
         </View>
 
@@ -421,7 +421,7 @@ export default function CogsEditScreen() {
                 cogsMode === "ingredients" ? "text-gray-900" : "text-gray-400"
               }`}
             >
-              By Ingredients
+              Berdasarkan Bahan
             </Text>
           </TouchableOpacity>
           <TouchableOpacity
@@ -449,12 +449,12 @@ export default function CogsEditScreen() {
         {cogsMode === "ingredients" ? (
           <View className="bg-yellow-100 rounded-3xl px-4 pt-4 pb-5">
             <Text className="text-[10px] font-extrabold text-gray-500 uppercase tracking-widest mb-3">
-              Ingredients
+              Bahan
             </Text>
 
             {ingredients.length === 0 ? (
               <Text className="text-xs font-bold text-gray-400 py-4 text-center">
-                No ingredients added yet.
+                Belum ada bahan yang ditambahkan.
               </Text>
             ) : (
               ingredients.map((row) => (
@@ -494,13 +494,13 @@ export default function CogsEditScreen() {
               className="flex-row items-center justify-center gap-2 bg-white/80 rounded-xl py-3 mt-2"
             >
               <Plus size={16} color="#78716c" />
-              <Text className="text-xs font-extrabold text-gray-600">Add Ingredient</Text>
+              <Text className="text-xs font-extrabold text-gray-600">Tambah Bahan</Text>
             </TouchableOpacity>
 
             <View className="h-px bg-yellow-200 my-4" />
 
             <View className="flex-row justify-between">
-              <Text className="text-sm font-bold text-gray-600">Total COGS</Text>
+              <Text className="text-sm font-bold text-gray-600">Total HPP</Text>
               <Text className="text-base font-black text-gray-900">
                 {formatRupiah(totalCogs)}
               </Text>
@@ -509,14 +509,14 @@ export default function CogsEditScreen() {
         ) : (
           <View className="bg-yellow-100 rounded-3xl px-4 pt-4 pb-5">
             <Text className="text-[10px] font-extrabold text-gray-500 uppercase tracking-widest mb-3">
-              Manual COGS
+              HPP Manual
             </Text>
             <Text className="text-xs font-bold text-gray-500 mb-3">
-              No ingredients tracked for this mode — enter the COGS amount directly.
+              Tidak ada bahan yang dilacak untuk mode ini — masukkan jumlah HPP secara langsung.
             </Text>
             <TextInput
               className="bg-white border-2 border-gray-100 rounded-xl px-4 py-3 font-bold text-base text-gray-900"
-              placeholder="e.g. 12000"
+              placeholder="cth. 12000"
               placeholderTextColor="#ccc"
               keyboardType="numeric"
               value={manualCogsInput}
@@ -538,7 +538,7 @@ export default function CogsEditScreen() {
           {saving ? (
             <ActivityIndicator size="small" color="white" />
           ) : (
-            <Text className="text-sm font-extrabold text-white">Save Changes</Text>
+            <Text className="text-sm font-extrabold text-white">Simpan Perubahan</Text>
           )}
         </TouchableOpacity>
       </View>
@@ -555,7 +555,7 @@ export default function CogsEditScreen() {
         )}
       >
         <View className="flex-row items-center justify-between px-5 pb-3">
-          <Text className="text-lg font-black text-gray-900">Add Ingredient</Text>
+          <Text className="text-lg font-black text-gray-900">Tambah Bahan</Text>
           <TouchableOpacity onPress={closePicker}>
             <X size={22} color="#333" />
           </TouchableOpacity>
@@ -566,7 +566,7 @@ export default function CogsEditScreen() {
             <Search size={16} color="#aaa" />
             <BottomSheetTextInput
               className="flex-1 py-2.5 font-bold text-sm text-gray-900"
-              placeholder="Search stock..."
+              placeholder="Cari stok..."
               value={stockSearch}
               onChangeText={setStockSearch}
               placeholderTextColor="#ccc"
@@ -588,7 +588,7 @@ export default function CogsEditScreen() {
           )}
           ListEmptyComponent={
             <Text className="text-xs font-bold text-gray-400 text-center mt-8">
-              No stock items found.
+              Tidak ada item stok ditemukan.
             </Text>
           }
         />
@@ -596,12 +596,12 @@ export default function CogsEditScreen() {
         {selectedStock && (
           <View className="px-4 pb-6 pt-3 border-t border-gray-100">
             <Text className="text-xs font-bold text-gray-500 mb-2">
-              Quantity ({selectedStock.unit}) for {selectedStock.name}
+              Jumlah ({selectedStock.unit}) untuk {selectedStock.name}
             </Text>
             <View className="flex-row items-center gap-3">
               <BottomSheetTextInput
                 className="flex-1 bg-gray-50 border-2 border-gray-100 rounded-xl px-3 py-2.5 font-bold text-sm text-gray-900"
-                placeholder={`e.g. 2 ${selectedStock.unit}`}
+                placeholder={`cth. 2 ${selectedStock.unit}`}
                 placeholderTextColor="#ccc"
                 keyboardType="numeric"
                 value={newQuantity}
@@ -611,7 +611,7 @@ export default function CogsEditScreen() {
                 onPress={handleAddIngredient}
                 className="bg-green-400 rounded-xl px-5 py-3"
               >
-                <Text className="text-sm font-extrabold text-white">Add</Text>
+                <Text className="text-sm font-extrabold text-white">Tambah</Text>
               </TouchableOpacity>
             </View>
             {error !== "" && (

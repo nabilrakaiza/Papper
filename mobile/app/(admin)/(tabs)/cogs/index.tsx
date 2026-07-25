@@ -42,10 +42,10 @@ function MarginBadge({ cogs, price }: { cogs: number; price: number }) {
 
   const tier =
     margin >= 10
-      ? { label: "Good", bg: "bg-green-100", text: "text-green-600" }
+      ? { label: "Baik", bg: "bg-green-100", text: "text-green-600" }
       : margin >= 5
-      ? { label: "Ok", bg: "bg-yellow-100", text: "text-yellow-600" }
-      : { label: "Low", bg: "bg-red-100", text: "text-red-600" };
+      ? { label: "Oke", bg: "bg-yellow-100", text: "text-yellow-600" }
+      : { label: "Rendah", bg: "bg-red-100", text: "text-red-600" };
 
   return (
     <View className={`px-2 py-0.5 rounded-lg ${tier.bg}`}>
@@ -100,7 +100,7 @@ const MenuCard = memo(function MenuCard({
             <MarginBadge cogs={adjustedCogs} price={item.sellingPrice} />
           ) : (
             <View className="bg-gray-100 px-2 py-0.5 rounded-lg">
-              <Text className="text-xs font-extrabold text-gray-400">Not set</Text>
+              <Text className="text-xs font-extrabold text-gray-400">Belum diatur</Text>
             </View>
           )}
           <TouchableOpacity
@@ -116,27 +116,27 @@ const MenuCard = memo(function MenuCard({
       {/* Summary */}
       <View className="bg-cyan-100 rounded-xl px-4 py-3 gap-2">
         <View className="flex-row justify-between">
-          <Text className="text-xs font-bold text-gray-500">Selling Price</Text>
+          <Text className="text-xs font-bold text-gray-500">Harga Jual</Text>
           <Text className="text-sm font-extrabold text-gray-800">
             {formatRupiah(item.sellingPrice)}
           </Text>
         </View>
         <View className="h-px bg-cyan-200" />
         <View className="flex-row justify-between">
-          <Text className="text-xs font-bold text-gray-500">COGS</Text>
+          <Text className="text-xs font-bold text-gray-500">HPP</Text>
           {hasCogs ? (
             <Text className="text-sm font-extrabold text-gray-800">
               {formatRupiah(adjustedCogs)}
             </Text>
           ) : (
-            <Text className="text-sm font-bold text-gray-300">— not set</Text>
+            <Text className="text-sm font-bold text-gray-300">— belum diatur</Text>
           )}
         </View>
         {hasCogs && (
           <>
             <View className="h-px bg-cyan-200" />
             <View className="flex-row justify-between">
-              <Text className="text-xs font-bold text-gray-500">Gross Profit</Text>
+              <Text className="text-xs font-bold text-gray-500">Laba Kotor</Text>
               <Text className={`text-sm font-extrabold ${profitColor}`}>
                 {formatRupiah(grossProfit)}
               </Text>
@@ -149,11 +149,11 @@ const MenuCard = memo(function MenuCard({
       {isExpanded && item.cogsMode === "ingredients" && (
         <View className="mt-3">
           <Text className="text-[10px] font-extrabold text-gray-400 uppercase tracking-widest mb-2">
-            Ingredients
+            Bahan
           </Text>
           {item.ingredients.length === 0 ? (
             <Text className="text-xs font-bold text-gray-400 py-2">
-              No ingredients added yet.
+              Belum ada bahan yang ditambahkan.
             </Text>
           ) : (
             <>
@@ -172,7 +172,7 @@ const MenuCard = memo(function MenuCard({
               ))}
               <View className="flex-row justify-between items-center py-1.5 border-b border-yellow-200">
                 <Text className="text-xs font-bold text-gray-600">
-                  Additional {ADDITIONAL_COGS_PERCENT}%
+                  Tambahan {ADDITIONAL_COGS_PERCENT}%
                 </Text>
                 <Text className="text-xs font-bold text-gray-500">
                   {formatRupiah(additionalCost)}
@@ -186,13 +186,13 @@ const MenuCard = memo(function MenuCard({
       {isExpanded && item.cogsMode === "manual" && (
         <View className="mt-3">
           <Text className="text-xs font-bold text-gray-400">
-            COGS entered manually. Tap the pencil icon to edit.
+            HPP dimasukkan secara manual. Ketuk ikon pensil untuk mengedit.
           </Text>
         </View>
       )}
 
       <Text className="text-[10px] font-bold text-gray-400 text-center mt-2">
-        {isExpanded ? "▲ hide details" : "▼ show details"}
+        {isExpanded ? "▲ sembunyikan detail" : "▼ tampilkan detail"}
       </Text>
     </TouchableOpacity>
   );
@@ -291,7 +291,7 @@ export default function CogsScreen() {
     <SafeAreaView className="flex-1 bg-gray-100">
       {/* Header */}
       <View className="px-5 pt-4 pb-3">
-        <Text className="text-2xl font-black text-gray-900">COGS</Text>
+        <Text className="text-2xl font-black text-gray-900">HPP</Text>
       </View>
 
       {/* Search */}
@@ -300,7 +300,7 @@ export default function CogsScreen() {
           <Search size={16} color="#aaa" />
           <TextInput
             className="flex-1 py-2.5 font-bold text-sm text-gray-900"
-            placeholder="Search menu..."
+            placeholder="Cari menu..."
             value={search}
             onChangeText={setSearch}
             placeholderTextColor="#ccc"
@@ -326,15 +326,15 @@ export default function CogsScreen() {
         ListHeaderComponent={
           <View className="bg-blue-50 border border-blue-100 rounded-2xl px-4 py-3 mb-4">
             <Text className="text-xs font-bold text-blue-400 leading-5">
-              COGS is calculated from ingredients linked to stock items, or entered manually.
-              Tap the pencil icon on a menu card to edit.
+              HPP dihitung dari bahan yang terhubung ke item stok, atau dimasukkan secara manual.
+              Ketuk ikon pensil pada kartu menu untuk mengedit.
             </Text>
           </View>
         }
         ListEmptyComponent={
           <View className="items-center mt-16">
             <Text className="text-gray-300 font-bold text-sm">
-              {search.length > 0 ? `No results for "${search}"` : "No menu items found."}
+              {search.length > 0 ? `Tidak ada hasil untuk "${search}"` : "Tidak ada menu ditemukan."}
             </Text>
           </View>
         }

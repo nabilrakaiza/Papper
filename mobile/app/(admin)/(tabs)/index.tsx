@@ -33,7 +33,7 @@ export default function StockScreen() {
       .order("name", { ascending: true });
 
     if (error) {
-      setError("Failed to load stock. Please check your connection.");
+      setError("Gagal memuat stok. Periksa koneksi Anda.");
       setLoading(false);
       return;
     }
@@ -95,7 +95,7 @@ export default function StockScreen() {
         .eq("id", existing.id);
 
       if (error) {
-        setError("Failed to update stock. Please try again.");
+        setError("Gagal memperbarui stok. Silakan coba lagi.");
         setSaving(false);
         return;
       }
@@ -109,7 +109,7 @@ export default function StockScreen() {
       });
 
       if (error) {
-        setError("Failed to add stock item. Please try again.");
+        setError("Gagal menambahkan item stok. Silakan coba lagi.");
         setSaving(false);
         return;
       }
@@ -129,7 +129,7 @@ export default function StockScreen() {
       <View className="flex-row items-center justify-between px-5 pt-4 pb-3">
         <View className="flex-row items-center gap-2">
           <Text className="text-blue-500 text-xl font-black">✛</Text>
-          <Text className="text-2xl font-black text-gray-900">Stock</Text>
+          <Text className="text-2xl font-black text-gray-900">Stok</Text>
         </View>
       </View>
 
@@ -139,7 +139,7 @@ export default function StockScreen() {
           <Search size={16} color="#aaa" />
           <TextInput
             className="flex-1 py-2.5 font-bold text-sm text-gray-900"
-            placeholder="Search stock..."
+            placeholder="Cari stok..."
             value={search}
             onChangeText={setSearch}
             placeholderTextColor="#ccc"
@@ -166,7 +166,7 @@ export default function StockScreen() {
       {loading ? (
         <View className="flex-1 items-center justify-center">
           <ActivityIndicator size="large" color="#3a7bd5" />
-          <Text className="text-gray-400 font-bold text-sm mt-3">Loading stock...</Text>
+          <Text className="text-gray-400 font-bold text-sm mt-3">Memuat stok...</Text>
         </View>
       ) : (
         <FlatList
@@ -183,8 +183,8 @@ export default function StockScreen() {
             <View className="items-center mt-24">
               <Text className="text-gray-300 font-bold text-sm text-center leading-7">
                 {search.length > 0
-                  ? `No results for "${search}"`
-                  : `No items in stock.\nTap "add stock" to begin.`}
+                  ? `Tidak ada hasil untuk "${search}"`
+                  : `Belum ada item stok.\nKetuk "tambah stok" untuk mulai.`}
               </Text>
             </View>
           }
@@ -202,7 +202,7 @@ export default function StockScreen() {
             {saving ? (
               <ActivityIndicator size="small" color="#666" />
             ) : (
-              <Text className="text-sm font-extrabold text-gray-500">add stock</Text>
+              <Text className="text-sm font-extrabold text-gray-500">tambah stok</Text>
             )}
           </TouchableOpacity>
         </View>

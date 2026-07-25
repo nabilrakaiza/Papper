@@ -126,10 +126,10 @@ export default function AddStockSheet({ onAdd, sheetRef }: Props) {
   };
 
   const handleSave = async () => {
-    if (!selected) { setError("Please select a stock item from the list"); return; }
-    if (isNaN(qty) || qty <= 0) { setError("Enter a valid quantity"); return; }
+    if (!selected) { setError("Pilih item stok dari daftar"); return; }
+    if (isNaN(qty) || qty <= 0) { setError("Masukkan jumlah yang valid"); return; }
     if (computedPricePerUnit === null || computedPricePerUnit < 0) {
-      setError("Enter a valid price"); return;
+      setError("Masukkan harga yang valid"); return;
     }
 
     setSaving(true);
@@ -147,7 +147,7 @@ export default function AddStockSheet({ onAdd, sheetRef }: Props) {
       reset();
       sheetRef.current?.close();
     } catch (e) {
-      setError("Failed to save. Please try again.");
+      setError("Gagal menyimpan. Silakan coba lagi.");
       setSaving(false);
     }
   };
@@ -160,7 +160,7 @@ export default function AddStockSheet({ onAdd, sheetRef }: Props) {
   const showDropdown = !selected && search.length > 0 && filtered.length > 0;
 
   // Format the date nicely for the UI (e.g., "15 May 2026")
-  const formattedDate = purchaseDate.toLocaleDateString("en-GB", {
+  const formattedDate = purchaseDate.toLocaleDateString("id-ID", {
     day: "numeric",
     month: "short",
     year: "numeric",
@@ -182,12 +182,12 @@ export default function AddStockSheet({ onAdd, sheetRef }: Props) {
         >
           <View className="px-5 pt-2 pb-8">
             <Text className="text-lg font-black text-center text-gray-900 mb-5">
-              Add Stock
+              Tambah Stok
             </Text>
 
             {/* Search / select */}
             <Text className="text-[10px] font-extrabold text-gray-400 uppercase tracking-widest mb-1">
-              Stock Item
+              Item Stok
             </Text>
 
             {loadingDefs ? (
@@ -203,7 +203,7 @@ export default function AddStockSheet({ onAdd, sheetRef }: Props) {
                   <Search size={16} color="#aaa" />
                   <TextInput
                     className="flex-1 py-2.5 px-2 font-bold text-sm text-gray-900"
-                    placeholder="Search stock item..."
+                    placeholder="Cari item stok..."
                     value={search}
                     onChangeText={(text) => {
                       setSearch(text);
@@ -251,7 +251,7 @@ export default function AddStockSheet({ onAdd, sheetRef }: Props) {
                 {!selected && search.length > 0 && filtered.length === 0 && (
                   <View className="bg-gray-50 rounded-xl px-4 py-3 mb-2">
                     <Text className="text-xs font-bold text-gray-400 text-center">
-                      No items found for -{search}-
+                      Tidak ditemukan item untuk -{search}-
                     </Text>
                   </View>
                 )}
@@ -268,7 +268,7 @@ export default function AddStockSheet({ onAdd, sheetRef }: Props) {
                         {selected.unit}
                       </Text>
                     </View>
-                    <Text className="text-xs text-green-300">(fixed)</Text>
+                    <Text className="text-xs text-green-300">(tetap)</Text>
                   </View>
                 )}
               </View>
@@ -276,11 +276,11 @@ export default function AddStockSheet({ onAdd, sheetRef }: Props) {
 
             {/* Quantity */}
             <Text className="text-[10px] font-extrabold text-gray-400 uppercase tracking-widest mb-1 mt-2">
-              Quantity
+              Jumlah
             </Text>
             <TextInput
               className="w-full bg-gray-50 border-2 border-gray-100 rounded-xl px-3 py-2.5 font-bold text-sm text-gray-900 mb-3"
-              placeholder={`e.g. 3 ${selected?.unit ?? ""}`}
+              placeholder={`cth. 3 ${selected?.unit ?? ""}`}
               value={quantity}
               onChangeText={handleQuantityChange}
               keyboardType="numeric"
@@ -290,7 +290,7 @@ export default function AddStockSheet({ onAdd, sheetRef }: Props) {
 
             {/* Price mode */}
             <Text className="text-[10px] font-extrabold text-gray-400 uppercase tracking-widest mb-1">
-              Price Input
+              Input Harga
             </Text>
             <View className="flex-row bg-gray-100 rounded-xl p-1 mb-3 gap-1">
               {(["total", "per-unit"] as PriceMode[]).map((mode) => (
@@ -307,7 +307,7 @@ export default function AddStockSheet({ onAdd, sheetRef }: Props) {
                       priceMode === mode ? "text-green-600" : "text-gray-400"
                     }`}
                   >
-                    {mode === "total" ? "Total price" : "Price / unit"}
+                    {mode === "total" ? "Harga total" : "Harga / unit"}
                   </Text>
                 </TouchableOpacity>
               ))}
@@ -317,8 +317,8 @@ export default function AddStockSheet({ onAdd, sheetRef }: Props) {
               className="w-full bg-gray-50 border-2 border-gray-100 rounded-xl px-3 py-2.5 font-bold text-sm text-gray-900 mb-2"
               placeholder={
                 priceMode === "total"
-                  ? "e.g. 25.000 (total you paid)"
-                  : `e.g. 8.333 (per ${selected?.unit ?? "unit"})`
+                  ? "cth. 25.000 (total yang dibayar)"
+                  : `cth. 8.333 (per ${selected?.unit ?? "unit"})`
               }
               value={priceInput ? `Rp ${formatRupiah(priceInput)}` : ""}
               onChangeText={handlePriceChange}
@@ -328,7 +328,7 @@ export default function AddStockSheet({ onAdd, sheetRef }: Props) {
             />
 
             <Text className="text-[10px] font-extrabold text-gray-400 uppercase tracking-widest mb-1 mt-2">
-              Date of Purchase
+              Tanggal Pembelian
             </Text>
             
             {/* NEW: Clickable Date Button */}
@@ -358,7 +358,7 @@ export default function AddStockSheet({ onAdd, sheetRef }: Props) {
             {computedPricePerUnit !== null && computedPricePerUnit > 0 && (
               <View className="bg-green-50 border border-dashed border-green-200 rounded-xl py-2 px-3 mb-3 items-center">
                 <Text className="text-xs font-extrabold text-green-600">
-                  Stored as Rp{" "}
+                  Tersimpan sebagai Rp{" "}
                   {Math.round(computedPricePerUnit).toLocaleString("id-ID")} /{" "}
                   {selected?.unit ?? "unit"}
                 </Text>
@@ -379,7 +379,7 @@ export default function AddStockSheet({ onAdd, sheetRef }: Props) {
                 disabled={saving}
                 className="flex-1 border-2 border-gray-100 rounded-2xl py-3 items-center"
               >
-                <Text className="text-sm font-bold text-gray-400">Cancel</Text>
+                <Text className="text-sm font-bold text-gray-400">Batal</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 onPress={handleSave}
@@ -389,7 +389,7 @@ export default function AddStockSheet({ onAdd, sheetRef }: Props) {
                 {saving ? (
                   <ActivityIndicator size="small" color="white" />
                 ) : (
-                  <Text className="text-sm font-extrabold text-white">Save</Text>
+                  <Text className="text-sm font-extrabold text-white">Simpan</Text>
                 )}
               </TouchableOpacity>
             </View>

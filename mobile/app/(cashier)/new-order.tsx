@@ -143,7 +143,7 @@ export default function NewOrderScreen() {
               </Text>
               <TextInput
                 className="w-full bg-white border-2 border-gray-100 rounded-xl px-4 py-3 font-bold text-sm text-gray-900 mb-4"
-                placeholder="e.g. Bu Aliyah"
+                placeholder="cth. Bu Aliyah"
                 value={customerName}
                 onChangeText={setCustomerName}
                 placeholderTextColor="#ccc"
@@ -151,11 +151,11 @@ export default function NewOrderScreen() {
               />
 
               <Text className="text-[10px] font-extrabold text-gray-400 uppercase tracking-widest mb-1">
-                Tempat Duduk / Seat
+                Tempat Duduk
               </Text>
               <TextInput
                 className="w-full bg-white border-2 border-gray-100 rounded-xl px-4 py-3 font-bold text-sm text-gray-900 mb-2"
-                placeholder="e.g. A1"
+                placeholder="cth. A1"
                 value={seat}
                 onChangeText={setSeat}
                 placeholderTextColor="#ccc"
@@ -163,7 +163,7 @@ export default function NewOrderScreen() {
               />
 
               <Text className="text-[10px] font-extrabold text-gray-400 uppercase tracking-widest mb-1">
-                Dine in / Take away
+                Makan di Tempat / Bawa Pulang
               </Text>
               <View className="flex-row w-full gap-2 mb-2 mt-2">
                 <TouchableOpacity
@@ -174,7 +174,7 @@ export default function NewOrderScreen() {
                   activeOpacity={0.7}
                 >
                   <Text className={`font-bold text-sm ${isDineIn ? 'text-white' : 'text-gray-900'}`}>
-                    Dine In
+                    Makan di Tempat
                   </Text>
                 </TouchableOpacity>
 
@@ -186,7 +186,7 @@ export default function NewOrderScreen() {
                   activeOpacity={0.7}
                 >
                   <Text className={`font-bold text-sm ${!isDineIn ? 'text-white' : 'text-gray-900'}`}>
-                    Takeaway
+                    Bawa Pulang
                   </Text>
                 </TouchableOpacity>
               </View>
@@ -197,8 +197,8 @@ export default function NewOrderScreen() {
 
               <TouchableOpacity
                 onPress={() => {
-                  if (!customerName.trim()) { setError("Customer name is required"); return; }
-                  if (!seat.trim()) { setError("Seat is required"); return; }
+                  if (!customerName.trim()) { setError("Nama pelanggan wajib diisi"); return; }
+                  if (!seat.trim()) { setError("Tempat duduk wajib diisi"); return; }
                   setError("");
                   setStep("menu");
                 }}
@@ -226,7 +226,7 @@ export default function NewOrderScreen() {
           <View className="flex-row items-center justify-between mb-3">
             <TouchableOpacity onPress={() => setStep("info")}>
               <View className="border-2 border-gray-200 rounded-xl px-3 py-1.5">
-                <Text className="text-sm font-bold text-gray-700">Menu Order</Text>
+                <Text className="text-sm font-bold text-gray-700">Menu Pesanan</Text>
               </View>
             </TouchableOpacity>
             <Text className="text-xs font-bold text-gray-400">
@@ -357,7 +357,7 @@ export default function NewOrderScreen() {
                         </View>
                         {!!item.note && (
                           <Text className="text-xs font-bold text-white/80 italic">
-                            └ Note: {item.note}
+                            └ Catatan: {item.note}
                           </Text>
                         )}
                       </View>
@@ -380,7 +380,7 @@ export default function NewOrderScreen() {
                       <ActivityIndicator size="small" color="#22c55e" />
                     ) : (
                       <Text className="text-sm font-extrabold text-green-600">
-                        Confirm Order
+                        Konfirmasi Pesanan
                       </Text>
                     )}
                   </TouchableOpacity>
@@ -394,7 +394,7 @@ export default function NewOrderScreen() {
               >
                 <View className="border-2 border-white/60 rounded-xl px-3 py-1">
                   <Text className="text-sm font-extrabold text-white">
-                    {totalItems} Items
+                    {totalItems} Item
                   </Text>
                 </View>
                 <Text className="text-white/70 text-xs font-bold">
@@ -410,7 +410,7 @@ export default function NewOrderScreen() {
           <View className="absolute inset-0 bg-black/50 items-center justify-center px-6">
             <View className="bg-white rounded-3xl px-6 py-6 w-full shadow-xl">
               <Text className="text-base font-black text-gray-900 mb-2">
-                ⚠️ Stock Warning - Stock bisa saja habis
+                ⚠️ Peringatan Stok - Stok bisa saja habis
               </Text>
               <Text className="text-sm font-bold text-gray-600 mb-5">
                 {stockWarning}
@@ -420,7 +420,7 @@ export default function NewOrderScreen() {
                   onPress={() => setStockWarning(null)}
                   className="flex-1 border-2 border-gray-200 rounded-2xl py-3 items-center"
                 >
-                  <Text className="text-sm font-extrabold text-gray-600">Cancel</Text>
+                  <Text className="text-sm font-extrabold text-gray-600">Batal</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
                   onPress={() => {
