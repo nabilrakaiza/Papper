@@ -58,9 +58,16 @@ to `is_cancelled` or deleting the lines outright — no PIN, no audit record.
 - `INSERT` and `DELETE` are refused outright — adding or removing lines is the
   attack itself
 - `UPDATE` is refused if it changes `order_id`, `menu_id`, `name`, `price`,
-  `quantity` or `is_cancelled` — the fields that determine what was sold
+  `quantity`, `is_cancelled` or `is_stock_deducted` — what was sold, what it
+  cost, and what stock it consumed
 - `UPDATE` is allowed if it only touches fulfilment bookkeeping: `is_sent`,
-  `print_batch`, `notes`, `is_stock_deducted`
+  `print_batch`, `notes`
+
+`is_stock_deducted` is locked because resetting it to `false` on a closed order
+and re-running `deduct_stock_for_order` would decrement stock twice. The
+resulting shortfall is indistinguishable from ordinary consumption, so it could
+hide ingredients going missing. Nothing legitimately writes that column after
+payment — both `deduct_stock_for_order` call sites run while the order is open.
 
 The PIN RPCs are exempt via the same `app.pin_verified` flag.
 
