@@ -53,10 +53,21 @@ Guarding `orders.status` alone left a hole: cashiers hold UPDATE and DELETE
 policies on `order_items`, so they could void a paid sale by flipping every line
 to `is_cancelled` or deleting the lines outright — no PIN, no audit record.
 
-`enforce_items_locked_after_payment` closes it by enforcing what the UI already
-did: **line items may only change while the parent order is unpaid.** The
-cashier edit button is hidden for paid orders, so nothing legitimate regressed.
+`enforce_items_locked_after_payment` closes it. On a **paid or cancelled** order:
+
+- `INSERT` and `DELETE` are refused outright — adding or removing lines is the
+  attack itself
+- `UPDATE` is refused if it changes `order_id`, `menu_id`, `name`, `price`,
+  `quantity` or `is_cancelled` — the fields that determine what was sold
+- `UPDATE` is allowed if it only touches fulfilment bookkeeping: `is_sent`,
+  `print_batch`, `notes`, `is_stock_deducted`
+
 The PIN RPCs are exempt via the same `app.pin_verified` flag.
+
+That last allowance exists because reprinting a kitchen ticket marks its lines
+as sent, and the reprint button is available on closed orders. A blanket lock
+broke it. Marking an item as sent says nothing about what was charged, so it is
+outside the threat this guards against.
 
 Verified against the existing flows before it shipped:
 
@@ -64,6 +75,11 @@ Verified against the existing flows before it shipped:
   sites run while the order is unpaid — stock is deducted at creation/edit, not
   at payment
 - `markPaid` touches only the `orders` row
+
+One flow was missed and had to be fixed afterwards: kitchen reprints on closed
+orders. Worth remembering that `updateOrder` replaces the entire item set with a
+delete + reinsert, so any path routed through it counts as an INSERT/DELETE, not
+an UPDATE. `markItemsSent` exists to avoid exactly that.
 
 ### PIN storage
 

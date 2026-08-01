@@ -10,6 +10,7 @@ type OrderContextType = {
   addOrder: (order: Omit<Order, "id" | "createdAt">, force?: boolean) => Promise<{ error: string | null; stockWarning?: string }>;
   updateOrder: (id: number, order: Partial<Order>, force?: boolean) => Promise<{ error: string | null; stockWarning?: string }>;
   cancelOrderWithPin: (orderId: number, pin: string) => Promise<{ success: boolean; error: string | null }>;
+  markItemsSent: (orderId: number) => Promise<{ error: string | null }>;
   markPaid: (id: number, discount: number, methodOfPayment: string, paymentAmount: number) => Promise<{ error: string | null }>;
   toggleMenuAvailability: (menuId: number) => Promise<void>;
   refetch: () => Promise<void>;
@@ -378,6 +379,31 @@ export function OrderProvider({ children }: { children: ReactNode }) {
     return { success: true, error: null };
   };
 
+  // Targeted update rather than going through updateOrder, which replaces the
+  // whole item set with a delete + reinsert. That is blocked on paid orders, and
+  // would also reset is_stock_deducted and discard the existing row ids just to
+  // flip a boolean.
+  const markItemsSent = async (orderId: number): Promise<{ error: string | null }> => {
+    const { error } = await supabase
+      .from("order_items")
+      .update({ is_sent: true })
+      .eq("order_id", orderId);
+
+    if (error) {
+      return { error: "Gagal memperbarui status terkirim." };
+    }
+
+    setOrders((prev) =>
+      prev.map((o) =>
+        o.id === orderId
+          ? { ...o, items: o.items.map((i) => ({ ...i, isSent: true })) }
+          : o
+      )
+    );
+
+    return { error: null };
+  };
+
   const markPaid = async (id: number, discount: number, methodOfPayment: string, paymentAmount: number): Promise<{ error: string | null }> => {
     const { error } = await supabase
       .from("orders")
@@ -425,6 +451,7 @@ export function OrderProvider({ children }: { children: ReactNode }) {
         addOrder,
         updateOrder,
         cancelOrderWithPin,
+        markItemsSent,
         markPaid,
         toggleMenuAvailability,
         refetch: fetchOrders,

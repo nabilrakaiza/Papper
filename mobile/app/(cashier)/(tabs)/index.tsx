@@ -115,7 +115,7 @@ function OrderCard({ order, onPrintKitchenPress, onPrintBillPress }: OrderCardPr
 }
 
 export default function CashierHomeScreen() {
-  const { orders, loading, error, refetch, updateOrder } = useOrders();
+  const { orders, loading, error, refetch, markItemsSent } = useOrders();
   const { cashierPrinter, kitchenPrinter, setPrinter } = usePrinter();
 
   const [printerSelectorVisible, setPrinterSelectorVisible] = useState(false);
@@ -167,25 +167,16 @@ export default function CashierHomeScreen() {
       const { error } = await printReceipt(order, null, targetPrinter, user); // Passing null to cashier to prevent dual-printing
       printErr = error;
 
-      // --- NEW: Handle is_sent after a successful kitchen print ---
+      // Mark the lines as sent once the ticket is physically printed.
       if (!error) {
-        // Create a new array with all items marked as sent
-        const updatedItems = order.items.map(item => ({
-          ...item,
-          isSent: true
-        }));
-
-        // Call your existing update function to sync it to Supabase
-        const { error: updateError } = await updateOrder(order.id, {
-          items: updatedItems
-        });
+        const { error: updateError } = await markItemsSent(order.id);
 
         if (updateError) {
-          // If the print worked but the DB failed, we should probably let the user know
+          // The ticket is already out of the printer, so surface the mismatch
+          // rather than letting the two states diverge silently.
           printErr = "Berhasil dicetak, tetapi gagal memperbarui status 'terkirim' di sistem.";
         }
       }
-      // -------------------------------------------------------------
 
     } else if (user) {
       const targetPrinter = specificPrinter || cashierPrinter;
