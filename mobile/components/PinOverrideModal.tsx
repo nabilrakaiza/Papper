@@ -47,7 +47,7 @@ export default function PinOverrideModal({ visible, orderId, onClose, onSubmit }
             ))}
           </View>
 
-          {error && <Text className="text-red-500 text-center mb-2">PIN Salah</Text>}
+          {error && <Text className="text-red-500 text-center mb-2">{error}</Text>}
 
           <View className="flex-row flex-wrap justify-center">
             {keys.map((k, idx) => (

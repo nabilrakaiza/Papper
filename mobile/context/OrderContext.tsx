@@ -9,7 +9,7 @@ type OrderContextType = {
   error: string | null;
   addOrder: (order: Omit<Order, "id" | "createdAt">, force?: boolean) => Promise<{ error: string | null; stockWarning?: string }>;
   updateOrder: (id: number, order: Partial<Order>, force?: boolean) => Promise<{ error: string | null; stockWarning?: string }>;
-  cancelOrderWithPin: (orderId: number, pin: string) => Promise<{ error: string | null }>;
+  cancelOrderWithPin: (orderId: number, pin: string) => Promise<{ success: boolean; error: string | null }>;
   markPaid: (id: number, discount: number, methodOfPayment: string, paymentAmount: number) => Promise<{ error: string | null }>;
   toggleMenuAvailability: (menuId: number) => Promise<void>;
   refetch: () => Promise<void>;
@@ -336,17 +336,43 @@ export function OrderProvider({ children }: { children: ReactNode }) {
   };
 
   const cancelOrderWithPin = async (orderId: number, pin: string) => {
-    const { data, error } = await supabase.rpc("cancel_order_with_pin", {
+    // v2 returns { ok, reason, ... } so a lockout can be told apart from a wrong
+    // PIN. The v1 boolean RPC still exists for installs on the older build.
+    const { data, error } = await supabase.rpc("cancel_order_with_pin_v2", {
       p_order_id: orderId,
       p_pin: pin,
     });
 
     if (error) return { success: false, error: "Terjadi kesalahan" };
-    if (!data) return { success: false, error: "PIN salah" };
 
-    // sync local state the same way updateOrder does
+    if (!data?.ok) {
+      if (data?.reason === "locked_out") {
+        const minutes = Math.ceil((data.retry_after_seconds ?? 0) / 60);
+        return {
+          success: false,
+          error: `Terlalu banyak percobaan. Coba lagi dalam ${minutes} menit.`,
+        };
+      }
+
+      const left = data?.attempts_left ?? 0;
+      return {
+        success: false,
+        error: left > 0 ? `PIN salah. Sisa ${left} percobaan.` : "PIN salah.",
+      };
+    }
+
+    // sync local state the same way updateOrder does. The RPC cancels the line
+    // items alongside the order, so mirror both.
     setOrders((prev) =>
-      prev.map((o) => (o.id === orderId ? { ...o, status: "cancelled" } : o))
+      prev.map((o) =>
+        o.id === orderId
+          ? {
+              ...o,
+              status: "cancelled",
+              items: o.items.map((i) => ({ ...i, isCancelled: true })),
+            }
+          : o
+      )
     );
 
     return { success: true, error: null };

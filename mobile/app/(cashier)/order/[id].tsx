@@ -164,19 +164,6 @@ export default function EditOrderScreen() {
     setShowPinModal(true);
   };
 
-  // Step 2: actual cancellation happens only after correct PIN
-  // const handlePinSuccess = async () => {
-  //   setSaving(true);
-  //   const { error } = await cancelOrderWithPin(order.id, /* pin passed from modal */);
-  //   setSaving(false);
-  //   setShowPinModal(false);
-  //   if (error) {
-  //     setError(error);
-  //   } else {
-  //     router.back();
-  //   }
-  // };
-
   return (
     <SafeAreaView className="flex-1 bg-gray-100">
       <KeyboardAvoidingView
@@ -429,8 +416,8 @@ export default function EditOrderScreen() {
           visible={showPinModal}
           orderId={order.id}
           onSubmit={async (pin) => {
-            const { error } = await cancelOrderWithPin(order.id, pin);
-            if (error) return { success: false, error };
+            const { success, error } = await cancelOrderWithPin(order.id, pin);
+            if (!success) return { success: false, error: error ?? undefined };
             setShowPinModal(false);
             router.back();
             return { success: true };
