@@ -73,18 +73,6 @@ mobile/
   data.sql       menu and stock seed rows — gitignored, local only
 ```
 
-## Running it
-
-```sh
-cd mobile
-npm install
-# create .env with your Supabase project values — see mobile/docs/development.md
-npx expo start
-```
-
-**Expo Go will not work** — the Bluetooth printer module is native. Use a
-development build (`npx expo run:android`) or an EAS build.
-
 ## Deployment
 
 - **Mobile**: `eas build --platform android --profile preview` produces a
