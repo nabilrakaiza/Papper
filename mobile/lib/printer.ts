@@ -1,8 +1,7 @@
 import { BluetoothEscposPrinter, BluetoothManager } from '@vardrz/react-native-bluetooth-escpos-printer';
 import { PermissionsAndroid, Platform, Linking } from 'react-native';
 import { Order } from '../types/order';
-import { Asset } from 'expo-asset';
-import { readAsStringAsync, EncodingType } from 'expo-file-system/legacy';
+import { RECEIPT_LOGO_BASE64 } from './printerLogo';
 import { CurrentUser } from '@/hooks/useUser';
 import { TAX_RATE } from './constants';
 
@@ -135,10 +134,7 @@ async function printCustomerReceipt(order: Order, user: CurrentUser, totalPrice:
     }, {})
   );
 
-  const [asset] = await Asset.loadAsync(require('../assets/images/logonabawi.png'));
-  const base64Image = await readAsStringAsync(asset.localUri || asset.uri, {
-    encoding: EncodingType.Base64,
-  });
+  const base64Image = RECEIPT_LOGO_BASE64;
 
   // 2. Print Header
   await BluetoothEscposPrinter.printerAlign(BluetoothEscposPrinter.ALIGN.CENTER);

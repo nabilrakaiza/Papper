@@ -1,50 +1,68 @@
-# Welcome to your Expo app 👋
+# Papper
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+Point-of-sale app for a cafe. Cashiers take orders on Android devices, print
+kitchen tickets and receipts to Bluetooth thermal printers, and close out
+payments; admins manage the menu, stock, recipes and sales reporting.
 
-## Get started
+Expo / React Native front end, Supabase (Postgres) back end, no application
+server of its own.
 
-1. Install dependencies
+## Documentation
 
-   ```bash
-   npm install
-   ```
+| Document | Contents |
+| --- | --- |
+| [docs/architecture.md](docs/architecture.md) | how the app fits together — routing, state, order lifecycle, stock and cost, printing |
+| [docs/database.md](docs/database.md) | every table, function and trigger; migration workflow |
+| [docs/security.md](docs/security.md) | auth, roles, RLS, the PIN-gated cancellation design, hardening history |
+| [docs/development.md](docs/development.md) | environment setup, running, building, dependency rules |
+| [docs/operations.md](docs/operations.md) | runbook: accounts, manager PINs, auditing, recovery |
+| [docs/troubleshooting.md](docs/troubleshooting.md) | every failure mode hit so far, with the actual fix |
+| [supabase/README.md](supabase/README.md) | schema capture and migration notes |
 
-2. Start the app
+## Quick start
 
-   ```bash
-   npx expo start
-   ```
-
-In the output, you'll find options to open the app in a
-
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
-
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
-
-## Get a fresh project
-
-When you're ready, run:
-
-```bash
-npm run reset-project
+```sh
+npm install
+# create .env with your Supabase project values — see docs/development.md
+npx expo start
 ```
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+**Expo Go will not work** — the Bluetooth printer module is native. You need a
+development build (`npx expo run:android`) or an EAS build. See
+[docs/development.md](docs/development.md).
 
-## Learn more
+## Layout
 
-To learn more about developing your project with Expo, look at the following resources:
+```
+app/           expo-router routes, grouped by role: (auth) (cashier) (admin)
+components/    shared UI
+context/       AuthContext, OrderContext, PrinterContext
+hooks/         useUser
+lib/           supabase client, printer drivers, constants
+types/         domain types
+supabase/      versioned SQL migrations
+docs/          this documentation
+data.sql       menu and stock seed rows — gitignored, local only
+```
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
+## Key facts
 
-## Join the community
+- **Roles** are `admin` and `cashier`, stored in `profiles.role`. New accounts
+  are always cashiers; promotion is a manual SQL statement.
+- **Cancelling an order requires a 6-digit manager PIN**, enforced by database
+  triggers rather than by the client. See
+  [docs/security.md](docs/security.md#pin-gated-cancellation).
+- **Stock is deducted when an order is created or edited**, not at payment.
+  Restocking automatically records an expense.
+- **Money is integer Rupiah** throughout. `TAX_RATE` lives in
+  `lib/constants.ts`.
+- **User-facing strings are Indonesian**; code and comments are English.
 
-Join our community of developers creating universal apps.
+## Conventions worth not relearning
 
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+- Never `select("*")` from `profiles` — `pin_hash` is not client-readable and
+  the query will fail. Select explicit columns.
+- Never run `npm audit fix --force` here; it has already broken the Expo /
+  React Native version pairing once. Use `npx expo install --check`.
+- Commit before running an EAS build — EAS builds from git, not your working
+  directory.
