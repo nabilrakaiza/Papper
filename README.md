@@ -78,7 +78,7 @@ mobile/
 - **Mobile**: `eas build --platform android --profile preview` produces a
   sideloadable APK (this is an internal tool, not published to the Play
   Store). EAS builds from git, so commit and push first.
-- **Web (admin only)**: `npx expo export --platform web` produces a static
+- **Web (admin/superadmin only)**: `npx expo export --platform web` produces a static
   site in `mobile/dist/`, deployed as a normal static host (currently
   Vercel). Supabase env vars are configured in the host's project settings,
   separately from the local `.env`.

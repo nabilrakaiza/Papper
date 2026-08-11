@@ -1,5 +1,5 @@
 import { View, Text, TouchableOpacity } from "react-native";
-import { Trash2, RotateCcw } from "lucide-react-native";
+import { Trash2, RotateCcw, Pencil } from "lucide-react-native";
 import { StockItem } from "../../types/stock";
 import { memo } from "react";
 
@@ -8,13 +8,14 @@ interface Props {
   lowStockThreshold?: number; // optional, defaults to 5
   onDelete?: () => void; // superadmin-only, shown for active items
   onRestore?: () => void; // superadmin-only, shown for inactive items
+  onCorrect?: () => void; // superadmin-only, shown for active items
 }
 
 const formatRupiah = (value: number) => {
   return value.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ".");
 };
 
-function StockCard({ item, lowStockThreshold = 5, onDelete, onRestore }: Props) {
+function StockCard({ item, lowStockThreshold = 5, onDelete, onRestore, onCorrect }: Props) {
   const isOutOfStock = item.quantity <= 0;
   const isLowStock = !isOutOfStock && item.quantity <= lowStockThreshold;
 
@@ -58,6 +59,14 @@ function StockCard({ item, lowStockThreshold = 5, onDelete, onRestore }: Props) 
               {item.quantity} {item.unit}
             </Text>
           </View>
+          {onCorrect && (
+            <TouchableOpacity
+              onPress={onCorrect}
+              className="bg-white/90 rounded-xl p-2"
+            >
+              <Pencil size={16} color="#3b82f6" />
+            </TouchableOpacity>
+          )}
           {onDelete && (
             <TouchableOpacity
               onPress={onDelete}

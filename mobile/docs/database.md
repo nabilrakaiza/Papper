@@ -81,7 +81,8 @@ convention and by the `OrderStatus` type in `types/order.ts`.
 | `is_stock_deducted` | boolean | guards against double-deducting |
 
 ### `expenses`
-Written by the `log_stock_expense` trigger, never by the app.
+Written by the `log_stock_expense` trigger; deleted only by `delete_expense_entry`
+(superadmin-only, for removing an entry a mistaken restock created).
 
 | Column | Type | Notes |
 | --- | --- | --- |
@@ -89,6 +90,21 @@ Written by the `log_stock_expense` trigger, never by the app.
 | `name`, `quantity`, `price_per_unit` | | |
 | `total_cost` | numeric | generated: `quantity * price_per_unit` |
 | `expense_date`, `created_at` | timestamptz | |
+
+### `admin_correction_log`
+Audit trail for `correct_stock` and `delete_expense_entry`. Written by those
+RPCs, readable only by superadmins.
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `id` | bigint PK | identity |
+| `action` | text | `stock_correction` or `expense_deleted` |
+| `superadmin_id` | uuid | who made the change |
+| `target_name` | text | the stock item's or expense's `name` |
+| `old_quantity`, `new_quantity` | numeric | `new_quantity` is null for `expense_deleted` |
+| `old_price_per_unit`, `new_price_per_unit` | integer | `new_price_per_unit` is null for `expense_deleted` |
+| `note` | text | optional, entered by the superadmin |
+| `created_at` | timestamptz | |
 
 ### `order_override_log`
 Audit trail for PIN-gated actions. Written by the RPCs, readable only by admins.
@@ -112,7 +128,7 @@ Failed attempts are recorded deliberately — the lockout counts them.
 | `handle_new_user()` | trigger | creates a `profiles` row, always as `'cashier'` |
 | `check_stock_for_order(jsonb)` | jsonb | `{shortages: [...]}`, no writes |
 | `deduct_stock_for_order(int, bool)` | void | decrements stock; `p_force` skips the shortage check |
-| `log_stock_expense()` | trigger | logs an `expenses` row when stock rises |
+| `log_stock_expense()` | trigger | logs an `expenses` row when stock rises; skipped when `app.stock_correction` is set |
 | `prevent_direct_cancel()` | trigger | blocks `status → 'cancelled'` without the PIN flag |
 | `prevent_locked_order_item_change()` | trigger | freezes `order_items` on paid/cancelled orders |
 | `pin_attempts_exhausted(uuid)` | boolean | 5 failures in 15 minutes |
@@ -120,6 +136,8 @@ Failed attempts are recorded deliberately — the lockout counts them.
 | `cancel_order_with_pin_v2(bigint, text)` | jsonb | current; returns a reason on failure |
 | `delete_order_with_pin(bigint, text)` | boolean | hard delete; not wired to any UI |
 | `toggle_menu_availability(bigint)` | void | flips `menus.available`; callable by any authenticated staff account, since `cashier` has no general write access to `menus` |
+| `correct_stock(bigint, numeric, integer, text)` | void | sets a `stock` row's quantity/price directly (not additive); superadmin-only; sets `app.stock_correction` so the restock trigger doesn't log it as a purchase |
+| `delete_expense_entry(bigint, text)` | void | hard-deletes an `expenses` row; superadmin-only |
 
 All are `SECURITY DEFINER` with a pinned `search_path`. Any function calling
 pgcrypto uses `extensions.crypt(...)` explicitly — a bare `crypt()` fails, see

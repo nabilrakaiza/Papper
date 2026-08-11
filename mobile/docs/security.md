@@ -36,7 +36,7 @@ separates them is RLS policies testing `profiles.role`.
 | --- | --- |
 | `cashier` | Add/edit/pay orders; cancel with manager PIN (same as everyone); toggle menu availability (via `toggle_menu_availability`, not a direct table write) |
 | `admin` | Everything `cashier` can do, plus: restock existing items (`stock` update), edit menu recipes (`menu_ingredients`), read sales/expense reports |
-| `superadmin` | Everything `admin` can do, plus: create new stock item types, create/soft-delete/restore menu items, edit a menu's cost mode (`cogs_mode` / `manual_cogs`) |
+| `superadmin` | Everything `admin` can do, plus: create new stock item types, create/soft-delete/restore menu items, edit a menu's cost mode (`cogs_mode` / `manual_cogs`), correct a stock item's quantity/price directly (`correct_stock`), delete a bad `expenses` row (`delete_expense_entry`) |
 
 `admin` deliberately has **no** write access to `menus` itself — only to
 `menu_ingredients` (recipe rows) and `stock`. Cost mode and menu
@@ -48,10 +48,27 @@ RLS gates by role, and the UI is trusted not to expose fields a role
 shouldn't touch.
 
 "Removing" a `stock` or `menus` row is a soft delete (`is_active = false`,
-added in `20260810120000_add_superadmin_role.sql`) rather than a real
+added in `20260810140939_add_superadmin_role.sql`) rather than a real
 `DELETE` — neither table has a DELETE policy, matching `orders`. This keeps
 `order_items` and `menu_ingredients` resolvable for historical orders and
 recipes after an item is removed from active use.
+
+### Stock corrections
+
+Ordinary restocking is additive and always logs an `expenses` row via the
+`log_stock_expense` trigger — it's designed to represent a real purchase.
+`correct_stock` exists for fixing a data-entry mistake (wrong quantity or
+price), not recording a purchase, so it needs to bypass that side effect
+rather than trigger it.
+
+It does this the same way `enforce_cancel_via_rpc` does — a transaction-local
+flag checked inside the trigger (`app.stock_correction`, set via
+`set_config(..., is_local => true)` for the duration of the RPC's
+transaction, same mechanism as `app.pin_verified`). Both `correct_stock` and
+`delete_expense_entry` are `superadmin`-only and write to
+`admin_correction_log` instead of `expenses`, so there's still a trail of
+what changed, without it reading as a real purchase in sales/expense
+reporting.
 
 ## PIN-gated cancellation
 
@@ -164,8 +181,9 @@ RLS is enabled on every table in `public`.
 | `stock` | `admin` and `superadmin` read and update (restock); only `superadmin` inserts; **no DELETE policy** — removal is `is_active = false` |
 | `orders` | authenticated read/insert/update; **no DELETE policy** |
 | `order_items` | authenticated full access, narrowed by the trigger above |
-| `expenses` | admins read only; writes come from the trigger |
+| `expenses` | admins read only; writes come from the trigger; deletes come only from `delete_expense_entry` |
 | `order_override_log` | admins read only; writes come from the definer functions |
+| `admin_correction_log` | `superadmin` read only; writes come from `correct_stock` / `delete_expense_entry` |
 
 `toggle_menu_availability(p_menu_id)` is a `SECURITY DEFINER` RPC any
 authenticated staff account can call — it exists because `cashier` needs to

@@ -13,6 +13,7 @@ import { RefreshCw, Search, X } from "lucide-react-native";
 import { supabase } from "../../../lib/supabase";
 import StockCard from "@/components/stock/StockCard";
 import AddStockSheet from "@/components/stock/AddStockSheet";
+import CorrectStockDialog from "@/components/stock/CorrectStockDialog";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import { StockItem } from "../../../types/stock";
 import { useAuth } from "../../../context/AuthContext";
@@ -27,6 +28,7 @@ export default function StockScreen() {
   const [saving, setSaving] = useState(false);
   const [search, setSearch] = useState("");
   const [pendingRemove, setPendingRemove] = useState<{ item: StockItem; dependentMenus: string[] } | null>(null);
+  const [correctingItem, setCorrectingItem] = useState<StockItem | null>(null);
   const sheetRef = useRef<BottomSheet>(null) as React.RefObject<BottomSheet>;
 
   const fetchStock = useCallback(async () => {
@@ -164,6 +166,22 @@ export default function StockScreen() {
     await removeStock(item);
   };
 
+  const handleCorrectStock = async (params: { quantity: number; pricePerUnit: number; note: string }) => {
+    if (!correctingItem) return;
+
+    const { error } = await supabase.rpc("correct_stock", {
+      p_stock_id: correctingItem.id,
+      p_quantity: params.quantity,
+      p_price_per_unit: params.pricePerUnit,
+      p_note: params.note || null,
+    });
+
+    if (error) throw error;
+
+    setCorrectingItem(null);
+    fetchStock();
+  };
+
   const handleRestore = async (item: StockItem) => {
     const { error } = await supabase
       .from("stock")
@@ -240,7 +258,11 @@ export default function StockScreen() {
           keyExtractor={(item) => item.id.toString()}
           renderItem={({ item }) =>
             isSuperadmin ? (
-              <StockCard item={item} onDelete={() => handleRequestRemove(item)} />
+              <StockCard
+                item={item}
+                onDelete={() => handleRequestRemove(item)}
+                onCorrect={() => setCorrectingItem(item)}
+              />
             ) : (
               <StockCard item={item} />
             )
@@ -293,6 +315,12 @@ export default function StockScreen() {
       )}
 
       <AddStockSheet sheetRef={sheetRef} onAdd={handleAdd} canCreateNew={isSuperadmin} />
+
+      <CorrectStockDialog
+        item={correctingItem}
+        onSave={handleCorrectStock}
+        onCancel={() => setCorrectingItem(null)}
+      />
 
       <ConfirmDialog
         visible={!!pendingRemove}
