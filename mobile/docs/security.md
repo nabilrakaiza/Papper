@@ -22,12 +22,36 @@ a deliberate act:
 
 ```sql
 update public.profiles set role = 'admin' where id = '<user-uuid>';
+-- or 'superadmin'
 ```
 
 `profiles` has no UPDATE policy, so clients cannot change their own role either.
 
-Both roles authenticate as the same Postgres role (`authenticated`). What
+All three roles authenticate as the same Postgres role (`authenticated`). What
 separates them is RLS policies testing `profiles.role`.
+
+### Role model
+
+| Role | Can do |
+| --- | --- |
+| `cashier` | Add/edit/pay orders; cancel with manager PIN (same as everyone); toggle menu availability (via `toggle_menu_availability`, not a direct table write) |
+| `admin` | Everything `cashier` can do, plus: restock existing items (`stock` update), edit menu recipes (`menu_ingredients`), read sales/expense reports |
+| `superadmin` | Everything `admin` can do, plus: create new stock item types, create/soft-delete/restore menu items, edit a menu's cost mode (`cogs_mode` / `manual_cogs`) |
+
+`admin` deliberately has **no** write access to `menus` itself — only to
+`menu_ingredients` (recipe rows) and `stock`. Cost mode and menu
+creation/removal are `superadmin`-only. This is enforced by RLS, not just
+hidden in the UI — an `admin` account cannot pass a crafted request to change
+`menus` either. `stock` and `menu_ingredients` writes, by contrast, follow the
+app's existing coarser convention (see "Known-permissive by design" below):
+RLS gates by role, and the UI is trusted not to expose fields a role
+shouldn't touch.
+
+"Removing" a `stock` or `menus` row is a soft delete (`is_active = false`,
+added in `20260810120000_add_superadmin_role.sql`) rather than a real
+`DELETE` — neither table has a DELETE policy, matching `orders`. This keeps
+`order_items` and `menu_ingredients` resolvable for historical orders and
+recipes after an item is removed from active use.
 
 ## PIN-gated cancellation
 
@@ -135,12 +159,18 @@ RLS is enabled on every table in `public`.
 | Table | Effective policy |
 | --- | --- |
 | `profiles` | read own row only; no INSERT/UPDATE/DELETE policy, so clients cannot write |
-| `menus`, `menu_ingredients` | anyone authenticated reads; admins manage |
-| `stock` | admins manage |
+| `menus` | anyone authenticated reads; only `superadmin` writes (insert or update); **no DELETE policy** — removal is `is_active = false` |
+| `menu_ingredients` | anyone authenticated reads; `admin` and `superadmin` manage |
+| `stock` | `admin` and `superadmin` read and update (restock); only `superadmin` inserts; **no DELETE policy** — removal is `is_active = false` |
 | `orders` | authenticated read/insert/update; **no DELETE policy** |
 | `order_items` | authenticated full access, narrowed by the trigger above |
 | `expenses` | admins read only; writes come from the trigger |
 | `order_override_log` | admins read only; writes come from the definer functions |
+
+`toggle_menu_availability(p_menu_id)` is a `SECURITY DEFINER` RPC any
+authenticated staff account can call — it exists because `cashier` needs to
+flip `menus.available` but has no general write access to `menus`. It only
+ever touches that one boolean.
 
 `order_override_log` and `expenses` have no INSERT policy at all. Their writers
 are `SECURITY DEFINER` functions owned by `postgres`, which also owns the tables,
@@ -171,6 +201,7 @@ Recorded here because the reasoning is easy to lose:
 | `expenses` world-readable and world-writable (`WITH CHECK (true)` to `public`) | replaced with an admin-scoped read; `anon` grants revoked |
 | `pin_hash` readable by clients | table grant replaced with a column grant |
 | `delete_order_with_pin` had `search_path = public` | its bare `crypt()` failed on every call; now `public, extensions` |
+| `toggle_menu_availability` callable by `anon` (unauthenticated) | this project grants new `public` functions EXECUTE for `anon` by default, so `revoke ... from public` alone doesn't touch it — needs `revoke ... from anon` by name, same as the row above |
 
 Re-check any time with:
 

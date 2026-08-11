@@ -40,7 +40,7 @@ function RootNavigator() {
 
     if (!session) {
       router.replace("/(auth)/login");
-    } else if (profile?.role === "admin") {
+    } else if (profile?.role === "admin" || profile?.role === "superadmin") {
       router.replace("/(admin)/(tabs)");
     } else if (profile?.role === "cashier") {
       router.replace("/(cashier)/(tabs)");

@@ -17,7 +17,7 @@ trigger on `auth.users`.
 | Column | Type | Notes |
 | --- | --- | --- |
 | `id` | uuid PK | FK → `auth.users(id)` ON DELETE CASCADE |
-| `role` | text | `'cashier'` (default) or `'admin'` |
+| `role` | text | `'cashier'` (default), `'admin'` or `'superadmin'` — see [security.md](security.md#role-model) |
 | `name` | text | display name |
 | `pin_hash` | text | bcrypt hash of a 6-digit manager PIN; **not client-readable** |
 
@@ -31,9 +31,10 @@ this is intentional, see [security.md](security.md#pin-storage).
 | `name` | text | |
 | `price` | integer | Rupiah, `> 0` |
 | `category` | text | see `MenuCategory` in `types/order.ts` |
-| `available` | boolean | default `true`; toggled from the cashier availability tab |
-| `cogs_mode` | text | `'ingredients'` or `'manual'` |
-| `manual_cogs` | numeric | null unless `cogs_mode = 'manual'`; `>= 0` |
+| `available` | boolean | default `true`; toggled from the cashier availability tab via `toggle_menu_availability` |
+| `cogs_mode` | text | `'ingredients'` or `'manual'`; `superadmin`-only to change |
+| `manual_cogs` | numeric | null unless `cogs_mode = 'manual'`; `>= 0`; `superadmin`-only to change |
+| `is_active` | boolean | default `true`; `false` = soft-deleted, hidden from ordering/availability/COGS lists |
 
 ### `stock`
 | Column | Type | Notes |
@@ -43,6 +44,7 @@ this is intentional, see [security.md](security.md#pin-storage).
 | `quantity` | numeric | default 0 |
 | `price_per_unit` | integer | Rupiah |
 | `updated_at`, `last_purchase_date` | timestamptz | |
+| `is_active` | boolean | default `true`; `false` = soft-deleted, hidden from restock/recipe pickers |
 
 Raising `quantity` fires `after_stock_change`, which logs an `expenses` row.
 
@@ -117,6 +119,7 @@ Failed attempts are recorded deliberately — the lockout counts them.
 | `cancel_order_with_pin(bigint, text)` | boolean | **legacy**, kept for older installs |
 | `cancel_order_with_pin_v2(bigint, text)` | jsonb | current; returns a reason on failure |
 | `delete_order_with_pin(bigint, text)` | boolean | hard delete; not wired to any UI |
+| `toggle_menu_availability(bigint)` | void | flips `menus.available`; callable by any authenticated staff account, since `cashier` has no general write access to `menus` |
 
 All are `SECURITY DEFINER` with a pinned `search_path`. Any function calling
 pgcrypto uses `extensions.crypt(...)` explicitly — a bare `crypt()` fails, see

@@ -13,14 +13,20 @@ import { RefreshCw, Search, X } from "lucide-react-native";
 import { supabase } from "../../../lib/supabase";
 import StockCard from "@/components/stock/StockCard";
 import AddStockSheet from "@/components/stock/AddStockSheet";
+import ConfirmDialog from "@/components/ConfirmDialog";
 import { StockItem } from "../../../types/stock";
+import { useAuth } from "../../../context/AuthContext";
 
 export default function StockScreen() {
+  const { profile } = useAuth();
+  const isSuperadmin = profile?.role === "superadmin";
+
   const [items, setItems] = useState<StockItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [search, setSearch] = useState("");
+  const [pendingRemove, setPendingRemove] = useState<{ item: StockItem; dependentMenus: string[] } | null>(null);
   const sheetRef = useRef<BottomSheet>(null) as React.RefObject<BottomSheet>;
 
   const fetchStock = useCallback(async () => {
@@ -46,6 +52,7 @@ export default function StockScreen() {
           quantity: s.quantity,
           unit: s.unit,
           pricePerUnit: s.price_per_unit,
+          isActive: s.is_active,
         }))
       );
     }
@@ -69,7 +76,7 @@ export default function StockScreen() {
   }, [fetchStock]);
 
   const handleAdd = async (
-    incoming: Omit<StockItem, "id"> & { purchaseDate?: string }
+    incoming: Omit<StockItem, "id" | "isActive"> & { purchaseDate?: string }
   ) => {
     setSaving(true);
     setError(null);
@@ -119,9 +126,68 @@ export default function StockScreen() {
     fetchStock();
   };
 
+  const removeStock = async (item: StockItem) => {
+    const { error } = await supabase
+      .from("stock")
+      .update({ is_active: false })
+      .eq("id", item.id);
+
+    if (error) {
+      setError("Gagal menghapus item stok. Silakan coba lagi.");
+      return;
+    }
+
+    fetchStock();
+  };
+
+  const handleRequestRemove = async (item: StockItem) => {
+    const { data } = await supabase
+      .from("menu_ingredients")
+      .select("menus!inner(name, is_active)")
+      .eq("stock_id", item.id)
+      .eq("menus.is_active", true);
+
+    const dependentMenus = (data ?? []).map((row: any) => row.menus.name as string);
+
+    if (dependentMenus.length === 0) {
+      removeStock(item);
+      return;
+    }
+
+    setPendingRemove({ item, dependentMenus });
+  };
+
+  const handleConfirmRemove = async () => {
+    if (!pendingRemove) return;
+    const { item } = pendingRemove;
+    setPendingRemove(null);
+    await removeStock(item);
+  };
+
+  const handleRestore = async (item: StockItem) => {
+    const { error } = await supabase
+      .from("stock")
+      .update({ is_active: true })
+      .eq("id", item.id);
+
+    if (error) {
+      setError("Gagal memulihkan item stok. Silakan coba lagi.");
+      return;
+    }
+
+    fetchStock();
+  };
+
+  const matchesSearch = (i: StockItem) =>
+    i.name.toLowerCase().includes(search.toLowerCase());
+
   const filtered = items
-    .filter((i) => i.name.toLowerCase().includes(search.toLowerCase()))
+    .filter((i) => i.isActive && matchesSearch(i))
     .sort((a, b) => a.quantity - b.quantity);
+
+  const inactiveFiltered = isSuperadmin
+    ? items.filter((i) => !i.isActive && matchesSearch(i)).sort((a, b) => a.name.localeCompare(b.name))
+    : [];
 
   return (
     <SafeAreaView className="flex-1 bg-gray-100">
@@ -172,7 +238,13 @@ export default function StockScreen() {
         <FlatList
           data={filtered}
           keyExtractor={(item) => item.id.toString()}
-          renderItem={({ item }) => <StockCard item={item} />}
+          renderItem={({ item }) =>
+            isSuperadmin ? (
+              <StockCard item={item} onDelete={() => handleRequestRemove(item)} />
+            ) : (
+              <StockCard item={item} />
+            )
+          }
           contentContainerStyle={{
             paddingHorizontal: 16,
             paddingTop: 4,
@@ -187,6 +259,18 @@ export default function StockScreen() {
                   : `Belum ada item stok.\nKetuk "tambah stok" untuk mulai.`}
               </Text>
             </View>
+          }
+          ListFooterComponent={
+            inactiveFiltered.length > 0 ? (
+              <View className="mt-2">
+                <Text className="text-xs font-extrabold text-gray-400 uppercase tracking-widest mb-2">
+                  Nonaktif
+                </Text>
+                {inactiveFiltered.map((item) => (
+                  <StockCard key={item.id} item={item} onRestore={() => handleRestore(item)} />
+                ))}
+              </View>
+            ) : null
           }
         />
       )}
@@ -208,7 +292,21 @@ export default function StockScreen() {
         </View>
       )}
 
-      <AddStockSheet sheetRef={sheetRef} onAdd={handleAdd} />
+      <AddStockSheet sheetRef={sheetRef} onAdd={handleAdd} canCreateNew={isSuperadmin} />
+
+      <ConfirmDialog
+        visible={!!pendingRemove}
+        title="Bahan ini masih digunakan"
+        message={
+          pendingRemove
+            ? `Menu berikut masih menggunakan "${pendingRemove.item.name}": ${pendingRemove.dependentMenus.join(", ")}. Perbarui resepnya dulu, atau tetap hapus?`
+            : ""
+        }
+        confirmLabel="Tetap Hapus"
+        destructive
+        onConfirm={handleConfirmRemove}
+        onCancel={() => setPendingRemove(null)}
+      />
     </SafeAreaView>
   );
 }

@@ -25,7 +25,7 @@ export function OrderProvider({ children }: { children: ReactNode }) {
   const [error, setError] = useState<string | null>(null);
 
   const fetchMenu = async () => {
-    const { data, error } = await supabase.from("menus").select("*");
+    const { data, error } = await supabase.from("menus").select("*").eq("is_active", true);
     if (error) {
       console.error("Failed to fetch menu:", error.message);
       return;
@@ -428,10 +428,7 @@ export function OrderProvider({ children }: { children: ReactNode }) {
       prev.map((m) => (m.id === menuId ? { ...m, available: !m.available } : m))
     );
 
-    const { error } = await supabase
-      .from("menus")
-      .update({ available: !item.available })
-      .eq("id", menuId);
+    const { error } = await supabase.rpc("toggle_menu_availability", { p_menu_id: menuId });
 
     if (error) {
       // Revert on failure

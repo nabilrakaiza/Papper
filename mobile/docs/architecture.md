@@ -24,9 +24,16 @@ navigation decision in the app:
 | Auth state | Destination |
 | --- | --- |
 | no session | `/(auth)/login` |
-| session, `profile.role === 'admin'` | `/(admin)/(tabs)` |
+| session, `profile.role === 'admin'` or `'superadmin'` | `/(admin)/(tabs)` |
 | session, `profile.role === 'cashier'` | `/(cashier)/(tabs)` |
 | session, any other role | `/(auth)/login` |
+
+`admin` and `superadmin` share the same route tree — there is no separate
+`(superadmin)` group. Superadmin-only affordances (creating a stock item or
+menu, editing cost mode, soft-delete/restore) are conditionally rendered
+inside the existing admin screens based on `profile.role === 'superadmin'`
+from `useAuth()`. See [security.md](security.md#role-model) for what each
+tier can actually write.
 
 Route groups mirror those roles:
 
@@ -43,11 +50,11 @@ app/
     order/[id].tsx         edit an open order; cancellation entry point
     payment/[id].tsx       take payment, close the order
   (admin)/(tabs)/
-    index.tsx              dashboard
-    sales.tsx              revenue over time
+    index.tsx              stock: list, restock; superadmin: create/remove item types
+    sales.tsx              revenue over time, top-selling menu
     purchase.tsx           expense history
-    cogs/index.tsx         menu list with cost of goods
-    cogs/[id].tsx          per-item recipe / manual cost editor
+    cogs/index.tsx         menu list with cost of goods; superadmin: create/remove menus
+    cogs/[id].tsx          per-item recipe editor; id === 'new' is the create-menu form; cost mode is superadmin-only
     profile.tsx
 ```
 
@@ -73,11 +80,14 @@ memory and exposes:
 | `updateOrder(id, partial, force?)` | edit an open order |
 | `cancelOrderWithPin(orderId, pin)` | manager-approved cancellation |
 | `markPaid(id, discount, method, amount)` | close out an order |
-| `toggleMenuAvailability(menuId)` | flip `menus.available` |
+| `toggleMenuAvailability(menuId)` | flip `menus.available`, via the `toggle_menu_availability` RPC |
 | `refetch()` | reload from the database |
 
 `force` on the first two bypasses the insufficient-stock guard when the user
-explicitly confirms a shortage.
+explicitly confirms a shortage. `menu` only ever holds `is_active = true`
+rows — `fetchMenu()` filters at the query, so a soft-deleted menu
+disappears from ordering and availability without any extra client-side
+filtering.
 
 **`PrinterContext`** — remembers a Bluetooth device per role
 (`"cashier" | "kitchen"`), so receipts and kitchen tickets can go to different
