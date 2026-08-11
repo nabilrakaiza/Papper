@@ -204,6 +204,22 @@ bare boolean, so the client cannot distinguish a wrong PIN from a lockout.
 Expected. `@vardrz/react-native-bluetooth-escpos-printer` is not in Expo Go —
 use a development build or an EAS build.
 
+### Web build hangs on the loading screen after a reload
+
+Loads fine, then a later reload spins forever with no error. A hard refresh
+(Cmd/Ctrl+Shift+R) or opening in a private window fixes it immediately.
+
+`@supabase/supabase-js` v2 coordinates session refresh across tabs/reloads
+using the browser's Web Locks API. A reload that interrupts a request
+mid-flight (or a dev-server hot-reload) can leave a stale lock behind; the
+next page load then waits on a lock nothing will ever release. Hit
+repeatedly while testing on `expo start --web` with frequent reloads —
+normal usage doesn't reload nearly often enough to trigger it in practice.
+
+No code fix applied; if it starts happening in real usage rather than during
+rapid manual testing, look at `auth.lock` in `createClient`'s options in
+`lib/supabase.ts`.
+
 ### An old debug APK behaves strangely after dependency changes
 
 Debug builds load JS from Metro but keep whatever native modules were compiled
