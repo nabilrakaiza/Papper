@@ -8,15 +8,17 @@ import {
   KeyboardAvoidingView,
   Platform,
   ActivityIndicator,
+  useWindowDimensions,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { router, useLocalSearchParams } from "expo-router";
 import { ChevronLeft, ChevronRight, Plus, Minus } from "lucide-react-native";
 import { useOrders } from "../../../context/OrderContext";
 import { CATEGORIES } from "../../../data/menu";
-import { MenuCategory, OrderItem } from "../../../types/order";
+import { CustomItemDraft, MenuCategory, OrderItem } from "../../../types/order";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import PinOverrideModal from "@/components/PinOverrideModal";
+import { CustomItemSheet, CustomItemList } from "@/components/CustomItemSheet";
 
 function formatRupiah(amount: number): string {
   return "Rp " + Math.round(amount).toLocaleString("id-ID");
@@ -26,6 +28,10 @@ export default function EditOrderScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { orders, menu, updateOrder, cancelOrderWithPin } = useOrders();
   const order = orders.find((o) => o.id === Number(id));
+  // A fixed 240px review panel is most of a landscape phone's height, so cap it
+  // against the current viewport instead.
+  const { height: windowHeight } = useWindowDimensions();
+  const summaryMaxHeight = Math.min(240, windowHeight * 0.35);
 
   const [categoryIndex, setCategoryIndex] = useState(0);
   const [summaryOpen, setSummaryOpen] = useState(false);
@@ -35,17 +41,44 @@ export default function EditOrderScreen() {
   const [showCancelDialog, setShowCancelDialog] = useState(false);
   const [showPinModal, setShowPinModal] = useState(false);
 
+  // `quantities` and `notes` are keyed by menu id, so custom off-menu items —
+  // which have none — are tracked separately and merged back in at save time.
   const [quantities, setQuantities] = useState<Record<number, number>>(() => {
     const items = order?.items ?? [];
     return items.reduce((acc, item) => {
+      if (item.menuId == null) return acc;
       acc[item.menuId] = (acc[item.menuId] ?? 0) + item.quantity;
       return acc;
     }, {} as Record<number, number>);
   });
 
-  const [notes, setNotes] = useState<Record<number, string>>(
-    Object.fromEntries(order?.items.map((i) => [i.menuId, i.note || ""]) ?? [])
+  const [notes, setNotes] = useState<Record<number, string>>(() =>
+    Object.fromEntries(
+      (order?.items ?? [])
+        .filter((i) => i.menuId != null)
+        .map((i) => [i.menuId as number, i.note || ""])
+    )
   );
+
+  // The custom rows already on the order, captured once so an edited draft can
+  // be matched back to the row it came from (and keep its print batch).
+  const [existingCustomRows] = useState<OrderItem[]>(() =>
+    (order?.items ?? []).filter((i) => i.menuId == null)
+  );
+
+  const [customItems, setCustomItems] = useState<CustomItemDraft[]>(() =>
+    (order?.items ?? [])
+      .filter((i) => i.menuId == null)
+      .map((i, idx) => ({
+        uid: `existing-${idx}`,
+        name: i.name,
+        price: i.price,
+        quantity: i.quantity,
+        note: i.note ?? "",
+      }))
+  );
+
+  const [customSheetOpen, setCustomSheetOpen] = useState(false);
 
   const increment = useCallback((menuId: number) => {
     setQuantities((prev) => ({ ...prev, [menuId]: (prev[menuId] ?? 0) + 1 }));
@@ -129,6 +162,46 @@ export default function EditOrderScreen() {
     }
   });
 
+  // Custom items, same batching rules as the menu items above: an untouched or
+  // reduced line keeps its original print batch so the kitchen isn't asked to
+  // remake it, while an increase is appended as a fresh batch. Anything not in
+  // `customItems` any more has been removed by the cashier and is dropped.
+  customItems.forEach((draft) => {
+    if (draft.quantity <= 0) return;
+
+    const originIndex = draft.uid.startsWith("existing-")
+      ? Number(draft.uid.slice("existing-".length))
+      : -1;
+    const origin = originIndex >= 0 ? existingCustomRows[originIndex] : undefined;
+
+    if (!origin) {
+      selectedItems.push({
+        menuId: null,
+        name: draft.name,
+        price: draft.price,
+        quantity: draft.quantity,
+        note: draft.note,
+        isSent: false,
+        isCancelled: false,
+        printBatch: currentMaxBatch + 1,
+      });
+      return;
+    }
+
+    if (draft.quantity <= origin.quantity) {
+      selectedItems.push({ ...origin, quantity: draft.quantity });
+    } else {
+      selectedItems.push({ ...origin });
+      selectedItems.push({
+        ...origin,
+        quantity: draft.quantity - origin.quantity,
+        isSent: false,
+        isStockDeducted: false,
+        printBatch: currentMaxBatch + 1,
+      });
+    }
+  });
+
   const totalItems = selectedItems.reduce((sum, i) => sum + i.quantity, 0);
   const subtotal = selectedItems.reduce((sum, i) => sum + i.price * i.quantity, 0);
 
@@ -179,10 +252,18 @@ export default function EditOrderScreen() {
                 <Text className="text-sm font-bold text-gray-700">Menu Pesanan</Text>
               </View>
             </TouchableOpacity>
-            <View className="flex-row items-center gap-3">
+            <View className="flex-row items-center gap-2">
               <Text className="text-xs font-bold text-gray-400">
                 {order.customerName} · {order.seat}
               </Text>
+              <TouchableOpacity
+                onPress={() => setCustomSheetOpen(true)}
+                className="border-2 border-green-500 bg-green-50 rounded-xl px-2.5 py-1.5"
+              >
+                <Text className="text-xs font-extrabold text-green-600">
+                  + Kustom
+                </Text>
+              </TouchableOpacity>
               <TouchableOpacity
                 onPress={() => setShowCancelDialog(true)}
                 className="bg-red-100 rounded-xl px-3 py-1.5"
@@ -251,6 +332,18 @@ export default function EditOrderScreen() {
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
         >
+          <CustomItemList
+            items={customItems}
+            onChangeQuantity={(uid, quantity) =>
+              setCustomItems((prev) =>
+                prev.map((c) => (c.uid === uid ? { ...c, quantity } : c))
+              )
+            }
+            onRemove={(uid) =>
+              setCustomItems((prev) => prev.filter((c) => c.uid !== uid))
+            }
+          />
+
           {categoryItems.map((item) => {
             const qty = quantities[item.id] ?? 0;
             return (
@@ -304,10 +397,13 @@ export default function EditOrderScreen() {
           <View className="absolute bottom-0 left-0 right-0 px-4 pb-4">
             <View className="bg-green-400 rounded-3xl px-5 py-4 shadow-sm">
               {summaryOpen && (
-                <View className="mb-3 max-h-60">
+                <View className="mb-3" style={{ maxHeight: summaryMaxHeight }}>
                   <ScrollView showsVerticalScrollIndicator={false}>
-                    {selectedItems.map((item) => (
-                      <View key={`${item.menuId}-${item.printBatch}`} className="mb-2">
+                    {selectedItems.map((item, idx) => (
+                      <View
+                        key={`${item.menuId ?? "custom"}-${item.printBatch}-${idx}`}
+                        className="mb-2"
+                      >
                         <View className="flex-row justify-between mb-0.5">
                           <Text className="text-sm font-bold text-white flex-1 pr-2">
                             {item.quantity}x {item.name}
@@ -367,6 +463,12 @@ export default function EditOrderScreen() {
             </View>
           </View>
         )}
+
+        <CustomItemSheet
+          visible={customSheetOpen}
+          onAdd={(item) => setCustomItems((prev) => [...prev, item])}
+          onClose={() => setCustomSheetOpen(false)}
+        />
 
         {/* Stock Warning Modal */}
         {!!stockWarning && (

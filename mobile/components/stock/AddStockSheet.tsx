@@ -23,8 +23,9 @@ type StockDefinition = {
 type PriceMode = "total" | "per-unit";
 
 type Props = {
-  onAdd: (item: Omit<StockItem, "id"> & { purchaseDate?: string }) => Promise<void>;
+  onAdd: (item: Omit<StockItem, "id" | "isActive"> & { purchaseDate?: string }) => Promise<void>;
   sheetRef: React.RefObject<BottomSheet>;
+  canCreateNew?: boolean; // superadmin-only: allow defining a brand-new stock item type
 };
 
 const formatRupiah = (digits: string) => {
@@ -32,11 +33,12 @@ const formatRupiah = (digits: string) => {
   return digits.replace(/\B(?=(\d{3})+(?!\d))/g, ".");
 };
 
-export default function AddStockSheet({ onAdd, sheetRef }: Props) {
+export default function AddStockSheet({ onAdd, sheetRef, canCreateNew = false }: Props) {
   const [definitions, setDefinitions] = useState<StockDefinition[]>([]);
   const [loadingDefs, setLoadingDefs] = useState(true);
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState<StockDefinition | null>(null);
+  const [newUnit, setNewUnit] = useState("");
   const [quantity, setQuantity] = useState("");
   const [priceMode, setPriceMode] = useState<PriceMode>("total");
   const [priceInput, setPriceInput] = useState("");
@@ -78,6 +80,7 @@ export default function AddStockSheet({ onAdd, sheetRef }: Props) {
   const reset = () => {
     setSelected(null);
     setSearch("");
+    setNewUnit("");
     setQuantity("");
     setPriceInput("");
     setPriceMode("total");
@@ -96,6 +99,13 @@ export default function AddStockSheet({ onAdd, sheetRef }: Props) {
   const handleClearSelection = () => {
     setSelected(null);
     setSearch("");
+    setNewUnit("");
+  };
+
+  const handleConfirmNew = () => {
+    if (!search.trim() || !newUnit.trim()) return;
+    setSelected({ id: -1, name: search.trim(), unit: newUnit.trim() });
+    setError("");
   };
 
   // NEW: Handle the calendar selection
@@ -250,9 +260,34 @@ export default function AddStockSheet({ onAdd, sheetRef }: Props) {
                 {/* No results */}
                 {!selected && search.length > 0 && filtered.length === 0 && (
                   <View className="bg-gray-50 rounded-xl px-4 py-3 mb-2">
-                    <Text className="text-xs font-bold text-gray-400 text-center">
+                    <Text className="text-xs font-bold text-gray-400 text-center mb-2">
                       Tidak ditemukan item untuk -{search}-
                     </Text>
+                    {canCreateNew && (
+                      <View>
+                        <Text className="text-[10px] font-extrabold text-gray-400 uppercase tracking-widest mb-1">
+                          Satuan item baru
+                        </Text>
+                        <TextInput
+                          className="w-full bg-white border-2 border-gray-100 rounded-xl px-3 py-2 font-bold text-sm text-gray-900 mb-2"
+                          placeholder="cth. kg, liter, pcs"
+                          value={newUnit}
+                          onChangeText={setNewUnit}
+                          placeholderTextColor="#ccc"
+                        />
+                        <TouchableOpacity
+                          onPress={handleConfirmNew}
+                          disabled={!newUnit.trim()}
+                          className={`rounded-xl py-2.5 items-center ${
+                            newUnit.trim() ? "bg-green-500" : "bg-gray-200"
+                          }`}
+                        >
+                          <Text className="text-xs font-extrabold text-white">
+                            Buat -{search}- sebagai item baru
+                          </Text>
+                        </TouchableOpacity>
+                      </View>
+                    )}
                   </View>
                 )}
 
@@ -268,7 +303,9 @@ export default function AddStockSheet({ onAdd, sheetRef }: Props) {
                         {selected.unit}
                       </Text>
                     </View>
-                    <Text className="text-xs text-green-300">(tetap)</Text>
+                    <Text className="text-xs text-green-300">
+                      {selected.id === -1 ? "(baru)" : "(tetap)"}
+                    </Text>
                   </View>
                 )}
               </View>

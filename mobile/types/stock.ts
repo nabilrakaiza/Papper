@@ -4,4 +4,5 @@ export type StockItem = {
   quantity: number;
   unit: string;
   pricePerUnit: number; // in Rupiah (IDR)
+  isActive: boolean;
 };

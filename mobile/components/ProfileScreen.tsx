@@ -40,9 +40,11 @@ export default function ProfileScreen() {
     fetchProfile();
   }, [session]);
 
-  const roleLabel = profile?.role === "admin" ? "Admin" : "Kasir";
+  const roleLabel = profile?.role === "admin" ? "Admin" : profile?.role === "superadmin" ? "Superadmin" : "Kasir";
   const roleColor =
-    profile?.role === "admin" ? "bg-blue-100 text-blue-600" : "bg-green-100 text-green-600";
+    profile?.role === "admin" || profile?.role === "superadmin"
+      ? "bg-blue-100 text-blue-600"
+      : "bg-green-100 text-green-600";
 
   return (
     <SafeAreaView className="flex-1 bg-gray-100">

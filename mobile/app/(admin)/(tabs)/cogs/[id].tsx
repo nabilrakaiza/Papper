@@ -18,6 +18,9 @@ import BottomSheet, {
   BottomSheetBackdrop,
 } from "@gorhom/bottom-sheet";
 import { supabase } from "@/lib/supabase";
+import { useAuth } from "../../../../context/AuthContext";
+import { CATEGORIES } from "../../../../data/menu";
+import { MenuCategory } from "../../../../types/order";
 
 type CogsMode = "ingredients" | "manual";
 
@@ -83,10 +86,21 @@ const StockRow = memo(function StockRow({
 
 export default function CogsEditScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
+  const isNew = id === "new";
   const menuId = Number(id);
   const navigation = useNavigation();
+  const { profile } = useAuth();
+  const isSuperadmin = profile?.role === "superadmin";
 
-  const [loading, setLoading] = useState(true);
+  // New-menu creation fields (only used when isNew)
+  const [newName, setNewName] = useState("");
+  const [newPriceInput, setNewPriceInput] = useState("");
+  const [newCategory, setNewCategory] = useState<MenuCategory>(CATEGORIES[0]);
+  const [newCogsMode, setNewCogsMode] = useState<CogsMode>("ingredients");
+  const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState("");
+
+  const [loading, setLoading] = useState(!isNew);
   const [saving, setSaving] = useState(false);
   const [menuName, setMenuName] = useState("");
   const [sellingPrice, setSellingPrice] = useState(0);
@@ -109,6 +123,7 @@ export default function CogsEditScreen() {
   const snapPoints = useMemo(() => ["55%", "92%"], []);
 
   const fetchMenu = useCallback(async () => {
+    if (isNew) return;
     setLoading(true);
 
     const { data: menu } = await supabase
@@ -229,7 +244,7 @@ export default function CogsEditScreen() {
   // --- All handlers below are LOCAL ONLY — nothing hits Supabase until Save ---
 
   const handleSwitchMode = (mode: CogsMode) => {
-    if (mode === cogsMode) return;
+    if (!isSuperadmin || mode === cogsMode) return;
     setCogsMode(mode);
     setIsDirty(true);
   };
@@ -283,6 +298,45 @@ export default function CogsEditScreen() {
     const digitsOnly = text.replace(/[^0-9]/g, "");
     setManualCogsInput(digitsOnly);
     setIsDirty(true);
+  };
+
+  const handleNewPriceChange = (text: string) => {
+    setNewPriceInput(text.replace(/[^0-9]/g, ""));
+  };
+
+  const handleCreateMenu = async () => {
+    setCreateError("");
+
+    const price = parseInt(newPriceInput, 10);
+    if (!newName.trim()) {
+      setCreateError("Nama menu tidak boleh kosong.");
+      return;
+    }
+    if (!price || price <= 0) {
+      setCreateError("Harga jual harus lebih besar dari 0.");
+      return;
+    }
+
+    setCreating(true);
+
+    const { data, error } = await supabase
+      .from("menus")
+      .insert({
+        name: newName.trim(),
+        price,
+        category: newCategory,
+        cogs_mode: newCogsMode,
+      })
+      .select("id")
+      .single();
+
+    if (error || !data) {
+      setCreateError("Gagal membuat menu. Silakan coba lagi.");
+      setCreating(false);
+      return;
+    }
+
+    router.replace(`/(admin)/(tabs)/cogs/${data.id}`);
   };
 
   // --- Save: commits everything in one go ---
@@ -352,17 +406,21 @@ export default function CogsEditScreen() {
       }
     }
 
-    // 3. Update menu-level fields
-    const manualCogsValue = manualCogsInput === "" ? null : parseFloat(manualCogsInput);
-    const { error: menuError } = await supabase
-      .from("menus")
-      .update({ cogs_mode: cogsMode, manual_cogs: manualCogsValue })
-      .eq("id", menuId);
+    // 3. Update menu-level fields — cogs_mode / manual_cogs are superadmin-only
+    // (RLS rejects this write from an admin account, so skip it entirely rather
+    // than surface a confusing failure for an admin who only touched ingredients)
+    if (isSuperadmin) {
+      const manualCogsValue = manualCogsInput === "" ? null : parseFloat(manualCogsInput);
+      const { error: menuError } = await supabase
+        .from("menus")
+        .update({ cogs_mode: cogsMode, manual_cogs: manualCogsValue })
+        .eq("id", menuId);
 
-    if (menuError) {
-      setError("Gagal menyimpan mode HPP.");
-      setSaving(false);
-      return;
+      if (menuError) {
+        setError("Gagal menyimpan mode HPP.");
+        setSaving(false);
+        return;
+      }
     }
 
     // 4. Refetch to get real row IDs for anything that was newly inserted, and reset dirty state
@@ -374,6 +432,131 @@ export default function CogsEditScreen() {
     return (
       <SafeAreaView className="flex-1 bg-gray-100 items-center justify-center">
         <ActivityIndicator size="large" color="#3a7bd5" />
+      </SafeAreaView>
+    );
+  }
+
+  if (isNew) {
+    return (
+      <SafeAreaView className="flex-1 bg-gray-100">
+        <View className="flex-row items-center justify-between px-5 pt-4 pb-3">
+          <TouchableOpacity onPress={() => router.back()}>
+            <ChevronLeft size={24} color="#333" />
+          </TouchableOpacity>
+          <Text className="text-xl font-black text-gray-900">Menu Baru</Text>
+          <View className="w-6" />
+        </View>
+
+        <ScrollView
+          contentContainerStyle={{ padding: 16, paddingBottom: 40 }}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+        >
+          <Text className="text-[10px] font-extrabold text-gray-400 uppercase tracking-widest mb-1">
+            Nama Menu
+          </Text>
+          <TextInput
+            className="w-full bg-white border-2 border-gray-100 rounded-xl px-4 py-3 font-bold text-sm text-gray-900 mb-4"
+            placeholder="cth. Nasi Goreng"
+            placeholderTextColor="#ccc"
+            value={newName}
+            onChangeText={setNewName}
+          />
+
+          <Text className="text-[10px] font-extrabold text-gray-400 uppercase tracking-widest mb-1">
+            Harga Jual
+          </Text>
+          <TextInput
+            className="w-full bg-white border-2 border-gray-100 rounded-xl px-4 py-3 font-bold text-sm text-gray-900 mb-4"
+            placeholder="cth. 25000"
+            placeholderTextColor="#ccc"
+            keyboardType="numeric"
+            value={newPriceInput}
+            onChangeText={handleNewPriceChange}
+          />
+
+          <Text className="text-[10px] font-extrabold text-gray-400 uppercase tracking-widest mb-1">
+            Kategori
+          </Text>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} className="mb-4">
+            <View className="flex-row gap-2">
+              {CATEGORIES.map((cat) => (
+                <TouchableOpacity
+                  key={cat}
+                  onPress={() => setNewCategory(cat)}
+                  className={`px-4 py-2 rounded-xl ${
+                    newCategory === cat ? "bg-blue-500" : "bg-white border-2 border-gray-100"
+                  }`}
+                >
+                  <Text
+                    className={`text-xs font-extrabold ${
+                      newCategory === cat ? "text-white" : "text-gray-500"
+                    }`}
+                  >
+                    {cat}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </ScrollView>
+
+          <Text className="text-[10px] font-extrabold text-gray-400 uppercase tracking-widest mb-1">
+            Mode HPP Awal
+          </Text>
+          <View className="flex-row bg-gray-200 rounded-2xl p-1 mb-4">
+            <TouchableOpacity
+              onPress={() => setNewCogsMode("ingredients")}
+              className={`flex-1 py-2.5 rounded-xl items-center ${
+                newCogsMode === "ingredients" ? "bg-white" : ""
+              }`}
+            >
+              <Text
+                className={`text-xs font-extrabold ${
+                  newCogsMode === "ingredients" ? "text-gray-900" : "text-gray-400"
+                }`}
+              >
+                Berdasarkan Bahan
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => setNewCogsMode("manual")}
+              className={`flex-1 py-2.5 rounded-xl items-center ${
+                newCogsMode === "manual" ? "bg-white" : ""
+              }`}
+            >
+              <Text
+                className={`text-xs font-extrabold ${
+                  newCogsMode === "manual" ? "text-gray-900" : "text-gray-400"
+                }`}
+              >
+                Manual
+              </Text>
+            </TouchableOpacity>
+          </View>
+          <Text className="text-xs font-bold text-gray-400 mb-4">
+            Bahan dapat ditambahkan setelah menu dibuat.
+          </Text>
+
+          {createError !== "" && (
+            <View className="mb-3 bg-red-50 border border-red-100 rounded-2xl px-4 py-3">
+              <Text className="text-xs font-bold text-red-500 text-center">{createError}</Text>
+            </View>
+          )}
+
+          <TouchableOpacity
+            onPress={handleCreateMenu}
+            disabled={creating}
+            className={`w-full rounded-2xl py-4 items-center shadow ${
+              creating ? "bg-gray-400 shadow-gray-400/30" : "bg-green-400 shadow-green-600/30"
+            }`}
+          >
+            {creating ? (
+              <ActivityIndicator size="small" color="white" />
+            ) : (
+              <Text className="text-sm font-extrabold text-white">Buat Menu</Text>
+            )}
+          </TouchableOpacity>
+        </ScrollView>
       </SafeAreaView>
     );
   }
@@ -409,9 +592,10 @@ export default function CogsEditScreen() {
           </Text>
         </View>
 
-        <View className="flex-row bg-gray-200 rounded-2xl p-1 mb-4">
+        <View className={`flex-row bg-gray-200 rounded-2xl p-1 mb-4 ${!isSuperadmin ? "opacity-60" : ""}`}>
           <TouchableOpacity
             onPress={() => handleSwitchMode("ingredients")}
+            disabled={!isSuperadmin}
             className={`flex-1 py-2.5 rounded-xl items-center ${
               cogsMode === "ingredients" ? "bg-white" : ""
             }`}
@@ -426,6 +610,7 @@ export default function CogsEditScreen() {
           </TouchableOpacity>
           <TouchableOpacity
             onPress={() => handleSwitchMode("manual")}
+            disabled={!isSuperadmin}
             className={`flex-1 py-2.5 rounded-xl items-center ${
               cogsMode === "manual" ? "bg-white" : ""
             }`}
@@ -439,6 +624,12 @@ export default function CogsEditScreen() {
             </Text>
           </TouchableOpacity>
         </View>
+
+        {!isSuperadmin && (
+          <Text className="text-[10px] font-bold text-gray-400 text-center -mt-3 mb-4">
+            Hanya superadmin yang dapat mengubah mode HPP.
+          </Text>
+        )}
 
         {error !== "" && (
           <View className="mb-3 bg-red-50 border border-red-100 rounded-2xl px-4 py-3">
@@ -515,12 +706,15 @@ export default function CogsEditScreen() {
               Tidak ada bahan yang dilacak untuk mode ini — masukkan jumlah HPP secara langsung.
             </Text>
             <TextInput
-              className="bg-white border-2 border-gray-100 rounded-xl px-4 py-3 font-bold text-base text-gray-900"
+              className={`bg-white border-2 border-gray-100 rounded-xl px-4 py-3 font-bold text-base text-gray-900 ${
+                !isSuperadmin ? "opacity-60" : ""
+              }`}
               placeholder="cth. 12000"
               placeholderTextColor="#ccc"
               keyboardType="numeric"
               value={manualCogsInput}
               onChangeText={handleManualCogsChange}
+              editable={isSuperadmin}
             />
           </View>
         )}

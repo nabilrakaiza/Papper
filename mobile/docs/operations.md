@@ -22,15 +22,20 @@ order by p.role, p.name;
 Add the user in Dashboard → Authentication → Users. A `profiles` row appears
 automatically as a **cashier**. Signup metadata cannot set a role.
 
-### Promote to admin
+### Promote to admin or superadmin
 
 ```sql
 update public.profiles set role = 'admin' where id = '<user-uuid>';
+-- or
+update public.profiles set role = 'superadmin' where id = '<user-uuid>';
 ```
 
 Only do this for people who genuinely administer the system. The PIN gate
-constrains cashiers, not admins — every extra admin is one more person who can
-cancel sales without approval.
+constrains cashiers, not admins/superadmins — every extra admin is one more
+person who can cancel sales without approval. `superadmin` additionally
+writes to `menus` directly (cost mode, creating/removing menu items) and
+creates new stock item types — see
+[security.md](security.md#role-model).
 
 ### Remove someone
 
@@ -101,6 +106,24 @@ group by c.name having count(*) >= 5;
 A lockout expires on its own; there is no manual reset short of deleting log
 rows, which would destroy audit history. Wait it out.
 
+## Auditing stock corrections
+
+Recent stock corrections and deleted expense entries — both are
+`superadmin`-only, see [security.md](security.md#stock-corrections):
+
+```sql
+select l.created_at, l.action, l.target_name, s.name as by,
+       l.old_quantity, l.new_quantity, l.old_price_per_unit, l.new_price_per_unit, l.note
+from public.admin_correction_log l
+left join public.profiles s on s.id = l.superadmin_id
+order by l.created_at desc
+limit 50;
+```
+
+There's no in-app history view for this, same as `order_override_log` —
+check it here if a stock quantity or an expense total looks off and someone
+mentions "I fixed a typo."
+
 ## Menu and stock
 
 Menu items, prices, availability and recipes are all managed in the admin tabs.
@@ -113,6 +136,12 @@ Two things are worth knowing:
 - **Cost of goods is per item.** `cogs_mode = 'ingredients'` computes from the
   recipe; `'manual'` uses a flat `manual_cogs`. Items with no recipe and no
   manual figure have no cost basis and will distort margin reporting.
+
+Both `menus` and `stock` have an `is_active` flag. "Removing" either is a
+soft delete (superadmin-only, from the Stok and HPP tabs) — the row stays so
+past orders and recipes still resolve, it just stops appearing in ordering,
+availability, restock and recipe pickers. Restoring is the same toggle in
+reverse, from the same screens.
 
 ## Printers
 

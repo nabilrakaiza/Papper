@@ -9,8 +9,10 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useFocusEffect, router } from "expo-router";
-import { Search, X, Pencil } from "lucide-react-native";
+import { Search, X, Pencil, Plus, Trash2, RotateCcw } from "lucide-react-native";
 import { supabase } from "@/lib/supabase";
+import ConfirmDialog from "@/components/ConfirmDialog";
+import { useAuth } from "../../../../context/AuthContext";
 
 const ADDITIONAL_COGS_PERCENT = 10;
 
@@ -31,6 +33,7 @@ type MenuWithCogs = {
   cogsMode: CogsMode;
   manualCogs: number | null;
   rawCogs: number | null; // the "before markup" cogs, resolved based on cogsMode. null = not set (manual mode, no value yet)
+  isActive: boolean;
 };
 
 function formatRupiah(amount: number): string {
@@ -60,10 +63,14 @@ const MenuCard = memo(function MenuCard({
   item,
   isExpanded,
   onToggle,
+  onDelete,
+  onRestore,
 }: {
   item: MenuWithCogs;
   isExpanded: boolean;
   onToggle: (id: number) => void;
+  onDelete?: () => void;
+  onRestore?: () => void;
 }) {
   const { adjustedCogs, additionalCost, grossProfit, profitColor, hasCogs } = useMemo(() => {
     const hasCogs = item.rawCogs !== null;
@@ -90,26 +97,52 @@ const MenuCard = memo(function MenuCard({
     <TouchableOpacity
       onPress={handlePress}
       activeOpacity={0.9}
-      className="bg-yellow-100 rounded-2xl px-4 py-4 mb-3 shadow-sm shadow-yellow-300/30"
+      className={`rounded-2xl px-4 py-4 mb-3 shadow-sm ${
+        item.isActive ? "bg-yellow-100 shadow-yellow-300/30" : "bg-gray-200 shadow-gray-300/20 opacity-70"
+      }`}
     >
       {/* Header row */}
       <View className="flex-row items-center justify-between mb-3">
         <Text className="text-base font-black text-gray-900 flex-1 mr-2">{item.name}</Text>
         <View className="flex-row items-center gap-2">
-          {hasCogs ? (
+          {!item.isActive ? (
+            <View className="bg-gray-300 px-2 py-0.5 rounded-lg">
+              <Text className="text-xs font-extrabold text-gray-600">Dihapus</Text>
+            </View>
+          ) : hasCogs ? (
             <MarginBadge cogs={adjustedCogs} price={item.sellingPrice} />
           ) : (
             <View className="bg-gray-100 px-2 py-0.5 rounded-lg">
               <Text className="text-xs font-extrabold text-gray-400">Belum diatur</Text>
             </View>
           )}
-          <TouchableOpacity
-            onPress={handleEditPress}
-            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-            className="bg-white/80 rounded-lg p-1.5"
-          >
-            <Pencil size={14} color="#78716c" />
-          </TouchableOpacity>
+          {item.isActive && (
+            <TouchableOpacity
+              onPress={handleEditPress}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              className="bg-white/80 rounded-lg p-1.5"
+            >
+              <Pencil size={14} color="#78716c" />
+            </TouchableOpacity>
+          )}
+          {onDelete && (
+            <TouchableOpacity
+              onPress={onDelete}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              className="bg-white/80 rounded-lg p-1.5"
+            >
+              <Trash2 size={14} color="#ef4444" />
+            </TouchableOpacity>
+          )}
+          {onRestore && (
+            <TouchableOpacity
+              onPress={onRestore}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              className="bg-white/80 rounded-lg p-1.5"
+            >
+              <RotateCcw size={14} color="#22c55e" />
+            </TouchableOpacity>
+          )}
         </View>
       </View>
 
@@ -199,17 +232,22 @@ const MenuCard = memo(function MenuCard({
 });
 
 export default function CogsScreen() {
+  const { profile } = useAuth();
+  const isSuperadmin = profile?.role === "superadmin";
+
   const [menus, setMenus] = useState<MenuWithCogs[]>([]);
   const [loading, setLoading] = useState(true);
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [search, setSearch] = useState("");
+  const [showDeleted, setShowDeleted] = useState(false);
+  const [pendingDeleteId, setPendingDeleteId] = useState<number | null>(null);
 
   const fetchData = useCallback(async (isInitial: boolean) => {
     if (isInitial) setLoading(true);
 
     const { data: menuData } = await supabase
       .from("menus")
-      .select("id, name, price, cogs_mode, manual_cogs");
+      .select("id, name, price, cogs_mode, manual_cogs, is_active");
 
     const { data: ingredientData } = await supabase
       .from("menu_ingredients")
@@ -248,6 +286,7 @@ export default function CogsScreen() {
         cogsMode,
         manualCogs: menu.manual_cogs,
         rawCogs,
+        isActive: menu.is_active,
       };
     });
 
@@ -262,19 +301,40 @@ export default function CogsScreen() {
   );
 
   const filtered = useMemo(
-    () => menus.filter((m) => m.name.toLowerCase().includes(search.toLowerCase())),
-    [menus, search]
+    () =>
+      menus.filter(
+        (m) =>
+          m.name.toLowerCase().includes(search.toLowerCase()) &&
+          (m.isActive || (isSuperadmin && showDeleted))
+      ),
+    [menus, search, isSuperadmin, showDeleted]
   );
 
   const handleToggle = useCallback((id: number) => {
     setExpandedId((prev) => (prev === id ? null : id));
   }, []);
 
+  const handleDeleteMenu = useCallback(async (id: number) => {
+    const { error } = await supabase.from("menus").update({ is_active: false }).eq("id", id);
+    if (!error) fetchData(false);
+  }, [fetchData]);
+
+  const handleRestoreMenu = useCallback(async (id: number) => {
+    const { error } = await supabase.from("menus").update({ is_active: true }).eq("id", id);
+    if (!error) fetchData(false);
+  }, [fetchData]);
+
   const renderItem = useCallback(
     ({ item }: { item: MenuWithCogs }) => (
-      <MenuCard item={item} isExpanded={expandedId === item.id} onToggle={handleToggle} />
+      <MenuCard
+        item={item}
+        isExpanded={expandedId === item.id}
+        onToggle={handleToggle}
+        onDelete={isSuperadmin && item.isActive ? () => setPendingDeleteId(item.id) : undefined}
+        onRestore={isSuperadmin && !item.isActive ? () => handleRestoreMenu(item.id) : undefined}
+      />
     ),
-    [expandedId, handleToggle]
+    [expandedId, handleToggle, isSuperadmin, handleRestoreMenu]
   );
 
   const keyExtractor = useCallback((item: MenuWithCogs) => item.id.toString(), []);
@@ -290,8 +350,17 @@ export default function CogsScreen() {
   return (
     <SafeAreaView className="flex-1 bg-gray-100">
       {/* Header */}
-      <View className="px-5 pt-4 pb-3">
+      <View className="flex-row items-center justify-between px-5 pt-4 pb-3">
         <Text className="text-2xl font-black text-gray-900">HPP</Text>
+        {isSuperadmin && (
+          <TouchableOpacity
+            onPress={() => router.push("/(admin)/(tabs)/cogs/new")}
+            className="flex-row items-center gap-1 bg-blue-500 rounded-xl px-3 py-2"
+          >
+            <Plus size={14} color="white" />
+            <Text className="text-xs font-extrabold text-white">Menu Baru</Text>
+          </TouchableOpacity>
+        )}
       </View>
 
       {/* Search */}
@@ -312,6 +381,16 @@ export default function CogsScreen() {
           )}
         </View>
       </View>
+
+      {isSuperadmin && (
+        <TouchableOpacity
+          onPress={() => setShowDeleted((v) => !v)}
+          className="flex-row items-center gap-2 px-4 mb-2"
+        >
+          <View className={`w-4 h-4 rounded-md ${showDeleted ? "bg-blue-500" : "bg-white border-2 border-gray-200"}`} />
+          <Text className="text-xs font-bold text-gray-500">Tampilkan yang dihapus</Text>
+        </TouchableOpacity>
+      )}
 
       <FlatList
         data={filtered}
@@ -338,6 +417,19 @@ export default function CogsScreen() {
             </Text>
           </View>
         }
+      />
+
+      <ConfirmDialog
+        visible={pendingDeleteId !== null}
+        title="Hapus menu ini?"
+        message="Menu akan disembunyikan dari daftar dan dari pemesanan, tetapi pesanan lama tetap utuh. Anda dapat memulihkannya kapan saja."
+        confirmLabel="Hapus"
+        destructive
+        onConfirm={() => {
+          if (pendingDeleteId !== null) handleDeleteMenu(pendingDeleteId);
+          setPendingDeleteId(null);
+        }}
+        onCancel={() => setPendingDeleteId(null)}
       />
     </SafeAreaView>
   );

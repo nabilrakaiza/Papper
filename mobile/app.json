@@ -3,7 +3,7 @@
     "name": "Papper",
     "slug": "papper",
     "version": "1.0.0",
-    "orientation": "portrait",
+    "orientation": "default",
     "icon": "./assets/images/logo.png",
     "scheme": "papper",
     "userInterfaceStyle": "automatic",

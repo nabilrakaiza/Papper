@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useEffect, ReactNode } from "react";
-import { Order, MenuItem } from "../types/order";
+import { Order, MenuItem, OrderItem } from "../types/order";
 import { supabase } from "../lib/supabase";
 
 type OrderContextType = {
@@ -18,6 +18,22 @@ type OrderContextType = {
 
 const OrderContext = createContext<OrderContextType>({} as OrderContextType);
 
+// Payload for check_stock_for_order — the items whose ingredients are about to
+// be consumed, which is exactly what deduct_stock_for_order will process.
+//
+// Two exclusions:
+//   * Custom off-menu items carry a null menu_id and have no recipe behind
+//     them, so they are dropped rather than sent as nulls the RPC would
+//     iterate over for nothing.
+//   * Items already flagged is_stock_deducted have had their ingredients taken
+//     out on a previous save. Including them made an edit ask "do we have
+//     enough for the whole order again?" instead of "enough for what was just
+//     added", producing shortage warnings for stock that was never needed.
+const stockCheckedItems = (items: OrderItem[]) =>
+  items
+    .filter((i) => i.menuId != null && !i.isStockDeducted)
+    .map((i) => ({ menu_id: i.menuId, quantity: i.quantity }));
+
 export function OrderProvider({ children }: { children: ReactNode }) {
   const [orders, setOrders] = useState<Order[]>([]);
   const [menu, setMenu] = useState<MenuItem[]>([]);
@@ -25,7 +41,7 @@ export function OrderProvider({ children }: { children: ReactNode }) {
   const [error, setError] = useState<string | null>(null);
 
   const fetchMenu = async () => {
-    const { data, error } = await supabase.from("menus").select("*");
+    const { data, error } = await supabase.from("menus").select("*").eq("is_active", true);
     if (error) {
       console.error("Failed to fetch menu:", error.message);
       return;
@@ -75,16 +91,16 @@ export function OrderProvider({ children }: { children: ReactNode }) {
         isDineIn: o.is_dine_in,
         paymentAmount: o.payment_amount,
         items: o.order_items.map((i: any) => ({
-            menuId: i.menu_id,
+            // null for a custom off-menu item
+            menuId: i.menu_id ?? null,
             name: i.name,
             price: i.price,
             quantity: i.quantity,
-            category: i.category,
             // Updated to map from DB snake_case to app camelCase
             isSent: i.is_sent ?? false,
             isCancelled: i.is_cancelled ?? false,
             printBatch: i.print_batch ?? 1,
-            note: i.notes ?? null,
+            note: i.notes ?? undefined,
             isStockDeducted: i.is_stock_deducted,
         })),
         }))
@@ -123,10 +139,9 @@ export function OrderProvider({ children }: { children: ReactNode }) {
       const { data: checkData, error: checkError } = await supabase.rpc(
         "check_stock_for_order",
         {
-          p_items: order.items.map((i) => ({
-            menu_id: i.menuId,
-            quantity: i.quantity,
-          })),
+          // Custom items have no menu row and therefore no recipe — nothing to
+          // check, so don't send them.
+          p_items: stockCheckedItems(order.items),
         }
       );
 
@@ -240,13 +255,15 @@ export function OrderProvider({ children }: { children: ReactNode }) {
         return { error: "Gagal mengambil item pesanan yang ada. Silakan coba lagi." };
       }
 
+      // No `category` here — order_items has no such column, so including it
+      // made the revert insert below fail with an unknown-column error, in the
+      // exact situation where the revert is the only thing saving the order.
       const originalItems = originalData.map((i: any) => ({
         order_id: id,
         menu_id: i.menu_id,
         name: i.name,
         price: i.price,
         quantity: i.quantity,
-        category: i.category,
         is_sent: i.is_sent ?? false,
         is_cancelled: i.is_cancelled ?? false,
         print_batch: i.print_batch ?? 1,
@@ -259,10 +276,7 @@ export function OrderProvider({ children }: { children: ReactNode }) {
         const { data: checkData, error: checkError } = await supabase.rpc(
           "check_stock_for_order",
           {
-            p_items: updated.items.map((i) => ({
-              menu_id: i.menuId,
-              quantity: i.quantity,
-            })),
+            p_items: stockCheckedItems(updated.items),
           }
         );
 
@@ -287,6 +301,17 @@ export function OrderProvider({ children }: { children: ReactNode }) {
         return { error: "Gagal memperbarui item pesanan. Silakan coba lagi." };
       }
 
+      // is_stock_deducted is carried over, not reset. Editing an order replaces
+      // its rows wholesale, so hardcoding false here re-presented every existing
+      // line to deduct_stock_for_order as if it were new — a second save took
+      // the whole order's ingredients out of stock a second time, a third took
+      // them a third time, and the shortfall was indistinguishable from
+      // ordinary consumption.
+      //
+      // The screens preserve the flag on lines they keep and leave it unset on
+      // lines they add, so only genuinely new quantity deducts. (A client could
+      // always have sent this column freely on an open order; the database
+      // guards it from payment onwards, via prevent_locked_order_item_change.)
       const { error: itemsError } = await supabase.from("order_items").insert(
         updated.items.map((item) => ({
           order_id: id,
@@ -298,7 +323,7 @@ export function OrderProvider({ children }: { children: ReactNode }) {
           is_cancelled: item.isCancelled ?? false,
           print_batch: item.printBatch ?? 1,
           notes: item.note ?? null,
-          is_stock_deducted: false,
+          is_stock_deducted: item.isStockDeducted ?? false,
         }))
       );
 
@@ -428,10 +453,7 @@ export function OrderProvider({ children }: { children: ReactNode }) {
       prev.map((m) => (m.id === menuId ? { ...m, available: !m.available } : m))
     );
 
-    const { error } = await supabase
-      .from("menus")
-      .update({ available: !item.available })
-      .eq("id", menuId);
+    const { error } = await supabase.rpc("toggle_menu_availability", { p_menu_id: menuId });
 
     if (error) {
       // Revert on failure

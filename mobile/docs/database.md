@@ -17,7 +17,7 @@ trigger on `auth.users`.
 | Column | Type | Notes |
 | --- | --- | --- |
 | `id` | uuid PK | FK → `auth.users(id)` ON DELETE CASCADE |
-| `role` | text | `'cashier'` (default) or `'admin'` |
+| `role` | text | `'cashier'` (default), `'admin'` or `'superadmin'` — see [security.md](security.md#role-model) |
 | `name` | text | display name |
 | `pin_hash` | text | bcrypt hash of a 6-digit manager PIN; **not client-readable** |
 
@@ -31,9 +31,10 @@ this is intentional, see [security.md](security.md#pin-storage).
 | `name` | text | |
 | `price` | integer | Rupiah, `> 0` |
 | `category` | text | see `MenuCategory` in `types/order.ts` |
-| `available` | boolean | default `true`; toggled from the cashier availability tab |
-| `cogs_mode` | text | `'ingredients'` or `'manual'` |
-| `manual_cogs` | numeric | null unless `cogs_mode = 'manual'`; `>= 0` |
+| `available` | boolean | default `true`; toggled from the cashier availability tab via `toggle_menu_availability` |
+| `cogs_mode` | text | `'ingredients'` or `'manual'`; `superadmin`-only to change |
+| `manual_cogs` | numeric | null unless `cogs_mode = 'manual'`; `>= 0`; `superadmin`-only to change |
+| `is_active` | boolean | default `true`; `false` = soft-deleted, hidden from ordering/availability/COGS lists |
 
 ### `stock`
 | Column | Type | Notes |
@@ -43,6 +44,7 @@ this is intentional, see [security.md](security.md#pin-storage).
 | `quantity` | numeric | default 0 |
 | `price_per_unit` | integer | Rupiah |
 | `updated_at`, `last_purchase_date` | timestamptz | |
+| `is_active` | boolean | default `true`; `false` = soft-deleted, hidden from restock/recipe pickers |
 
 Raising `quantity` fires `after_stock_change`, which logs an `expenses` row.
 
@@ -57,9 +59,9 @@ ON DELETE CASCADE. `quantity` is stock units consumed per one menu item.
 | `customer_name`, `seat` | text | |
 | `discount` | integer | percentage, 0–100 |
 | `status` | text | `'unpaid'` (default), `'paid'`, `'cancelled'` |
-| `method_of_payment` | text | `'QRIS'`, `'Bank Transfer'` or `'Cash'` |
+| `method_of_payment` | text | `'QRIS'`, `'Bank Transfer'`, `'Cash'` or `'Debit'` |
 | `is_dine_in` | boolean | false = takeaway |
-| `payment_amount` | integer | tendered amount |
+| `payment_amount` | integer | cash tendered; for every other method, the order total |
 | `created_at` | timestamptz | |
 
 `status` has no CHECK constraint — the allowed values are enforced by
@@ -70,7 +72,7 @@ convention and by the `OrderStatus` type in `types/order.ts`.
 | --- | --- | --- |
 | `id` | bigint PK | identity |
 | `order_id` | bigint | → `orders(id)` ON DELETE CASCADE |
-| `menu_id` | bigint | → `menus(id)` |
+| `menu_id` | bigint | → `menus(id)`, **nullable** — NULL marks a custom off-menu item priced by the cashier |
 | `name`, `price`, `quantity` | | copied from the menu at order time, so later price changes do not rewrite history |
 | `is_sent` | boolean | sent to the kitchen |
 | `is_cancelled` | boolean | |
@@ -78,8 +80,25 @@ convention and by the `OrderStatus` type in `types/order.ts`.
 | `notes` | text | |
 | `is_stock_deducted` | boolean | guards against double-deducting |
 
+`is_stock_deducted` has to survive an edit. `updateOrder` replaces an order's
+items by deleting and reinserting them all, so the flag is copied from the row
+being replaced rather than reset — the screens keep it on lines they carry over
+and leave it unset on lines they add, so `deduct_stock_for_order` only ever sees
+genuinely new quantity. Resetting it made each re-save deduct the entire order's
+ingredients again. Note the reverse is not symmetrical: reducing a line's
+quantity does not return stock, on the assumption the food was already made.
+
+A NULL `menu_id` is a custom line item: something sold that isn't on the menu,
+with a name and price typed by the cashier. It has no row in `menus` and so no
+recipe, which means the stock RPCs find no ingredients for it and it never
+deducts stock or blocks an order for a shortage. It is otherwise an ordinary
+line — it counts toward the subtotal, discount and tax, prints on kitchen
+tickets and receipts, and appears in the sales reports, all of which read the
+denormalised `name`/`price`/`quantity` rather than joining `menus`.
+
 ### `expenses`
-Written by the `log_stock_expense` trigger, never by the app.
+Written by the `log_stock_expense` trigger; deleted only by `delete_expense_entry`
+(superadmin-only, for removing an entry a mistaken restock created).
 
 | Column | Type | Notes |
 | --- | --- | --- |
@@ -87,6 +106,21 @@ Written by the `log_stock_expense` trigger, never by the app.
 | `name`, `quantity`, `price_per_unit` | | |
 | `total_cost` | numeric | generated: `quantity * price_per_unit` |
 | `expense_date`, `created_at` | timestamptz | |
+
+### `admin_correction_log`
+Audit trail for `correct_stock` and `delete_expense_entry`. Written by those
+RPCs, readable only by superadmins.
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `id` | bigint PK | identity |
+| `action` | text | `stock_correction` or `expense_deleted` |
+| `superadmin_id` | uuid | who made the change |
+| `target_name` | text | the stock item's or expense's `name` |
+| `old_quantity`, `new_quantity` | numeric | `new_quantity` is null for `expense_deleted` |
+| `old_price_per_unit`, `new_price_per_unit` | integer | `new_price_per_unit` is null for `expense_deleted` |
+| `note` | text | optional, entered by the superadmin |
+| `created_at` | timestamptz | |
 
 ### `order_override_log`
 Audit trail for PIN-gated actions. Written by the RPCs, readable only by admins.
@@ -110,13 +144,16 @@ Failed attempts are recorded deliberately — the lockout counts them.
 | `handle_new_user()` | trigger | creates a `profiles` row, always as `'cashier'` |
 | `check_stock_for_order(jsonb)` | jsonb | `{shortages: [...]}`, no writes |
 | `deduct_stock_for_order(int, bool)` | void | decrements stock; `p_force` skips the shortage check |
-| `log_stock_expense()` | trigger | logs an `expenses` row when stock rises |
+| `log_stock_expense()` | trigger | logs an `expenses` row when stock rises; skipped when `app.stock_correction` is set |
 | `prevent_direct_cancel()` | trigger | blocks `status → 'cancelled'` without the PIN flag |
 | `prevent_locked_order_item_change()` | trigger | freezes `order_items` on paid/cancelled orders |
 | `pin_attempts_exhausted(uuid)` | boolean | 5 failures in 15 minutes |
 | `cancel_order_with_pin(bigint, text)` | boolean | **legacy**, kept for older installs |
 | `cancel_order_with_pin_v2(bigint, text)` | jsonb | current; returns a reason on failure |
 | `delete_order_with_pin(bigint, text)` | boolean | hard delete; not wired to any UI |
+| `toggle_menu_availability(bigint)` | void | flips `menus.available`; callable by any authenticated staff account, since `cashier` has no general write access to `menus` |
+| `correct_stock(bigint, numeric, integer, text)` | void | sets a `stock` row's quantity/price directly (not additive); superadmin-only; sets `app.stock_correction` so the restock trigger doesn't log it as a purchase |
+| `delete_expense_entry(bigint, text)` | void | hard-deletes an `expenses` row; superadmin-only |
 
 All are `SECURITY DEFINER` with a pinned `search_path`. Any function calling
 pgcrypto uses `extensions.crypt(...)` explicitly — a bare `crypt()` fails, see

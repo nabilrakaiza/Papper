@@ -5,15 +5,13 @@ import {
   ScrollView,
   TouchableOpacity,
   ActivityIndicator,
-  Dimensions,
+  useWindowDimensions,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { VictoryBar, VictoryChart, VictoryAxis, VictoryTheme } from "victory-native";
 import { supabase } from "../../../lib/supabase";
 import { SalesPeriod } from "../../../types/sales";
 import { TAX_RATE } from "../../../lib/constants";
-
-const { width } = Dimensions.get("window");
 
 type SalesDataPoint = { label: string; total: number };
 type TopMenuItem = { name: string; quantity: number };
@@ -118,6 +116,11 @@ function groupOrders(
 }
 
 export default function AdminSalesScreen() {
+  // Hook, not Dimensions.get at module scope: that captured the width once at
+  // import time, so the chart kept the launch orientation's width after a
+  // rotation and either overflowed or left a gap.
+  const { width } = useWindowDimensions();
+
   // 1. Split state into two independent periods
   const [salesPeriod, setSalesPeriod] = useState<SalesPeriod>("daily");
   const [topSellingPeriod, setTopSellingPeriod] = useState<SalesPeriod>("daily");

@@ -1,5 +1,5 @@
 export type Profile = {
   id: string;
-  role: string;
-  name: string; 
+  role: 'cashier' | 'admin' | 'superadmin';
+  name: string;
 }

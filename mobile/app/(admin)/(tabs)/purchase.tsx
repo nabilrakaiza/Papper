@@ -7,8 +7,10 @@ import {
   ActivityIndicator
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { Calendar, ShoppingCart, TrendingUp } from "lucide-react-native";
+import { Calendar, ShoppingCart, TrendingUp, Trash2 } from "lucide-react-native";
 import { supabase } from "@/lib/supabase"; // Make sure this path matches your project
+import { useAuth } from "../../../context/AuthContext";
+import ConfirmDialog from "@/components/ConfirmDialog";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -127,7 +129,7 @@ function SummaryCard({ expenses, filter }: { expenses: ExpenseItem[], filter: st
   );
 }
 
-function ExpenseCard({ item }: { item: ExpenseItem }) {
+function ExpenseCard({ item, onDelete }: { item: ExpenseItem; onDelete?: () => void }) {
   const [expanded, setExpanded] = useState(false);
   const backdated = isBackdated(item.expense_date, item.created_at);
 
@@ -177,6 +179,16 @@ function ExpenseCard({ item }: { item: ExpenseItem }) {
               <Text className="text-xs font-extrabold text-gray-700">{formatDate(item.created_at)}</Text>
             </View>
           </View>
+
+          {onDelete && (
+            <TouchableOpacity
+              onPress={onDelete}
+              className="flex-row items-center justify-center gap-2 bg-red-50 rounded-xl py-2.5 mt-2"
+            >
+              <Trash2 size={14} color="#ef4444" />
+              <Text className="text-xs font-extrabold text-red-500">Hapus Entri Ini</Text>
+            </TouchableOpacity>
+          )}
         </View>
       )}
 
@@ -190,9 +202,13 @@ function ExpenseCard({ item }: { item: ExpenseItem }) {
 // ─── Main Screen ──────────────────────────────────────────────────────────────
 
 export default function ExpensesScreen() {
+  const { profile } = useAuth();
+  const isSuperadmin = profile?.role === "superadmin";
+
   const [expenses, setExpenses] = useState<ExpenseItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeFilter, setActiveFilter] = useState("This Week");
+  const [pendingDeleteId, setPendingDeleteId] = useState<number | null>(null);
 
   const fetchExpenses = useCallback(async () => {
     setLoading(true);
@@ -216,6 +232,15 @@ export default function ExpensesScreen() {
   useEffect(() => {
     fetchExpenses();
   }, [fetchExpenses]);
+
+  const handleDeleteExpense = async () => {
+    if (pendingDeleteId === null) return;
+    const id = pendingDeleteId;
+    setPendingDeleteId(null);
+
+    const { error } = await supabase.rpc("delete_expense_entry", { p_expense_id: id });
+    if (!error) fetchExpenses();
+  };
 
   return (
     <SafeAreaView className="flex-1 bg-gray-50">
@@ -277,10 +302,24 @@ export default function ExpensesScreen() {
 
           {/* List */}
           {expenses.map((item) => (
-            <ExpenseCard key={item.id} item={item} />
+            <ExpenseCard
+              key={item.id}
+              item={item}
+              onDelete={isSuperadmin ? () => setPendingDeleteId(item.id) : undefined}
+            />
           ))}
         </ScrollView>
       )}
+
+      <ConfirmDialog
+        visible={pendingDeleteId !== null}
+        title="Hapus entri pengeluaran ini?"
+        message="Entri akan dihapus permanen dari catatan pengeluaran. Gunakan ini hanya untuk membetulkan entri yang salah, misalnya akibat salah ketik saat menambah stok."
+        confirmLabel="Hapus"
+        destructive
+        onConfirm={handleDeleteExpense}
+        onCancel={() => setPendingDeleteId(null)}
+      />
     </SafeAreaView>
   );
 }
