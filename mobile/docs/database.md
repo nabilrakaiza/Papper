@@ -59,9 +59,9 @@ ON DELETE CASCADE. `quantity` is stock units consumed per one menu item.
 | `customer_name`, `seat` | text | |
 | `discount` | integer | percentage, 0–100 |
 | `status` | text | `'unpaid'` (default), `'paid'`, `'cancelled'` |
-| `method_of_payment` | text | `'QRIS'`, `'Bank Transfer'` or `'Cash'` |
+| `method_of_payment` | text | `'QRIS'`, `'Bank Transfer'`, `'Cash'` or `'Debit'` |
 | `is_dine_in` | boolean | false = takeaway |
-| `payment_amount` | integer | tendered amount |
+| `payment_amount` | integer | cash tendered; for every other method, the order total |
 | `created_at` | timestamptz | |
 
 `status` has no CHECK constraint — the allowed values are enforced by
@@ -72,13 +72,29 @@ convention and by the `OrderStatus` type in `types/order.ts`.
 | --- | --- | --- |
 | `id` | bigint PK | identity |
 | `order_id` | bigint | → `orders(id)` ON DELETE CASCADE |
-| `menu_id` | bigint | → `menus(id)` |
+| `menu_id` | bigint | → `menus(id)`, **nullable** — NULL marks a custom off-menu item priced by the cashier |
 | `name`, `price`, `quantity` | | copied from the menu at order time, so later price changes do not rewrite history |
 | `is_sent` | boolean | sent to the kitchen |
 | `is_cancelled` | boolean | |
 | `print_batch` | integer | groups items across repeated kitchen tickets |
 | `notes` | text | |
 | `is_stock_deducted` | boolean | guards against double-deducting |
+
+`is_stock_deducted` has to survive an edit. `updateOrder` replaces an order's
+items by deleting and reinserting them all, so the flag is copied from the row
+being replaced rather than reset — the screens keep it on lines they carry over
+and leave it unset on lines they add, so `deduct_stock_for_order` only ever sees
+genuinely new quantity. Resetting it made each re-save deduct the entire order's
+ingredients again. Note the reverse is not symmetrical: reducing a line's
+quantity does not return stock, on the assumption the food was already made.
+
+A NULL `menu_id` is a custom line item: something sold that isn't on the menu,
+with a name and price typed by the cashier. It has no row in `menus` and so no
+recipe, which means the stock RPCs find no ingredients for it and it never
+deducts stock or blocks an order for a shortage. It is otherwise an ordinary
+line — it counts toward the subtotal, discount and tax, prints on kitchen
+tickets and receipts, and appears in the sales reports, all of which read the
+denormalised `name`/`price`/`quantity` rather than joining `menus`.
 
 ### `expenses`
 Written by the `log_stock_expense` trigger; deleted only by `delete_expense_entry`

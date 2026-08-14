@@ -6,15 +6,17 @@ import {
   TouchableOpacity,
   TextInput,
   ActivityIndicator,
+  KeyboardAvoidingView,
+  Platform,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { router, useLocalSearchParams } from "expo-router";
 import { ChevronLeft } from "lucide-react-native";
 import { useOrders } from "../../../context/OrderContext";
-import { Order } from "@/types/order";
 import { TAX_RATE } from "../../../lib/constants";
+import { groupItems } from "../../../lib/orderItems";
 
-type PaymentMethod = "QRIS" | "Bank Transfer" | "Cash";
+type PaymentMethod = "QRIS" | "Bank Transfer" | "Cash" | "Debit";
 
 // Display-only labels (Indonesian) — the underlying values above are kept
 // as-is since they're stored in the database and used for payment logic.
@@ -22,6 +24,7 @@ const PAYMENT_METHOD_LABELS: Record<PaymentMethod, string> = {
   QRIS: "QRIS",
   "Bank Transfer": "Transfer Bank",
   Cash: "Tunai",
+  Debit: "Debit",
 };
 
 const formatRupiahInput = (digits: string) => {
@@ -33,11 +36,6 @@ function formatRupiah(amount: number): string {
   return "Rp " + Math.round(amount).toLocaleString("id-ID");
 }
 
-function orderTotal(order: Order): number {
-  const subtotal = order.items.reduce((sum, i) => sum + i.price * i.quantity, 0);
-  return subtotal * (1 - order.discount / 100) * (1 + TAX_RATE);
-}
-
 export default function PaymentScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { orders, markPaid } = useOrders();
@@ -47,7 +45,7 @@ export default function PaymentScreen() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [methodOfPayment, setMethodOfPayment] = useState<PaymentMethod>("Cash");
-  const paymentOptions: PaymentMethod[] = ["QRIS", "Bank Transfer", "Cash"];
+  const paymentOptions: PaymentMethod[] = ["QRIS", "Bank Transfer", "Debit", "Cash"];
   const [paymentAmount, setPaymentAmount] = useState("");
 
   if (!order) {
@@ -73,30 +71,37 @@ export default function PaymentScreen() {
   const total = Math.round(taxableAmount + taxAmount);
   // -------------------------------
 
+  const cashGiven = parseInt(paymentAmount, 10) || 0;
+  const changeDue = cashGiven - total;
+
   const handleConfirm = async () => {
     setError("");
 
-    if (methodOfPayment === "Cash") {
-      const paid = parseInt(paymentAmount, 10) || 0;
-      if (paid < total) {
-        setError(
-          `Pembayaran kurang dari total. Butuh ${formatRupiah(total - paid)} lagi.`
-        );
-        return;
-      }
+    if (methodOfPayment === "Cash" && changeDue < 0) {
+      setError(
+        `Pembayaran kurang dari total. Butuh ${formatRupiah(-changeDue)} lagi.`
+      );
+      return;
     }
 
     setSaving(true);
 
-    if (methodOfPayment === "Cash"){
-      const { error } = await markPaid(order.id, safeDiscountPct, methodOfPayment, parseInt(paymentAmount, 10));
-    }
-    else {
-      const { error } = await markPaid(order.id, safeDiscountPct, methodOfPayment, orderTotal(order));
-    }
+    // Both branches used to declare their own block-scoped `error`, so the
+    // check below silently read the `error` state instead of the result of
+    // markPaid. A second attempt after a "kurang" error therefore paid the
+    // order, then re-showed the stale message and never navigated back.
+    //
+    // The non-cash branch also recorded orderTotal(order), which recomputes
+    // from the *saved* discount and so ignored whatever was typed here.
+    const { error: saveError } = await markPaid(
+      order.id,
+      safeDiscountPct,
+      methodOfPayment,
+      methodOfPayment === "Cash" ? cashGiven : total
+    );
 
-    if (error) {
-      setError(error);
+    if (saveError) {
+      setError(saveError);
       setSaving(false);
       return;
     }
@@ -123,19 +128,18 @@ export default function PaymentScreen() {
     }
   };
 
-  const groupedItems = Object.values(
-    order.items.reduce<Record<string, typeof order.items[0]>>((acc, item) => {
-      if (acc[item.menuId]) {
-        acc[item.menuId] = { ...acc[item.menuId], quantity: acc[item.menuId].quantity + item.quantity };
-      } else {
-        acc[item.menuId] = { ...item };
-      }
-      return acc;
-    }, {})
-  );
+  // Grouped by itemKey rather than menuId: custom items all carry a null menu
+  // id, so keying on that would fold every unrelated one into a single row.
+  const groupedItems = groupItems(order.items);
 
   return (
     <SafeAreaView className="flex-1 bg-gray-100">
+      {/* In landscape there is very little height left once the keyboard is up,
+          and the cash amount field sits near the bottom of the scroll view. */}
+      <KeyboardAvoidingView
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+        className="flex-1"
+      >
       {/* Header */}
       <View className="flex-row items-center justify-between px-5 pt-4 pb-3">
         <TouchableOpacity onPress={() => router.back()}>
@@ -146,8 +150,17 @@ export default function PaymentScreen() {
       </View>
 
       <ScrollView
-        contentContainerStyle={{ padding: 16, paddingBottom: 120 }}
+        contentContainerStyle={{
+          padding: 16,
+          paddingBottom: 120,
+          // Keeps the column readable rather than stretching edge to edge on a
+          // landscape tablet or the web build.
+          width: "100%",
+          maxWidth: 640,
+          alignSelf: "center",
+        }}
         showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
       >
         {/* Customer info */}
         <View className="bg-green-400 rounded-2xl px-4 py-3 mb-4 self-start shadow shadow-green-600/30">
@@ -166,7 +179,7 @@ export default function PaymentScreen() {
           </View>
 
           {groupedItems.map((item) => (
-            <View key={item.menuId} className="flex-row justify-between items-start mb-4">
+            <View key={item.key} className="flex-row justify-between items-start mb-4">
               <Text className="text-sm font-bold text-gray-800 flex-1">{item.name}</Text>
               <View className="items-end">
                 <Text className="text-sm font-bold text-gray-800">
@@ -263,7 +276,20 @@ export default function PaymentScreen() {
               keyboardType="numeric"
               value={paymentAmount ? `Rp ${formatRupiahInput(paymentAmount)}` : ""}
               onChangeText={(text) => setPaymentAmount(text.replace(/[^0-9]/g, ""))}
+              editable={!saving}
             />
+
+            {!!paymentAmount && (
+              <Text
+                className={`text-xs font-bold mt-2 ${
+                  changeDue < 0 ? "text-red-500" : "text-gray-500"
+                }`}
+              >
+                {changeDue < 0
+                  ? `Kurang ${formatRupiah(-changeDue)}`
+                  : `Kembalian ${formatRupiah(changeDue)}`}
+              </Text>
+            )}
           </View>
         )}
 
@@ -276,11 +302,12 @@ export default function PaymentScreen() {
       </ScrollView>
 
       {/* Confirm payment */}
-      <View className="absolute bottom-0 left-0 right-0 px-4 pb-6">
+      <View className="absolute bottom-0 left-0 right-0 px-4 pb-6 items-center">
         <TouchableOpacity
           onPress={handleConfirm}
           disabled={saving || !methodOfPayment} // Added disabled check if no payment method selected
-          className={`w-full rounded-2xl py-4 items-center shadow ${
+          style={{ width: "100%", maxWidth: 640 }}
+          className={`rounded-2xl py-4 items-center shadow ${
             saving || !methodOfPayment ? 'bg-gray-400 shadow-gray-400/30' : 'bg-green-400 shadow-green-600/30'
           }`}
         >
@@ -291,6 +318,7 @@ export default function PaymentScreen() {
           )}
         </TouchableOpacity>
       </View>
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }

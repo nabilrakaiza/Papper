@@ -8,13 +8,15 @@ import {
   KeyboardAvoidingView,
   Platform,
   ActivityIndicator,
+  useWindowDimensions,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { router } from "expo-router";
 import { ChevronLeft, ChevronRight, Plus, Minus } from "lucide-react-native";
 import { useOrders } from "../../context/OrderContext";
 import { CATEGORIES } from "../../data/menu";
-import { MenuCategory, OrderItem } from "../../types/order";
+import { CustomItemDraft, MenuCategory, OrderItem } from "../../types/order";
+import { CustomItemSheet, CustomItemList } from "../../components/CustomItemSheet";
 
 function formatRupiah(amount: number): string {
   return "Rp " + Math.round(amount).toLocaleString("id-ID");
@@ -22,6 +24,10 @@ function formatRupiah(amount: number): string {
 
 export default function NewOrderScreen() {
   const { menu, addOrder } = useOrders();
+  // A fixed 240px review panel is most of a landscape phone's height, so cap it
+  // against the current viewport instead.
+  const { height: windowHeight } = useWindowDimensions();
+  const summaryMaxHeight = Math.min(240, windowHeight * 0.35);
 
   const [customerName, setCustomerName] = useState("");
   const [seat, setSeat] = useState("");
@@ -34,25 +40,41 @@ export default function NewOrderScreen() {
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
   const [stockWarning, setStockWarning] = useState<string | null>(null);
+  // Off-menu items live in their own list: `quantities` and `notes` are keyed by
+  // menu id, and a custom item has none.
+  const [customItems, setCustomItems] = useState<CustomItemDraft[]>([]);
+  const [customSheetOpen, setCustomSheetOpen] = useState(false);
 
   const currentCategory: MenuCategory = CATEGORIES[categoryIndex];
   const categoryItems = menu.filter(
     (m) => m.category === currentCategory && m.available
   );
 
-  const selectedItems: OrderItem[] = menu
-    .filter((m) => (quantities[m.id] ?? 0) > 0)
-    .map((m) => ({
-      menuId: m.id,
-      name: m.name,
-      price: m.price,
-      quantity: quantities[m.id],
-      category: m.category,
-      note: notes[m.id] || "",
+  const selectedItems: OrderItem[] = [
+    ...menu
+      .filter((m) => (quantities[m.id] ?? 0) > 0)
+      .map((m) => ({
+        menuId: m.id,
+        name: m.name,
+        price: m.price,
+        quantity: quantities[m.id],
+        category: m.category,
+        note: notes[m.id] || "",
+        isSent: false,
+        isCancelled: false,
+        printBatch: 1,
+      })),
+    ...customItems.map((c) => ({
+      menuId: null,
+      name: c.name,
+      price: c.price,
+      quantity: c.quantity,
+      note: c.note,
       isSent: false,
       isCancelled: false,
       printBatch: 1,
-    }));
+    })),
+  ];
 
   const totalItems = selectedItems.reduce((sum, i) => sum + i.quantity, 0);
   const subtotal = selectedItems.reduce((sum, i) => sum + i.price * i.quantity, 0);
@@ -136,8 +158,18 @@ export default function NewOrderScreen() {
             <Text className="text-xl font-black text-gray-900">Order Baru</Text>
           </View>
 
-          <View className="px-5 mt-4">
-            <View className="bg-yellow-100 rounded-3xl px-5 py-6 shadow-sm">
+          {/* Scrollable: the card is taller than a landscape phone once the
+              keyboard is up. */}
+          <ScrollView
+            contentContainerStyle={{
+              paddingHorizontal: 20,
+              paddingTop: 16,
+              paddingBottom: 24,
+            }}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+          >
+            <View className="w-full max-w-xl self-center bg-yellow-100 rounded-3xl px-5 py-6 shadow-sm">
               <Text className="text-[10px] font-extrabold text-gray-400 uppercase tracking-widest mb-1">
                 Nama Customer
               </Text>
@@ -209,7 +241,7 @@ export default function NewOrderScreen() {
                 </Text>
               </TouchableOpacity>
             </View>
-          </View>
+          </ScrollView>
         </KeyboardAvoidingView>
       </SafeAreaView>
     );
@@ -229,9 +261,19 @@ export default function NewOrderScreen() {
                 <Text className="text-sm font-bold text-gray-700">Menu Pesanan</Text>
               </View>
             </TouchableOpacity>
-            <Text className="text-xs font-bold text-gray-400">
-              {customerName} · {seat}
-            </Text>
+            <View className="flex-row items-center gap-2">
+              <Text className="text-xs font-bold text-gray-400">
+                {customerName} · {seat}
+              </Text>
+              <TouchableOpacity
+                onPress={() => setCustomSheetOpen(true)}
+                className="border-2 border-green-500 bg-green-50 rounded-xl px-3 py-1.5"
+              >
+                <Text className="text-xs font-extrabold text-green-600">
+                  + Item Kustom
+                </Text>
+              </TouchableOpacity>
+            </View>
           </View>
 
           <View className="flex-row items-center gap-2">
@@ -285,6 +327,18 @@ export default function NewOrderScreen() {
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
         >
+          <CustomItemList
+            items={customItems}
+            onChangeQuantity={(uid, quantity) =>
+              setCustomItems((prev) =>
+                prev.map((c) => (c.uid === uid ? { ...c, quantity } : c))
+              )
+            }
+            onRemove={(uid) =>
+              setCustomItems((prev) => prev.filter((c) => c.uid !== uid))
+            }
+          />
+
           {categoryItems.map((item) => {
             const qty = quantities[item.id] ?? 0;
             return (
@@ -343,10 +397,10 @@ export default function NewOrderScreen() {
           <View className="absolute bottom-0 left-0 right-0">
             <View className="mx-4 mb-2 bg-green-400 rounded-3xl px-5 py-4 shadow-sm">
               {summaryOpen && (
-                <View className="mb-3 max-h-60">
+                <View className="mb-3" style={{ maxHeight: summaryMaxHeight }}>
                   <ScrollView showsVerticalScrollIndicator={false}>
-                    {selectedItems.map((item) => (
-                      <View key={item.menuId} className="mb-2">
+                    {selectedItems.map((item, idx) => (
+                      <View key={`${item.menuId ?? "custom"}-${idx}`} className="mb-2">
                         <View className="flex-row justify-between mb-0.5">
                           <Text className="text-sm font-bold text-white flex-1 pr-2">
                             {item.quantity}x {item.name}
@@ -404,6 +458,12 @@ export default function NewOrderScreen() {
             </View>
           </View>
         )}
+
+        <CustomItemSheet
+          visible={customSheetOpen}
+          onAdd={(item) => setCustomItems((prev) => [...prev, item])}
+          onClose={() => setCustomSheetOpen(false)}
+        />
 
         {/* Stock Warning Modal */}
         {!!stockWarning && (

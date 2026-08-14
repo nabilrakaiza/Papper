@@ -7,6 +7,7 @@ import {
   KeyboardAvoidingView,
   Platform,
   ActivityIndicator,
+  ScrollView,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { supabase } from "../../lib/supabase";
@@ -60,9 +61,24 @@ export default function LoginScreen() {
     <SafeAreaView className="flex-1 bg-gray-100">
       <KeyboardAvoidingView
         behavior={Platform.OS === "ios" ? "padding" : undefined}
-        className="flex-1 justify-center px-8"
+        className="flex-1"
       >
-        <View className="w-full web:max-w-sm web:self-center">
+        {/* Scrollable rather than a centred flex child: in landscape with the
+            keyboard up there isn't enough height for the card, and a plain
+            centred View would clip the password field instead of scrolling. */}
+        <ScrollView
+          contentContainerStyle={{
+            flexGrow: 1,
+            justifyContent: "center",
+            paddingHorizontal: 32,
+            paddingVertical: 24,
+          }}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+        >
+        {/* Capped on every platform, not just web — a landscape tablet would
+            otherwise stretch the login card the full width of the screen. */}
+        <View className="w-full max-w-sm self-center">
           {/* Logo / title */}
           <View className="items-center mb-10">
             <Text className="text-blue-500 text-4xl font-black mb-1">✛</Text>
@@ -122,6 +138,7 @@ export default function LoginScreen() {
             </TouchableOpacity>
           </View>
         </View>
+        </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );

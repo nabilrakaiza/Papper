@@ -15,7 +15,9 @@ in [`mobile/README.md`](mobile/README.md) and [`mobile/docs/`](mobile/docs/).
 - Open a new order, add/edit line items, mark dine-in or takeaway
 - Live stock-availability check while building an order, with an explicit
   override if a manager decides to sell through a shortage
-- Take payment (cash, transfer, QRIS), apply a discount, close the order
+- Add custom off-menu line items — a name and price typed by the cashier, for
+  anything not in the menu; these carry no recipe and so never touch stock
+- Take payment (cash, transfer, QRIS, debit), apply a discount, close the order
 - Print kitchen tickets and receipts to a paired Bluetooth ESC/POS printer
 - Cancel an order — gated behind a 6-digit manager PIN, enforced in the
   database rather than the app

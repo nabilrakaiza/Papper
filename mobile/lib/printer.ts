@@ -4,6 +4,7 @@ import { Order } from '../types/order';
 import { RECEIPT_LOGO_BASE64 } from './printerLogo';
 import { CurrentUser } from '@/hooks/useUser';
 import { TAX_RATE } from './constants';
+import { groupItems } from './orderItems';
 
 function formatRupiah(amount: number | null): string {
   if (amount === null){
@@ -18,12 +19,8 @@ const PAYMENT_METHOD_PRINT_LABELS: Record<string, string> = {
   QRIS: 'QRIS',
   'Bank Transfer': 'Transfer Bank',
   Cash: 'Tunai',
+  Debit: 'Debit',
 };
-
-function orderTotal(order: Order): number {
-  const subtotal = order.items.reduce((sum, i) => sum + i.price * i.quantity, 0);
-  return subtotal * (1 - order.discount / 100) * (1 + TAX_RATE);
-}
 
 async function requestBluetoothPermissions(): Promise<{
   granted: boolean;
@@ -111,7 +108,7 @@ export async function connectToPrinter(address: string): Promise<{ error: string
     return { error: e.message };
   }
 }
-async function printCustomerReceipt(order: Order, user: CurrentUser, totalPrice: number, moneyGiven: number | null): Promise<void> {
+async function printCustomerReceipt(order: Order, user: CurrentUser, moneyGiven: number | null): Promise<void> {
   // 1. Synchronized calculation logic
   const subtotal = order.items.reduce((sum, i) => sum + i.price * i.quantity, 0);
   
@@ -123,16 +120,9 @@ async function printCustomerReceipt(order: Order, user: CurrentUser, totalPrice:
   
   const total = Math.round(taxableAmount + taxAmount);
 
-  const groupedItems = Object.values(
-    order.items.reduce<Record<string, typeof order.items[0]>>((acc, item) => {
-      if (acc[item.menuId]) {
-        acc[item.menuId] = { ...acc[item.menuId], quantity: acc[item.menuId].quantity + item.quantity };
-      } else {
-        acc[item.menuId] = { ...item };
-      }
-      return acc;
-    }, {})
-  );
+  // Grouped by itemKey rather than menuId: custom items all carry a null menu
+  // id, so keying on that would print every unrelated one as a single line.
+  const groupedItems = groupItems(order.items);
 
   const base64Image = RECEIPT_LOGO_BASE64;
 
@@ -240,7 +230,9 @@ async function printCustomerReceipt(order: Order, user: CurrentUser, totalPrice:
 
     if (order.methodOfPayment === 'Cash' && moneyGiven != null){
       await BluetoothEscposPrinter.printColumn(colWidths, colAligns, ['Jumlah Bayar', formatRupiah(moneyGiven)], {});
-      await BluetoothEscposPrinter.printColumn(colWidths, colAligns, ['Kembalian', formatRupiah(totalPrice - moneyGiven)], {});
+      // Change is what the customer gets back — cash given minus the bill. This
+      // was the other way round, so every receipt printed negative change.
+      await BluetoothEscposPrinter.printColumn(colWidths, colAligns, ['Kembalian', formatRupiah(moneyGiven - total)], {});
     }
     else {
       await BluetoothEscposPrinter.printColumn(colWidths, colAligns, ['Jumlah Bayar', formatRupiah(moneyGiven)], {});
@@ -311,7 +303,10 @@ export async function printReceipt(
   if (cashierPrinter) {
     try {
       await BluetoothManager.connect(cashierPrinter.address);
-      await printCustomerReceipt(order, user, orderTotal(order), order.paymentAmount);
+      // The receipt recomputes the total itself, off the same rounded formula
+      // the payment screen uses, so passing orderTotal() separately only risked
+      // the printed TOTAL and the change disagreeing by a rupiah.
+      await printCustomerReceipt(order, user, order.paymentAmount);
     } catch (e: any) {
       errors.push(`Error Printer Kasir: ${e.message}`);
     }
