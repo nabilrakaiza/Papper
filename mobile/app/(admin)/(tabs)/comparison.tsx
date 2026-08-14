@@ -8,7 +8,7 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { router } from "expo-router";
-import { ChevronLeft, ArrowUpRight, ArrowDownRight } from "lucide-react-native";
+import { ChevronLeft, ChevronRight, ArrowUpRight, ArrowDownRight } from "lucide-react-native";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "../../../context/AuthContext";
 import { TAX_RATE, orderTotal } from "../../../lib/constants";
@@ -27,8 +27,13 @@ function formatRupiah(amount: number): string {
   return "Rp " + Math.round(amount).toLocaleString("id-ID");
 }
 
-function monthLabel(d: Date): string {
-  return `${MONTH_NAMES[d.getMonth()]} ${d.getFullYear()}`;
+/**
+ * "Agu 2026". Every label on this screen sits in a fixed-width slot — between
+ * the stepper arrows, or in a table column header — and "September 2026" at
+ * full length overflows both on a phone.
+ */
+function monthLabelShort(d: Date): string {
+  return `${MONTH_NAMES[d.getMonth()].slice(0, 3)} ${d.getFullYear()}`;
 }
 
 function monthBounds(d: Date): { from: Date; to: Date } {
@@ -40,12 +45,19 @@ function monthBounds(d: Date): { from: Date; to: Date } {
   };
 }
 
-/** The last `count` months, newest first, as first-of-month dates. */
-function recentMonths(count: number): Date[] {
+/** First of the current month — the newest month worth offering. */
+function thisMonth(): Date {
   const now = new Date();
-  return Array.from({ length: count }, (_, i) =>
-    new Date(now.getFullYear(), now.getMonth() - i, 1)
-  );
+  return new Date(now.getFullYear(), now.getMonth(), 1);
+}
+
+/** Steps a month forwards or backwards, staying on the 1st. */
+function shiftMonth(d: Date, by: number): Date {
+  return new Date(d.getFullYear(), d.getMonth() + by, 1);
+}
+
+function sameMonth(a: Date, b: Date): boolean {
+  return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth();
 }
 
 function pct(from: number, to: number): number | null {
@@ -79,11 +91,9 @@ export default function ComparisonScreen() {
   const { profile } = useAuth();
   const isSuperadmin = profile?.role === "superadmin";
 
-  const months = recentMonths(12);
   // Default to comparing last month against this month.
-  const [monthA, setMonthA] = useState<Date>(months[1] ?? months[0]);
-  const [monthB, setMonthB] = useState<Date>(months[0]);
-  const [picking, setPicking] = useState<"A" | "B" | null>(null);
+  const [monthA, setMonthA] = useState<Date>(() => shiftMonth(thisMonth(), -1));
+  const [monthB, setMonthB] = useState<Date>(thisMonth);
 
   const [totalsA, setTotalsA] = useState<MonthTotals | null>(null);
   const [totalsB, setTotalsB] = useState<MonthTotals | null>(null);
@@ -217,60 +227,102 @@ export default function ComparisonScreen() {
         }}
         showsVerticalScrollIndicator={false}
       >
-        {/* Month pickers */}
-        <View className="flex-row gap-3 mb-4">
+        {/* Month steppers. Nothing expands or collapses here on purpose: the
+            old picker pushed the comparison table off screen the moment you
+            touched it, so you could never see the numbers you were changing. */}
+        <View className="flex-row gap-3 mb-3">
           {(["A", "B"] as const).map((slot) => {
             const value = slot === "A" ? monthA : monthB;
+            const setValue = slot === "A" ? setMonthA : setMonthB;
+            // Nothing to compare against the future, so forward stops at the
+            // current month.
+            const canGoForward = !sameMonth(value, thisMonth());
+
             return (
-              <TouchableOpacity
+              <View
                 key={slot}
-                onPress={() => setPicking(picking === slot ? null : slot)}
-                className={`flex-1 border-2 rounded-2xl px-4 py-3 ${
-                  picking === slot
-                    ? "border-blue-500 bg-blue-50"
-                    : "border-gray-200 bg-white"
-                }`}
+                className="flex-1 border-2 border-gray-200 bg-white rounded-2xl px-2 py-2.5"
               >
-                <Text className="text-[10px] font-extrabold text-gray-400 uppercase tracking-widest mb-0.5">
+                <Text className="text-[10px] font-extrabold text-gray-400 uppercase tracking-widest text-center mb-1">
                   {slot === "A" ? "Bulan 1" : "Bulan 2"}
                 </Text>
-                <Text className="text-sm font-extrabold text-gray-900">
-                  {monthLabel(value)}
-                </Text>
-              </TouchableOpacity>
+
+                <View className="flex-row items-center justify-between">
+                  <TouchableOpacity
+                    onPress={() => setValue(shiftMonth(value, -1))}
+                    hitSlop={8}
+                    className="px-1.5 py-1"
+                  >
+                    <ChevronLeft size={18} color="#3a7bd5" />
+                  </TouchableOpacity>
+
+                  <Text className="text-sm font-extrabold text-gray-900">
+                    {monthLabelShort(value)}
+                  </Text>
+
+                  <TouchableOpacity
+                    onPress={() => canGoForward && setValue(shiftMonth(value, 1))}
+                    disabled={!canGoForward}
+                    hitSlop={8}
+                    className="px-1.5 py-1"
+                  >
+                    <ChevronRight size={18} color={canGoForward ? "#3a7bd5" : "#e5e7eb"} />
+                  </TouchableOpacity>
+                </View>
+              </View>
             );
           })}
         </View>
 
-        {picking && (
-          <View className="bg-white rounded-2xl p-3 mb-4 flex-row flex-wrap gap-2">
-            {months.map((m) => {
-              const selected =
-                monthLabel(m) === monthLabel(picking === "A" ? monthA : monthB);
-              return (
-                <TouchableOpacity
-                  key={m.toISOString()}
-                  onPress={() => {
-                    if (picking === "A") setMonthA(m);
-                    else setMonthB(m);
-                    setPicking(null);
-                  }}
-                  className={`border-2 rounded-xl px-3 py-1.5 ${
-                    selected
-                      ? "border-blue-500 bg-blue-50"
-                      : "border-gray-100 bg-gray-50"
-                  }`}
-                >
-                  <Text
-                    className={`text-xs font-bold ${
-                      selected ? "text-blue-600" : "text-gray-600"
-                    }`}
-                  >
-                    {monthLabel(m)}
-                  </Text>
-                </TouchableOpacity>
-              );
-            })}
+        {/* The two comparisons anyone actually reaches for, in one tap. */}
+        <View className="flex-row gap-2 mb-4">
+          {[
+            {
+              label: "Bulan lalu ↔ ini",
+              apply: () => {
+                setMonthA(shiftMonth(thisMonth(), -1));
+                setMonthB(thisMonth());
+              },
+              active:
+                sameMonth(monthA, shiftMonth(thisMonth(), -1)) &&
+                sameMonth(monthB, thisMonth()),
+            },
+            {
+              label: "vs tahun lalu",
+              apply: () => {
+                setMonthA(shiftMonth(monthB, -12));
+              },
+              active: sameMonth(monthA, shiftMonth(monthB, -12)),
+            },
+          ].map((preset) => (
+            <TouchableOpacity
+              key={preset.label}
+              onPress={preset.apply}
+              className={`flex-1 rounded-xl py-2 items-center border-2 ${
+                preset.active
+                  ? "border-blue-500 bg-blue-50"
+                  : "border-gray-200 bg-white"
+              }`}
+            >
+              <Text
+                className={`text-xs font-extrabold ${
+                  preset.active ? "text-blue-600" : "text-gray-500"
+                }`}
+              >
+                {preset.label}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+
+        {/* Comparing a month with itself produces a table of zero deltas, which
+            reads like a bug rather than a choice. */}
+        {sameMonth(monthA, monthB) && (
+          <View className="bg-amber-50 border border-amber-100 rounded-2xl px-4 py-2.5 mb-4">
+            <Text className="text-xs font-bold text-amber-600 text-center">
+              Kedua kolom bulan yang sama — pilih bulan berbeda untuk melihat
+              selisih.
+            </Text>
           </View>
         )}
 
@@ -294,10 +346,10 @@ export default function ComparisonScreen() {
                 Pos
               </Text>
               <Text className="w-24 text-right text-[10px] font-extrabold text-gray-400">
-                {monthLabel(monthA)}
+                {monthLabelShort(monthA)}
               </Text>
               <Text className="w-24 text-right text-[10px] font-extrabold text-gray-400">
-                {monthLabel(monthB)}
+                {monthLabelShort(monthB)}
               </Text>
               <View className="w-16 items-end">
                 <Text className="text-[10px] font-extrabold text-gray-400">Δ</Text>
