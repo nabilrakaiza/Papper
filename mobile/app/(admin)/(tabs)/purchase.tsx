@@ -17,6 +17,13 @@ import ConfirmDialog from "@/components/ConfirmDialog";
 
 type ExpenseItem = {
   id: number;
+  /**
+   * The stock item bought. NULL means the expense is not a stock purchase —
+   * nothing writes such a row today, but the column leaves room for manual
+   * entries like rent or wages.
+   */
+  stock_id: number | null;
+  /** The stock item's name *at purchase time*; it does not follow a rename. */
   name: string;
   quantity: number;
   price_per_unit: number;

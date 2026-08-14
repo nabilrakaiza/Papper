@@ -107,6 +107,28 @@ delete an expense they were not allowed to read.
 
 | Column | Type | Notes |
 | --- | --- | --- |
+| `stock_id` | bigint | → `stock(id)` ON DELETE RESTRICT, nullable — see below |
+| `name` | text | the stock item's name **at purchase time**; does not follow a rename |
+| `quantity`, `price_per_unit` | | as purchased |
+| `total_cost` | numeric | generated: `quantity * price_per_unit` |
+| `expense_date` | timestamptz | the purchase date, which may be backdated |
+| `created_at` | timestamptz | when the row was written |
+
+`stock_id` and `name` coexist on purpose. The id is the stable identity to
+group by; the name is what the item was called then, denormalised the same way
+`order_items.name` is. Before the id existed, expenses referenced stock by name
+alone, so a rename split an item's purchase history in two with nothing
+recording that the halves belonged together.
+
+Nullable because the trigger always sets it for a restock, which leaves NULL
+free to mean "not a stock purchase at all" if manual expense entry (rent,
+wages, utilities) is ever added. `ON DELETE RESTRICT` rather than `SET NULL`:
+stock removal is a soft delete and the table has no DELETE policy, so a hard
+delete can only come from the SQL editor — refusing it while purchase history
+exists is the useful outcome.
+
+| Column | Type | Notes |
+| --- | --- | --- |
 | `id` | bigint PK | identity, BY DEFAULT |
 | `name`, `quantity`, `price_per_unit` | | |
 | `total_cost` | numeric | generated: `quantity * price_per_unit` |
