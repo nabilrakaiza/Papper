@@ -11,7 +11,7 @@ import { router } from "expo-router";
 import { ChevronLeft, ArrowUpRight, ArrowDownRight } from "lucide-react-native";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "../../../context/AuthContext";
-import { TAX_RATE } from "../../../lib/constants";
+import { TAX_RATE, orderTotal } from "../../../lib/constants";
 
 type MonthTotals = {
   purchases: number;
@@ -131,7 +131,7 @@ export default function ComparisonScreen() {
         const subtotal = (items ?? [])
           .filter((i) => i.order_id === order.id)
           .reduce((s, i) => s + i.price * i.quantity, 0);
-        return sum + subtotal * (1 - order.discount / 100) * (1 + TAX_RATE);
+        return sum + orderTotal(subtotal, order.discount);
       }, 0);
     }
 

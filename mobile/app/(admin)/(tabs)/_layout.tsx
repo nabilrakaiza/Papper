@@ -69,6 +69,9 @@ export default function AdminTabLayout() {
           belongs to: Stok for usage, Pembelian for the comparison. */}
       <Tabs.Screen name="stock-usage" options={{ href: null }} />
       <Tabs.Screen name="comparison" options={{ href: null }} />
+
+      {/* Per-order drill-down, reached from Penjualan. Admin and superadmin. */}
+      <Tabs.Screen name="orders" options={{ href: null }} />
     </Tabs>
   );
 }

@@ -15,7 +15,7 @@ import { Order } from "../../../types/order";
 import PrinterSelector from "../../../components/PrinterSelector";
 import { printReceipt } from "../../../lib/printer";
 import { useUser } from "@/hooks/useUser";
-import { TAX_RATE } from "../../../lib/constants";
+import { orderTotal as orderTotalOf } from "../../../lib/constants";
 
 function formatRupiah(amount: number): string {
   return "Rp " + Math.round(amount).toLocaleString("id-ID");
@@ -23,7 +23,7 @@ function formatRupiah(amount: number): string {
 
 function orderTotal(order: Order): number {
   const subtotal = order.items.reduce((sum, i) => sum + i.price * i.quantity, 0);
-  return subtotal * (1 - order.discount / 100) * (1 + TAX_RATE);
+  return orderTotalOf(subtotal, order.discount);
 }
 
 type OrderCardProps = {

@@ -3,7 +3,7 @@ import { PermissionsAndroid, Platform, Linking } from 'react-native';
 import { Order } from '../types/order';
 import { RECEIPT_LOGO_BASE64 } from './printerLogo';
 import { CurrentUser } from '@/hooks/useUser';
-import { TAX_RATE } from './constants';
+import { TAX_RATE, orderTotal } from './constants';
 import { groupItems } from './orderItems';
 
 function formatRupiah(amount: number | null): string {
@@ -114,11 +114,11 @@ async function printCustomerReceipt(order: Order, user: CurrentUser, moneyGiven:
   
   const safeDiscountPct = Math.min(Math.max(0, order.discount || 0), 100);
   const discountAmount = subtotal * (safeDiscountPct / 100);
-  
-  const taxableAmount = subtotal - discountAmount;
-  const taxAmount = taxableAmount * TAX_RATE;
-  
-  const total = Math.round(taxableAmount + taxAmount);
+  const taxAmount = (subtotal - discountAmount) * TAX_RATE;
+
+  // Shared helper — the printed TOTAL is the figure the reports sum, so the
+  // receipt in the customer's hand and the books always agree.
+  const total = orderTotal(subtotal, safeDiscountPct);
 
   // Grouped by itemKey rather than menuId: custom items all carry a null menu
   // id, so keying on that would print every unrelated one as a single line.

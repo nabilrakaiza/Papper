@@ -13,7 +13,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { router, useLocalSearchParams } from "expo-router";
 import { ChevronLeft } from "lucide-react-native";
 import { useOrders } from "../../../context/OrderContext";
-import { TAX_RATE } from "../../../lib/constants";
+import { TAX_RATE, orderTotal } from "../../../lib/constants";
 import { groupItems } from "../../../lib/orderItems";
 
 type PaymentMethod = "QRIS" | "Bank Transfer" | "Cash" | "Debit";
@@ -56,20 +56,15 @@ export default function PaymentScreen() {
     );
   }
 
-  // --- FIXED CALCULATION LOGIC ---
   const subtotal = order.items.reduce((sum, i) => sum + i.price * i.quantity, 0);
   const discountPct = parseFloat(discount) || 0;
 
   // Prevent discount from exceeding 100% or dropping below 0%
   const safeDiscountPct = Math.min(Math.max(0, discountPct), 100);
-  const discountAmount = subtotal * (safeDiscountPct / 100);
-  
-  const taxableAmount = subtotal - discountAmount;
-  const taxAmount = taxableAmount * TAX_RATE;
-  
-  // Math.round fixes floating point precision errors (e.g., 10.00000000001)
-  const total = Math.round(taxableAmount + taxAmount);
-  // -------------------------------
+
+  // Shared with every report and the receipt, so what the cashier is shown here
+  // is exactly what the books will say later.
+  const total = orderTotal(subtotal, safeDiscountPct);
 
   const cashGiven = parseInt(paymentAmount, 10) || 0;
   const changeDue = cashGiven - total;
