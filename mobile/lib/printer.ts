@@ -128,16 +128,21 @@ async function printCustomerReceipt(order: Order, user: CurrentUser, moneyGiven:
 
   // 2. Print Header
   await BluetoothEscposPrinter.printerAlign(BluetoothEscposPrinter.ALIGN.CENTER);
+  // Must match the logo's actual pixel width (see printerLogo.ts) — printPic
+  // scales to this, so a mismatch stretches the image and its height with it.
   await BluetoothEscposPrinter.printPic(base64Image, {
-    width: 200,
+    width: 144,
     left: 0,
   });
 
+  // Raster printing leaves the printer on the enlarged line spacing it used for
+  // the image, so the first text lines after it come out spread apart. ESC 2
+  // restores the default spacing. This is the usual cause of a large gap under
+  // a logo, alongside the stray blank line that used to follow 'Nabawi Cafe'.
+  await BluetoothEscposPrinter.printText('\x1b\x32', {});
+
   await BluetoothEscposPrinter.printerAlign(BluetoothEscposPrinter.ALIGN.CENTER);
-  
-  // Increased widthtimes and heigthtimes to 4 for bigger text. 
-  // fonttype: 1 often acts as a bolder/alternate font on most thermal printers.
-  await BluetoothEscposPrinter.printText('Nabawi Cafe\n\n', {});
+  await BluetoothEscposPrinter.printText('Nabawi Cafe\n', {});
 
   // Address Section (Still centered)
   await BluetoothEscposPrinter.printText('Jl. Sentul-Jonggol Karang Tengah\n', {});
@@ -262,9 +267,15 @@ async function printKitchenTicket(order: Order): Promise<void> {
   // 3. Optional: Exit early if there are no items to print
   if (latestBatchItems.length === 0) return;
 
+  // widthtimes/heigthtimes are ESC/POS magnification multipliers where 0 is
+  // normal size, so every value here used to be one step larger than it read:
+  // the header printed at 3x and the item lines at 2x, against a customer
+  // receipt that passes {} (all zeros). The kitchen still needs to read these
+  // across a room, so items keep double height but drop back to normal width,
+  // which is also what was causing long names to wrap.
   await BluetoothEscposPrinter.printerAlign(BluetoothEscposPrinter.ALIGN.CENTER);
   await BluetoothEscposPrinter.printText('DAPUR\n', {
-    encoding: 'GBK', codepage: 0, widthtimes: 2, heigthtimes: 2, fonttype: 1,
+    encoding: 'GBK', codepage: 0, widthtimes: 1, heigthtimes: 1, fonttype: 1,
   });
   await BluetoothEscposPrinter.printText('--------------------------------\n', {});
 
@@ -277,12 +288,12 @@ async function printKitchenTicket(order: Order): Promise<void> {
   // 4. Loop through the filtered array instead of all items
   for (const item of latestBatchItems) {
     await BluetoothEscposPrinter.printText(`${item.quantity}x ${item.name}\n`, {
-      fonttype: 1, widthtimes: 1, heigthtimes: 1,
+      fonttype: 1, widthtimes: 0, heigthtimes: 1,
     });
 
     if (item.note) {
       await BluetoothEscposPrinter.printText(`CATATAN: ${item.note}\n`, {
-        fonttype: 1, widthtimes: 1, heigthtimes: 1,
+        fonttype: 1, widthtimes: 0, heigthtimes: 0,
       })
     }
   }

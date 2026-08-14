@@ -63,6 +63,12 @@ export default function AdminTabLayout() {
           href: null, // hides this route from the tab bar entirely
         }}
       />
+
+      {/* Superadmin reports. Hidden from the tab bar — five tabs is already the
+          limit of what fits — and reached from a button on the screen each one
+          belongs to: Stok for usage, Pembelian for the comparison. */}
+      <Tabs.Screen name="stock-usage" options={{ href: null }} />
+      <Tabs.Screen name="comparison" options={{ href: null }} />
     </Tabs>
   );
 }

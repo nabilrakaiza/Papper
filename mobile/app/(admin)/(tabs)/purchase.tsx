@@ -7,6 +7,7 @@ import {
   ActivityIndicator
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { router, useFocusEffect } from "expo-router";
 import { Calendar, ShoppingCart, TrendingUp, Trash2 } from "lucide-react-native";
 import { supabase } from "@/lib/supabase"; // Make sure this path matches your project
 import { useAuth } from "../../../context/AuthContext";
@@ -228,10 +229,35 @@ export default function ExpensesScreen() {
     setLoading(false);
   }, [activeFilter]);
 
-  // Refetch whenever the active filter changes
+  // Refetch on filter change, and stay live afterwards.
+  //
+  // Tab screens stay mounted, so this effect alone only ever ran once: adding
+  // stock on the Stock tab wrote an expense that this list never picked up,
+  // making restocking look like it had failed to log a purchase. The Stock tab
+  // already subscribes to its own table this way; expenses needs the same.
   useEffect(() => {
     fetchExpenses();
+
+    const subscription = supabase
+      .channel("expenses-channel")
+      .on("postgres_changes", { event: "*", schema: "public", table: "expenses" }, () => {
+        fetchExpenses();
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(subscription);
+    };
   }, [fetchExpenses]);
+
+  // Realtime covers the common case, but a dropped socket or a row written
+  // while the app was backgrounded would leave the list stale, and this screen
+  // is the one people check to confirm a purchase was recorded.
+  useFocusEffect(
+    useCallback(() => {
+      fetchExpenses();
+    }, [fetchExpenses])
+  );
 
   const handleDeleteExpense = async () => {
     if (pendingDeleteId === null) return;
@@ -247,6 +273,16 @@ export default function ExpensesScreen() {
       {/* Header */}
       <View className="px-5 pt-4 pb-3 flex-row items-center justify-between">
         <Text className="text-2xl font-black text-gray-900">Pengeluaran</Text>
+
+        {isSuperadmin && (
+          <TouchableOpacity
+            onPress={() => router.push("/(admin)/(tabs)/comparison")}
+            className="flex-row items-center gap-1.5 border-2 border-blue-200 bg-blue-50 rounded-xl px-3 py-1.5"
+          >
+            <TrendingUp size={14} color="#3a7bd5" />
+            <Text className="text-xs font-extrabold text-blue-600">Perbandingan</Text>
+          </TouchableOpacity>
+        )}
       </View>
 
       {/* Filter chips */}

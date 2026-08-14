@@ -9,7 +9,8 @@ import {
 } from "react-native";
 import BottomSheet from "@gorhom/bottom-sheet";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { RefreshCw, Search, X } from "lucide-react-native";
+import { router } from "expo-router";
+import { RefreshCw, Search, X, BarChart2 } from "lucide-react-native";
 import { supabase } from "../../../lib/supabase";
 import StockCard from "@/components/stock/StockCard";
 import AddStockSheet from "@/components/stock/AddStockSheet";
@@ -215,6 +216,16 @@ export default function StockScreen() {
           <Text className="text-blue-500 text-xl font-black">✛</Text>
           <Text className="text-2xl font-black text-gray-900">Stok</Text>
         </View>
+
+        {isSuperadmin && (
+          <TouchableOpacity
+            onPress={() => router.push("/(admin)/(tabs)/stock-usage")}
+            className="flex-row items-center gap-1.5 border-2 border-blue-200 bg-blue-50 rounded-xl px-3 py-1.5"
+          >
+            <BarChart2 size={14} color="#3a7bd5" />
+            <Text className="text-xs font-extrabold text-blue-600">Pemakaian</Text>
+          </TouchableOpacity>
+        )}
       </View>
 
       {/* Search */}

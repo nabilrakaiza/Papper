@@ -100,6 +100,11 @@ denormalised `name`/`price`/`quantity` rather than joining `menus`.
 Written by the `log_stock_expense` trigger; deleted only by `delete_expense_entry`
 (superadmin-only, for removing an entry a mistaken restock created).
 
+Readable by `admin` **and** `superadmin`. The policy originally named `admin`
+alone, which predated the superadmin role — a superadmin saw an empty Pembelian
+screen with no error, because RLS filters rows rather than raising, and could
+delete an expense they were not allowed to read.
+
 | Column | Type | Notes |
 | --- | --- | --- |
 | `id` | bigint PK | identity, BY DEFAULT |
@@ -154,6 +159,7 @@ Failed attempts are recorded deliberately — the lockout counts them.
 | `toggle_menu_availability(bigint)` | void | flips `menus.available`; callable by any authenticated staff account, since `cashier` has no general write access to `menus` |
 | `correct_stock(bigint, numeric, integer, text)` | void | sets a `stock` row's quantity/price directly (not additive); superadmin-only; sets `app.stock_correction` so the restock trigger doesn't log it as a purchase |
 | `delete_expense_entry(bigint, text)` | void | hard-deletes an `expenses` row; superadmin-only |
+| `stock_usage_report(timestamptz, timestamptz)` | jsonb | ingredient consumption over a period, reconstructed from `order_items` × `menu_ingredients`; superadmin-only. Returns `{ items, unmapped }` — see below |
 
 All are `SECURITY DEFINER` with a pinned `search_path`. Any function calling
 pgcrypto uses `extensions.crypt(...)` explicitly — a bare `crypt()` fails, see
@@ -166,6 +172,31 @@ pgcrypto uses `extensions.crypt(...)` explicitly — a bare `crypt()` fails, see
 { "ok": false, "reason": "invalid_pin", "attempts_left": 3 }
 { "ok": false, "reason": "locked_out",  "retry_after_seconds": 420 }
 ```
+
+### `stock_usage_report` result shape
+
+```jsonc
+{
+  "items": [
+    { "stock_id": 3, "stock_name": "Beras", "unit": "gr",
+      "quantity_used": 7000, "price_per_unit": 450, "value_used": 3150000 }
+  ],
+  "unmapped": { "custom_lines": 2, "recipeless_lines": 0 }
+}
+```
+
+Three properties of this report are deliberate and worth knowing before trusting
+the number:
+
+- It counts line items with `is_stock_deducted = true`, **including those on
+  cancelled orders** — cancelling never returns stock, so counting them is what
+  makes the figure reconcilable against the shelf.
+- `unmapped` reports what could not be attributed to any ingredient: custom
+  off-menu lines (no menu row) and menus costed manually (no ingredient rows).
+  Neither consumes stock, and surfacing the count keeps the total from reading
+  as complete when it isn't.
+- Recipes are read **as they are now**. `menu_ingredients` keeps no history, so
+  a recipe change retroactively alters past periods.
 
 Added alongside the boolean v1 rather than replacing it. There is no OTA update
 channel, so older installs are still running code that does `if (!data)` — and a
