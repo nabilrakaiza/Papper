@@ -44,6 +44,15 @@ Delete the user in Dashboard → Authentication → Users. `profiles` cascades. 
 
 ## Manager PINs
 
+**Only a `superadmin` PIN approves an override.** All three PIN RPCs match
+`role = 'superadmin'`. A PIN set on an `admin` account is inert — it is not
+rejected at the point of setting, it simply never matches, so the cashier sees
+"PIN salah", burns attempts, and gets locked out for 15 minutes. If overrides
+suddenly stop working, check this first.
+
+There must be at least one superadmin PIN at all times, or **no order can be
+cancelled by anyone**.
+
 ### Set or change
 
 The same statement does both — it overwrites:
@@ -51,29 +60,40 @@ The same statement does both — it overwrites:
 ```sql
 update public.profiles
 set pin_hash = extensions.crypt('<6-digit-pin>', extensions.gen_salt('bf'))
-where id = '<admin-uuid>';
+where id = '<superadmin-uuid>';
 ```
+
+Find the uuid with the account listing at the top of this file, and check the
+`role` column says `superadmin` before running it.
 
 ### Verify
 
 ```sql
 select pin_hash = extensions.crypt('<the-pin>', pin_hash) as matches
-from public.profiles where id = '<admin-uuid>';
+from public.profiles where id = '<superadmin-uuid>';
 ```
 
 ### Revoke
 
 ```sql
-update public.profiles set pin_hash = null where id = '<admin-uuid>';
+update public.profiles set pin_hash = null where id = '<superadmin-uuid>';
+```
+
+Check afterwards that a superadmin PIN still exists somewhere:
+
+```sql
+select count(*) from public.profiles
+where role = 'superadmin' and pin_hash is not null;
 ```
 
 Rules, repeated because getting them wrong is quiet and costly:
 
-1. **Exactly 6 digits** — the keypad cannot submit anything shorter, so a
-   4-digit PIN locks that admin out of approving anything.
-2. **A different PIN per admin** — shared PINs make the audit log name the wrong
-   approver.
-3. Note the `extensions.` prefix on both functions.
+1. **Set it on a superadmin** — a PIN on an admin account does nothing at all.
+2. **Exactly 6 digits** — the keypad cannot submit anything shorter, so a
+   4-digit PIN locks that superadmin out of approving anything.
+3. **A different PIN per superadmin** — shared PINs make the audit log name the
+   wrong approver, since the RPC takes the first hash that matches.
+4. Note the `extensions.` prefix on both functions.
 
 ## Auditing overrides
 

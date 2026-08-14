@@ -240,7 +240,12 @@ async function printCustomerReceipt(order: Order, user: CurrentUser, moneyGiven:
       await BluetoothEscposPrinter.printColumn(colWidths, colAligns, ['Kembalian', formatRupiah(moneyGiven - total)], {});
     }
     else {
-      await BluetoothEscposPrinter.printColumn(colWidths, colAligns, ['Jumlah Bayar', formatRupiah(moneyGiven)], {});
+      // Non-cash settles for exactly the bill, so print the bill rather than
+      // payment_amount. Same number for anything sold today, but orders closed
+      // before the discount fix stored a payment_amount computed from the saved
+      // discount instead of the entered one — reprinting those would show a
+      // figure that never changed hands.
+      await BluetoothEscposPrinter.printColumn(colWidths, colAligns, ['Jumlah Bayar', formatRupiah(total)], {});
     }
   }
 

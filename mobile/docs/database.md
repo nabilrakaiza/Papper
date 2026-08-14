@@ -85,8 +85,20 @@ items by deleting and reinserting them all, so the flag is copied from the row
 being replaced rather than reset — the screens keep it on lines they carry over
 and leave it unset on lines they add, so `deduct_stock_for_order` only ever sees
 genuinely new quantity. Resetting it made each re-save deduct the entire order's
-ingredients again. Note the reverse is not symmetrical: reducing a line's
-quantity does not return stock, on the assumption the food was already made.
+ingredients again.
+
+**Stock is never returned.** Reducing a line's quantity does not credit stock
+back, and neither does cancelling an order — `cancel_order_with_pin_v2` flips
+the statuses and nothing touches `stock`. This is a deliberate decision, not an
+oversight: by the time an order is cancelled or trimmed the food is usually
+part-cooked, and there is no way to know whether it gets served to someone else
+or thrown away. Assuming it is gone can only make recorded stock *lower* than
+reality, which is the safe direction — the opposite error would have the app
+promising ingredients that are not on the shelf.
+
+The consequence to remember when reading any stock figure: recorded stock is a
+floor, not an exact count, and periodic `correct_stock` reconciliation against
+a physical count is the intended correction path.
 
 A NULL `menu_id` is a custom line item: something sold that isn't on the menu,
 with a name and price typed by the cashier. It has no row in `menus` and so no
@@ -107,6 +119,7 @@ delete an expense they were not allowed to read.
 
 | Column | Type | Notes |
 | --- | --- | --- |
+| `id` | bigint PK | identity, BY DEFAULT |
 | `stock_id` | bigint | → `stock(id)` ON DELETE RESTRICT, nullable — see below |
 | `name` | text | the stock item's name **at purchase time**; does not follow a rename |
 | `quantity`, `price_per_unit` | | as purchased |
@@ -126,13 +139,6 @@ wages, utilities) is ever added. `ON DELETE RESTRICT` rather than `SET NULL`:
 stock removal is a soft delete and the table has no DELETE policy, so a hard
 delete can only come from the SQL editor — refusing it while purchase history
 exists is the useful outcome.
-
-| Column | Type | Notes |
-| --- | --- | --- |
-| `id` | bigint PK | identity, BY DEFAULT |
-| `name`, `quantity`, `price_per_unit` | | |
-| `total_cost` | numeric | generated: `quantity * price_per_unit` |
-| `expense_date`, `created_at` | timestamptz | |
 
 ### `admin_correction_log`
 Audit trail for `correct_stock` and `delete_expense_entry`. Written by those
@@ -175,9 +181,9 @@ Failed attempts are recorded deliberately — the lockout counts them.
 | `prevent_direct_cancel()` | trigger | blocks `status → 'cancelled'` without the PIN flag |
 | `prevent_locked_order_item_change()` | trigger | freezes `order_items` on paid/cancelled orders |
 | `pin_attempts_exhausted(uuid)` | boolean | 5 failures in 15 minutes |
-| `cancel_order_with_pin(bigint, text)` | boolean | **legacy**, kept for older installs |
-| `cancel_order_with_pin_v2(bigint, text)` | jsonb | current; returns a reason on failure |
-| `delete_order_with_pin(bigint, text)` | boolean | hard delete; not wired to any UI |
+| `cancel_order_with_pin(bigint, text)` | boolean | **legacy**, kept for older installs; superadmin PIN only |
+| `cancel_order_with_pin_v2(bigint, text)` | jsonb | current; returns a reason on failure; superadmin PIN only |
+| `delete_order_with_pin(bigint, text)` | boolean | hard delete; not wired to any UI; superadmin PIN only |
 | `toggle_menu_availability(bigint)` | void | flips `menus.available`; callable by any authenticated staff account, since `cashier` has no general write access to `menus` |
 | `correct_stock(bigint, numeric, integer, text)` | void | sets a `stock` row's quantity/price directly (not additive); superadmin-only; sets `app.stock_correction` so the restock trigger doesn't log it as a purchase |
 | `delete_expense_entry(bigint, text)` | void | hard-deletes an `expenses` row; superadmin-only |
