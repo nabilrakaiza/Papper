@@ -6,7 +6,6 @@ import {
   TouchableOpacity,
   TextInput,
   ActivityIndicator,
-  Alert,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { router, useLocalSearchParams, useFocusEffect, useNavigation } from "expo-router";
@@ -21,6 +20,7 @@ import { supabase } from "@/lib/supabase";
 import { useAuth } from "../../../../context/AuthContext";
 import { CATEGORIES } from "../../../../data/menu";
 import { MenuCategory } from "../../../../types/order";
+import ConfirmDialog from "@/components/ConfirmDialog";
 
 type CogsMode = "ingredients" | "manual";
 
@@ -89,7 +89,8 @@ export default function CogsEditScreen() {
   const isNew = id === "new";
   const menuId = Number(id);
   const navigation = useNavigation();
-  const { profile } = useAuth();
+  const { profile, session } = useAuth();
+  const [pendingLeaveAction, setPendingLeaveAction] = useState<any>(null);
   const isSuperadmin = profile?.role === "superadmin";
 
   // New-menu creation fields (only used when isNew)
@@ -166,29 +167,41 @@ export default function CogsEditScreen() {
     }, [fetchMenu])
   );
 
-  // Warn on back navigation if there are unsaved changes
+  // Warn on back navigation if there are unsaved changes.
+  //
+  // Two things this has to get right, both of which it previously did not:
+  //
+  //   * Confirming "Buang" re-dispatches the very action that was blocked, and
+  //     isDirty is still true when it arrives, so the guard caught it a second
+  //     time and re-opened the dialog — an unbreakable loop. bypassGuard lets
+  //     exactly the confirmed action through. It is a ref, not state, because
+  //     the dispatch happens before any re-render could publish a new value.
+  //
+  //   * Signing out is not a navigation worth arguing about. The root layout
+  //     redirects to the login screen the moment the session clears, and that
+  //     redirect removes this screen. Blocking it left the app signed out at
+  //     Supabase but stranded on a logged-in screen, which only a restart fixed.
+  const bypassGuard = useRef(false);
+
   useEffect(() => {
     const unsubscribe = navigation.addListener("beforeRemove", (e: any) => {
-      if (!isDirty) return;
+      if (!isDirty || bypassGuard.current || !session) return;
 
       e.preventDefault();
-
-      Alert.alert(
-        "Buang perubahan?",
-        "Anda memiliki perubahan yang belum disimpan. Jika keluar sekarang, perubahan akan hilang.",
-        [
-          { text: "Lanjut edit", style: "cancel" },
-          {
-            text: "Buang",
-            style: "destructive",
-            onPress: () => navigation.dispatch(e.data.action),
-          },
-        ]
-      );
+      setPendingLeaveAction(e.data.action);
     });
 
     return unsubscribe;
-  }, [navigation, isDirty]);
+  }, [navigation, isDirty, session]);
+
+  const handleDiscardAndLeave = () => {
+    const action = pendingLeaveAction;
+    setPendingLeaveAction(null);
+    if (!action) return;
+
+    bypassGuard.current = true;
+    navigation.dispatch(action);
+  };
 
   const fetchStockOptions = useCallback(async () => {
     const { data } = await supabase
@@ -814,6 +827,20 @@ export default function CogsEditScreen() {
           </View>
         )}
       </BottomSheetModal>
+
+      {/* ConfirmDialog rather than Alert.alert: Alert's button callbacks are a
+          no-op on React Native Web, so on the web build this prompt could never
+          be answered — the screen simply refused to leave. */}
+      <ConfirmDialog
+        visible={pendingLeaveAction !== null}
+        title="Buang perubahan?"
+        message="Anda memiliki perubahan yang belum disimpan. Jika keluar sekarang, perubahan akan hilang."
+        confirmLabel="Buang"
+        cancelLabel="Lanjut edit"
+        destructive
+        onConfirm={handleDiscardAndLeave}
+        onCancel={() => setPendingLeaveAction(null)}
+      />
     </SafeAreaView>
   );
 }

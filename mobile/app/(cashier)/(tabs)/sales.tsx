@@ -7,7 +7,7 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { supabase } from "../../../lib/supabase";
-import { TAX_RATE } from "../../../lib/constants";
+import { orderTotal } from "../../../lib/constants";
 
 type OrderRow = {
   id: number;
@@ -71,7 +71,7 @@ export default function CashierSalesScreen() {
     const orderRows: OrderRow[] = ordersData.map((order) => {
       const orderItems = (items ?? []).filter((i) => i.order_id === order.id);
       const subtotal = orderItems.reduce((sum, i) => sum + i.price * i.quantity, 0);
-      const total = subtotal * (1 - order.discount / 100) * (1 + TAX_RATE);
+      const total = orderTotal(subtotal, order.discount);
       
 
       if (order.status === "paid") paidTotal += total;

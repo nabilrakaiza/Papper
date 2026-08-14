@@ -162,12 +162,18 @@ years.
 
 ### PIN rules
 
+0. **Only a superadmin PIN approves.** All three PIN RPCs match
+   `role = 'superadmin'`. A PIN on an `admin` account is inert — it hashes and
+   stores without complaint but never matches, so the failure looks like a
+   mistyped PIN rather than a misconfiguration. At least one superadmin PIN must
+   exist or nothing can be cancelled at all.
 1. **Exactly 6 digits.** `PinOverrideModal` only enables its confirm button at
    `pin.length === 6`. A 4-digit PIN hashes fine but can never be submitted, so
-   that admin could never approve anything. Nothing server-side enforces length.
-2. **A different PIN per admin.** The RPC identifies the approver by testing the
-   submitted PIN against every admin hash and taking `limit 1`. Shared PINs make
-   `order_override_log.admin_id` name the wrong person.
+   that superadmin could never approve anything. Nothing server-side enforces
+   length.
+2. **A different PIN per superadmin.** The RPC identifies the approver by testing
+   the submitted PIN against every superadmin hash and taking `limit 1`. Shared
+   PINs make `order_override_log.admin_id` name the wrong person.
 
 ## Row Level Security
 

@@ -3,7 +3,7 @@ import { PermissionsAndroid, Platform, Linking } from 'react-native';
 import { Order } from '../types/order';
 import { RECEIPT_LOGO_BASE64 } from './printerLogo';
 import { CurrentUser } from '@/hooks/useUser';
-import { TAX_RATE } from './constants';
+import { TAX_RATE, orderTotal } from './constants';
 import { groupItems } from './orderItems';
 
 function formatRupiah(amount: number | null): string {
@@ -114,11 +114,11 @@ async function printCustomerReceipt(order: Order, user: CurrentUser, moneyGiven:
   
   const safeDiscountPct = Math.min(Math.max(0, order.discount || 0), 100);
   const discountAmount = subtotal * (safeDiscountPct / 100);
-  
-  const taxableAmount = subtotal - discountAmount;
-  const taxAmount = taxableAmount * TAX_RATE;
-  
-  const total = Math.round(taxableAmount + taxAmount);
+  const taxAmount = (subtotal - discountAmount) * TAX_RATE;
+
+  // Shared helper — the printed TOTAL is the figure the reports sum, so the
+  // receipt in the customer's hand and the books always agree.
+  const total = orderTotal(subtotal, safeDiscountPct);
 
   // Grouped by itemKey rather than menuId: custom items all carry a null menu
   // id, so keying on that would print every unrelated one as a single line.
@@ -128,16 +128,21 @@ async function printCustomerReceipt(order: Order, user: CurrentUser, moneyGiven:
 
   // 2. Print Header
   await BluetoothEscposPrinter.printerAlign(BluetoothEscposPrinter.ALIGN.CENTER);
+  // Must match the logo's actual pixel width (see printerLogo.ts) — printPic
+  // scales to this, so a mismatch stretches the image and its height with it.
   await BluetoothEscposPrinter.printPic(base64Image, {
-    width: 200,
+    width: 144,
     left: 0,
   });
 
+  // Raster printing leaves the printer on the enlarged line spacing it used for
+  // the image, so the first text lines after it come out spread apart. ESC 2
+  // restores the default spacing. This is the usual cause of a large gap under
+  // a logo, alongside the stray blank line that used to follow 'Nabawi Cafe'.
+  await BluetoothEscposPrinter.printText('\x1b\x32', {});
+
   await BluetoothEscposPrinter.printerAlign(BluetoothEscposPrinter.ALIGN.CENTER);
-  
-  // Increased widthtimes and heigthtimes to 4 for bigger text. 
-  // fonttype: 1 often acts as a bolder/alternate font on most thermal printers.
-  await BluetoothEscposPrinter.printText('Nabawi Cafe\n\n', {});
+  await BluetoothEscposPrinter.printText('Nabawi Cafe\n', {});
 
   // Address Section (Still centered)
   await BluetoothEscposPrinter.printText('Jl. Sentul-Jonggol Karang Tengah\n', {});
@@ -235,7 +240,12 @@ async function printCustomerReceipt(order: Order, user: CurrentUser, moneyGiven:
       await BluetoothEscposPrinter.printColumn(colWidths, colAligns, ['Kembalian', formatRupiah(moneyGiven - total)], {});
     }
     else {
-      await BluetoothEscposPrinter.printColumn(colWidths, colAligns, ['Jumlah Bayar', formatRupiah(moneyGiven)], {});
+      // Non-cash settles for exactly the bill, so print the bill rather than
+      // payment_amount. Same number for anything sold today, but orders closed
+      // before the discount fix stored a payment_amount computed from the saved
+      // discount instead of the entered one — reprinting those would show a
+      // figure that never changed hands.
+      await BluetoothEscposPrinter.printColumn(colWidths, colAligns, ['Jumlah Bayar', formatRupiah(total)], {});
     }
   }
 
@@ -262,9 +272,15 @@ async function printKitchenTicket(order: Order): Promise<void> {
   // 3. Optional: Exit early if there are no items to print
   if (latestBatchItems.length === 0) return;
 
+  // widthtimes/heigthtimes are ESC/POS magnification multipliers where 0 is
+  // normal size, so every value here used to be one step larger than it read:
+  // the header printed at 3x and the item lines at 2x, against a customer
+  // receipt that passes {} (all zeros). The kitchen still needs to read these
+  // across a room, so items keep double height but drop back to normal width,
+  // which is also what was causing long names to wrap.
   await BluetoothEscposPrinter.printerAlign(BluetoothEscposPrinter.ALIGN.CENTER);
   await BluetoothEscposPrinter.printText('DAPUR\n', {
-    encoding: 'GBK', codepage: 0, widthtimes: 2, heigthtimes: 2, fonttype: 1,
+    encoding: 'GBK', codepage: 0, widthtimes: 1, heigthtimes: 1, fonttype: 1,
   });
   await BluetoothEscposPrinter.printText('--------------------------------\n', {});
 
@@ -277,12 +293,12 @@ async function printKitchenTicket(order: Order): Promise<void> {
   // 4. Loop through the filtered array instead of all items
   for (const item of latestBatchItems) {
     await BluetoothEscposPrinter.printText(`${item.quantity}x ${item.name}\n`, {
-      fonttype: 1, widthtimes: 1, heigthtimes: 1,
+      fonttype: 1, widthtimes: 0, heigthtimes: 1,
     });
 
     if (item.note) {
       await BluetoothEscposPrinter.printText(`CATATAN: ${item.note}\n`, {
-        fonttype: 1, widthtimes: 1, heigthtimes: 1,
+        fonttype: 1, widthtimes: 0, heigthtimes: 0,
       })
     }
   }

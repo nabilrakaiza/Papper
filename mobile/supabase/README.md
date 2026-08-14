@@ -58,14 +58,18 @@ update public.profiles set role = 'admin' where id = '<user-uuid>';
 Always from the SQL Editor, never from the app — clients cannot write `pin_hash`
 and must not be able to.
 
-First find the admin. `auth.users` is not exposed to the API, so this join only
-works from the SQL Editor:
+Only a **superadmin** PIN approves an override — all three PIN RPCs match
+`role = 'superadmin'`. A PIN set on an `admin` account is inert: it hashes
+fine and is never rejected at the point of setting, it simply never matches.
+
+First find the superadmin. `auth.users` is not exposed to the API, so this join
+only works from the SQL Editor:
 
 ```sql
 select p.id, p.name, u.email, (p.pin_hash is not null) as has_pin
 from public.profiles p
 join auth.users u on u.id = p.id
-where p.role = 'admin'
+where p.role = 'superadmin'
 order by p.name;
 ```
 
@@ -74,27 +78,30 @@ Set or change a PIN — the same statement does both, since it overwrites:
 ```sql
 update public.profiles
 set pin_hash = extensions.crypt('<6-digit-pin>', extensions.gen_salt('bf'))
-where id = '<admin-uuid>';
+where id = '<superadmin-uuid>';
 ```
 
 Remove one:
 
 ```sql
-update public.profiles set pin_hash = null where id = '<admin-uuid>';
+update public.profiles set pin_hash = null where id = '<superadmin-uuid>';
 ```
 
-Three rules:
+Four rules:
 
-1. **Exactly 6 digits.** `PinOverrideModal` only enables its confirm button at
+1. **Set it on a superadmin.** A PIN on an admin account does nothing. There
+   must always be at least one superadmin PIN, or no order can be cancelled by
+   anyone.
+2. **Exactly 6 digits.** `PinOverrideModal` only enables its confirm button at
    `pin.length === 6`, so a 4-digit PIN hashes fine but can never be submitted —
-   that admin would be permanently unable to approve anything. Nothing
+   that superadmin would be permanently unable to approve anything. Nothing
    server-side enforces the length.
-2. **Give each admin a different PIN.** The RPC finds the approver by testing the
-   submitted PIN against every admin hash and taking `limit 1`. Two admins sharing
-   a PIN means both hashes match and Postgres picks arbitrarily, so
+3. **Give each superadmin a different PIN.** The RPC finds the approver by
+   testing the submitted PIN against every superadmin hash and taking `limit 1`.
+   Two sharing a PIN means both hashes match and Postgres picks arbitrarily, so
    `order_override_log.admin_id` would name someone who was not there.
-3. **Never hardcode a real PIN in this repo.** It is public.
+4. **Never hardcode a real PIN in this repo.** It is public.
 
 `gen_salt('bf')` generates a fresh random salt per call, so identical PINs still
-produce different hashes — the hash cannot be used to tell whether two admins
+produce different hashes — the hash cannot be used to tell whether two people
 share a PIN.

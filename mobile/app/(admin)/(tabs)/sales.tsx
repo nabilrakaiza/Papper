@@ -8,13 +8,28 @@ import {
   useWindowDimensions,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { router } from "expo-router";
+import { ChevronRight } from "lucide-react-native";
 import { VictoryBar, VictoryChart, VictoryAxis, VictoryTheme } from "victory-native";
 import { supabase } from "../../../lib/supabase";
 import { SalesPeriod } from "../../../types/sales";
-import { TAX_RATE } from "../../../lib/constants";
+import { orderTotal } from "../../../lib/constants";
 
 type SalesDataPoint = { label: string; total: number };
 type TopMenuItem = { name: string; quantity: number };
+type MethodTotal = { method: string; label: string; count: number; total: number };
+
+// Display labels for the stored method_of_payment values, which are English
+// because they are what the CHECK constraint and the receipt logic use.
+const METHOD_LABELS: Record<string, string> = {
+  Cash: "Tunai",
+  "Bank Transfer": "Transfer Bank",
+  QRIS: "QRIS",
+  Debit: "Debit",
+};
+
+// Fixed order so the card doesn't reshuffle between periods.
+const METHOD_ORDER = ["Cash", "QRIS", "Debit", "Bank Transfer"];
 
 function formatRupiah(amount: number): string {
   if (amount >= 1_000_000) return "Rp " + (amount / 1_000_000).toFixed(1) + "M";
@@ -128,7 +143,12 @@ export default function AdminSalesScreen() {
   const [chartData, setChartData] = useState<SalesDataPoint[]>([]);
   const [totalSales, setTotalSales] = useState(0);
   const [topMenu, setTopMenu] = useState<TopMenuItem[]>([]);
-  
+  const [byMethod, setByMethod] = useState<MethodTotal[]>([]);
+  const [outstanding, setOutstanding] = useState<{ count: number; total: number }>({
+    count: 0,
+    total: 0,
+  });
+
   // Optional: Split loading states so one chart doesn't block the other visually
   const [loadingSales, setLoadingSales] = useState(true);
   const [loadingTopSelling, setLoadingTopSelling] = useState(true);
@@ -140,7 +160,7 @@ export default function AdminSalesScreen() {
 
     const { data: orders } = await supabase
       .from("orders")
-      .select("id, created_at, discount")
+      .select("id, created_at, discount, method_of_payment")
       .eq("status", "paid")
       .gte("created_at", from)
       .lte("created_at", to);
@@ -148,6 +168,7 @@ export default function AdminSalesScreen() {
     if (!orders || orders.length === 0) {
       setChartData([]);
       setTotalSales(0);
+      setByMethod([]);
       setLoadingSales(false);
       return;
     }
@@ -161,14 +182,76 @@ export default function AdminSalesScreen() {
     const ordersWithTotal = orders.map((order) => {
       const orderItems = (items ?? []).filter((i) => i.order_id === order.id);
       const subtotal = orderItems.reduce((sum, i) => sum + i.price * i.quantity, 0);
-      const total = subtotal * (1 - order.discount / 100) * (1 + TAX_RATE);
-      return { created_at: order.created_at, total };
+      return {
+        created_at: order.created_at,
+        method: order.method_of_payment,
+        total: orderTotal(subtotal, order.discount),
+      };
     });
 
     const total = ordersWithTotal.reduce((sum, o) => sum + o.total, 0);
+
+    // Split by payment method off the same rows — the breakdown always agrees
+    // with the headline total because it is the same arithmetic.
+    //
+    // Deliberately NOT summing orders.payment_amount: for cash that column
+    // holds the amount tendered, not the bill, so it overstates takings by
+    // whatever change was handed back.
+    const methodTotals = new Map<string, { count: number; total: number }>();
+    for (const o of ordersWithTotal) {
+      const key = o.method ?? "—";
+      const entry = methodTotals.get(key) ?? { count: 0, total: 0 };
+      entry.count += 1;
+      entry.total += o.total;
+      methodTotals.set(key, entry);
+    }
+
+    setByMethod(
+      [...methodTotals.entries()]
+        .map(([method, v]) => ({
+          method,
+          label: METHOD_LABELS[method] ?? "Tidak dicatat",
+          ...v,
+        }))
+        .sort(
+          (a, b) =>
+            (METHOD_ORDER.indexOf(a.method) + 1 || 99) -
+            (METHOD_ORDER.indexOf(b.method) + 1 || 99)
+        )
+    );
+
     setTotalSales(total);
     setChartData(groupOrders(ordersWithTotal, p));
     setLoadingSales(false);
+  };
+
+  // Open tabs, deliberately not filtered by the period toggle: an unpaid order
+  // from last week is still owed today, and filtering it out of a "this week"
+  // view is exactly how it gets forgotten.
+  const fetchOutstanding = async () => {
+    const { data: orders } = await supabase
+      .from("orders")
+      .select("id, discount")
+      .eq("status", "unpaid");
+
+    if (!orders || orders.length === 0) {
+      setOutstanding({ count: 0, total: 0 });
+      return;
+    }
+
+    const { data: items } = await supabase
+      .from("order_items")
+      .select("order_id, price, quantity")
+      .in("order_id", orders.map((o) => o.id));
+
+    const total = orders.reduce((sum, order) => {
+      const subtotal = (items ?? [])
+        .filter((i) => i.order_id === order.id)
+        .reduce((s, i) => s + i.price * i.quantity, 0);
+      return sum + orderTotal(subtotal, order.discount);
+    }, 0);
+
+    setOutstanding({ count: orders.length, total });
   };
 
   // 3. Separate fetch function for Top Selling Menu
@@ -221,11 +304,16 @@ export default function AdminSalesScreen() {
   }, [topSellingPeriod]);
 
   useEffect(() => {
+    fetchOutstanding();
+  }, []);
+
+  useEffect(() => {
     const subscription = supabase
       .channel("sales-channel")
       .on("postgres_changes", { event: "*", schema: "public", table: "orders" }, () => {
         fetchSalesData(salesPeriod);
         fetchTopSellingData(topSellingPeriod);
+        fetchOutstanding();
       })
       .subscribe();
 
@@ -328,6 +416,114 @@ export default function AdminSalesScreen() {
               )}
             </View>
           </View>
+
+          {/* Payment method breakdown — follows the sales period toggle above,
+              since it is a split of exactly that figure. */}
+          <View className="bg-white rounded-3xl px-5 py-5 mb-4 shadow-sm">
+            <View className="flex-row items-center justify-between mb-4">
+              <Text className="text-lg font-black text-gray-900">Metode Bayar</Text>
+              <Text className="text-[10px] font-extrabold text-gray-300 uppercase tracking-widest">
+                periode grafik
+              </Text>
+            </View>
+
+            {loadingSales ? (
+              <View className="py-6 items-center">
+                <ActivityIndicator size="small" color="#3a7bd5" />
+              </View>
+            ) : byMethod.length === 0 ? (
+              <Text className="text-gray-400 font-bold text-sm py-4 text-center">
+                Tidak ada data untuk periode ini
+              </Text>
+            ) : (
+              byMethod.map((m) => {
+                const share = totalSales > 0 ? (m.total / totalSales) * 100 : 0;
+                return (
+                  <View key={m.method} className="mb-3">
+                    <View className="flex-row items-center justify-between mb-1.5">
+                      <Text className="text-sm font-bold text-gray-800">
+                        {m.label}
+                        <Text className="text-xs font-bold text-gray-400">
+                          {"  "}
+                          {m.count} pesanan
+                        </Text>
+                      </Text>
+                      <Text className="text-sm font-extrabold text-gray-900">
+                        {formatRupiahFull(m.total)}
+                      </Text>
+                    </View>
+                    {/* Share bar — quicker to read than the percentages when
+                        reconciling a till against the bank. */}
+                    <View className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                      <View
+                        className="h-full bg-blue-400 rounded-full"
+                        style={{ width: `${Math.max(share, 1)}%` }}
+                      />
+                    </View>
+                  </View>
+                );
+              })
+            )}
+
+            {byMethod.some((m) => m.method === "—") && (
+              <Text className="text-[11px] font-bold text-amber-600 leading-4 mt-1">
+                Sebagian pesanan lunas tidak mencatat metode bayar — kemungkinan
+                ditutup sebelum fitur ini ada.
+              </Text>
+            )}
+          </View>
+
+          {/* Outstanding tabs. Not period-filtered: an old unpaid order is the
+              one most worth chasing. */}
+          <TouchableOpacity
+            onPress={() => router.push("/(admin)/(tabs)/orders")}
+            activeOpacity={0.8}
+            className={`rounded-3xl px-5 py-5 mb-4 flex-row items-center justify-between ${
+              outstanding.count > 0 ? "bg-amber-100" : "bg-white"
+            }`}
+          >
+            <View className="flex-1 pr-3">
+              <Text
+                className={`text-[10px] font-extrabold uppercase tracking-widest mb-1 ${
+                  outstanding.count > 0 ? "text-amber-500" : "text-gray-400"
+                }`}
+              >
+                Belum Dibayar
+              </Text>
+              <Text
+                className={`text-2xl font-black ${
+                  outstanding.count > 0 ? "text-amber-700" : "text-gray-900"
+                }`}
+              >
+                {formatRupiahFull(outstanding.total)}
+              </Text>
+              <Text
+                className={`text-xs font-bold mt-1 ${
+                  outstanding.count > 0 ? "text-amber-500" : "text-gray-400"
+                }`}
+              >
+                {outstanding.count} pesanan terbuka · ketuk untuk rincian
+              </Text>
+            </View>
+            <ChevronRight size={20} color={outstanding.count > 0 ? "#b45309" : "#9ca3af"} />
+          </TouchableOpacity>
+
+          {/* Per-order drill-down */}
+          <TouchableOpacity
+            onPress={() => router.push("/(admin)/(tabs)/orders")}
+            activeOpacity={0.8}
+            className="bg-white rounded-3xl px-5 py-4 mb-4 flex-row items-center justify-between"
+          >
+            <View>
+              <Text className="text-sm font-extrabold text-gray-900">
+                Rincian Pesanan
+              </Text>
+              <Text className="text-xs font-bold text-gray-400 mt-0.5">
+                Telusuri tiap pesanan beserta itemnya
+              </Text>
+            </View>
+            <ChevronRight size={20} color="#9ca3af" />
+          </TouchableOpacity>
 
           {/* Top Selling Menu Card */}
           <View className="bg-yellow-100 rounded-3xl px-4 pt-4 pb-5 shadow-sm shadow-yellow-300/30">
