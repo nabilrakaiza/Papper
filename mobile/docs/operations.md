@@ -144,6 +144,19 @@ There's no in-app history view for this, same as `order_override_log` —
 check it here if a stock quantity or an expense total looks off and someone
 mentions "I fixed a typo."
 
+For one item's history, filter on `stock_id` rather than the name — `target_name`
+is a snapshot of what the item was called at the time, so it misses everything
+logged before a rename:
+
+```sql
+select l.created_at, l.action, l.target_name, s.name as current_name,
+       l.old_quantity, l.new_quantity, l.note
+from public.admin_correction_log l
+join public.stock s on s.id = l.stock_id
+where l.stock_id = <stock-id>
+order by l.created_at desc;
+```
+
 ## Menu and stock
 
 Menu items, prices, availability and recipes are all managed in the admin tabs.

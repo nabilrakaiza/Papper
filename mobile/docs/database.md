@@ -112,6 +112,13 @@ denormalised `name`/`price`/`quantity` rather than joining `menus`.
 Written by the `log_stock_expense` trigger; deleted only by `delete_expense_entry`
 (superadmin-only, for removing an entry a mistaken restock created).
 
+The trigger fires on `INSERT` as well as on a quantity increase. The insert
+branch used to be unconditional, so creating a stock item type at quantity 0
+wrote an expense row for 0 units at Rp 0 — a purchase that never happened,
+sitting on Pembelian. It is now gated on `new.quantity > 0`: creating an item
+*with* an opening quantity is a genuine purchase and still logs, creating an
+empty one is not. Bulk imports should still set `app.stock_correction`.
+
 Readable by `admin` **and** `superadmin`. The policy originally named `admin`
 alone, which predated the superadmin role — a superadmin saw an empty Pembelian
 screen with no error, because RLS filters rows rather than raising, and could
@@ -144,19 +151,36 @@ exists is the useful outcome.
 Audit trail for `correct_stock` and `delete_expense_entry`. Written by those
 RPCs, readable only by superadmins.
 
+`stock_id` and `target_name` answer different questions and both are kept: the
+id says *which row*, the name says *what it read as then*. Reading history by
+name alone breaks at the first rename, which is why the id was added; the name
+is still what a person recognises when reviewing the log months later.
+
+It is nullable because entries written before the column existed have none, and
+because an `expense_deleted` entry inherits the deleted expense's `stock_id`,
+which is itself nullable. For `stock_correction` the RPC always sets it, and the
+FK rejects a correction naming a stock row that does not exist.
+
 | Column | Type | Notes |
 | --- | --- | --- |
 | `id` | bigint PK | identity |
 | `action` | text | `stock_correction` or `expense_deleted` |
 | `superadmin_id` | uuid | who made the change |
-| `target_name` | text | the stock item's or expense's `name` |
+| `stock_id` | bigint | → `stock(id)` ON DELETE RESTRICT, nullable — the row the entry is about |
+| `target_name` | text | the stock item's or expense's `name` **at the time**; does not follow a rename |
 | `old_quantity`, `new_quantity` | numeric | `new_quantity` is null for `expense_deleted` |
 | `old_price_per_unit`, `new_price_per_unit` | integer | `new_price_per_unit` is null for `expense_deleted` |
 | `note` | text | optional, entered by the superadmin |
 | `created_at` | timestamptz | |
 
 ### `order_override_log`
-Audit trail for PIN-gated actions. Written by the RPCs, readable only by admins.
+Audit trail for PIN-gated actions. Written by the RPCs, readable by `admin` and
+`superadmin`.
+
+The read policy originally named `admin` alone — the same oversight as the
+`expenses` policy above, and worse in effect: approving a cancellation is
+superadmin-only, so the one person authorising every override was the one person
+who could not read the record of them. It failed silently, as an empty screen.
 
 | Column | Type | Notes |
 | --- | --- | --- |
@@ -177,7 +201,7 @@ Failed attempts are recorded deliberately — the lockout counts them.
 | `handle_new_user()` | trigger | creates a `profiles` row, always as `'cashier'` |
 | `check_stock_for_order(jsonb)` | jsonb | `{shortages: [...]}`, no writes |
 | `deduct_stock_for_order(int, bool)` | void | decrements stock; `p_force` skips the shortage check |
-| `log_stock_expense()` | trigger | logs an `expenses` row when stock rises; skipped when `app.stock_correction` is set |
+| `log_stock_expense()` | trigger | logs an `expenses` row on insert, and on any quantity increase; skipped when `app.stock_correction` is set |
 | `prevent_direct_cancel()` | trigger | blocks `status → 'cancelled'` without the PIN flag |
 | `prevent_locked_order_item_change()` | trigger | freezes `order_items` on paid/cancelled orders |
 | `pin_attempts_exhausted(uuid)` | boolean | 5 failures in 15 minutes |
