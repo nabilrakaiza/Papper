@@ -226,6 +226,8 @@ Recorded here because the reasoning is easy to lose:
 | `pin_hash` readable by clients | table grant replaced with a column grant |
 | `delete_order_with_pin` had `search_path = public` | its bare `crypt()` failed on every call; now `public, extensions` |
 | `toggle_menu_availability` callable by `anon` (unauthenticated) | this project grants new `public` functions EXECUTE for `anon` by default, so `revoke ... from public` alone doesn't touch it — needs `revoke ... from anon` by name, same as the row above |
+| `anon` and `authenticated` held `TRUNCATE` on every table but `expenses` | revoked. **RLS does not apply to `TRUNCATE`** — it is gated by table privilege alone, so no policy here was ever consulted. The anon key ships in the published app, which made wiping sales history or either audit log a single call. `anon` now has nothing in `public`; `alter default privileges` keeps new tables from reopening it |
+| `order_override_log` readable by `admin` only | widened to `admin, superadmin`, matching the `expenses` fix — see [database.md](database.md#order_override_log) |
 
 Re-check any time with:
 
@@ -242,3 +244,12 @@ get_advisors(type: "security")
 - Delete the `TEST Admin` / `TEST Kasir` production accounts
 - Enable leaked-password protection in Auth settings
 - Collapse the duplicate `orders` policies
+- `menus` and `menu_ingredients` are readable with `using (true)`, so the menu,
+  its prices and every recipe are still exposed to anyone holding the anon key.
+  Harmless for prices, less so for recipes — worth scoping to `authenticated`
+- `deduct_stock_for_order` with `p_force` subtracts with no floor, and `stock`
+  has no `quantity >= 0` check, so forcing past a shortage drives stock negative
+- Order creation is three separate round trips (order, items, deduct) with no
+  transaction around them. The cashier cannot delete an order, so a failure
+  part-way through cannot be rolled back and leaves a real order behind. A
+  single `create_order_with_items` RPC would make it atomic

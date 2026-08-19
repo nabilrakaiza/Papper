@@ -145,7 +145,21 @@ export function OrderProvider({ children }: { children: ReactNode }) {
         }
       );
 
-      if (!checkError && checkData?.shortages?.length > 0) {
+      // A check that failed to run is not a check that passed. This used to
+      // read `!checkError && shortages.length > 0`, so an RPC error fell
+      // straight through as "plenty in stock" — and the order then hit the real
+      // shortage inside deduct_stock_for_order, on a path that cannot clean up
+      // after itself. Surfaced as a warning rather than a hard block so a
+      // flaky connection cannot stop the cafe taking orders.
+      if (checkError) {
+        return {
+          error: null,
+          stockWarning:
+            "Stok tidak bisa diperiksa saat ini. Lanjutkan tanpa pengecekan stok?",
+        };
+      }
+
+      if (checkData?.shortages?.length > 0) {
         const names = checkData.shortages.map((s: any) => s.stock_name).join(", ");
         return {
           error: null,
@@ -189,7 +203,24 @@ export function OrderProvider({ children }: { children: ReactNode }) {
     );
 
     if (itemsError) {
-      await supabase.from("orders").delete().eq("id", newOrder.id);
+      // Only an admin can actually delete an order — for a cashier this is
+      // denied, and the result used to be discarded, so a failure here left a
+      // real empty order sitting in the list while the cashier was told the
+      // save had failed. Tell them what actually happened instead, or they
+      // create a second one.
+      const { error: rollbackError } = await supabase
+        .from("orders")
+        .delete()
+        .eq("id", newOrder.id);
+
+      if (rollbackError) {
+        await fetchOrders();
+        return {
+          error:
+            "Gagal menyimpan item pesanan. Pesanan kosong terlanjur dibuat — hapus lewat daftar pesanan, jangan buat ulang.",
+        };
+      }
+
       return { error: "Gagal menyimpan item pesanan. Silakan coba lagi." };
     }
 
@@ -200,11 +231,25 @@ export function OrderProvider({ children }: { children: ReactNode }) {
     });
 
     if (stockError) {
-      await supabase.from("orders").delete().eq("id", newOrder.id);
-      if (stockError.message.includes("Insufficient stock")) {
-        return { error: "Pesanan diblokir — satu atau lebih bahan habis." };
+      const { error: rollbackError } = await supabase
+        .from("orders")
+        .delete()
+        .eq("id", newOrder.id);
+
+      const reason = stockError.message.includes("Insufficient stock")
+        ? "Satu atau lebih bahan habis."
+        : "Gagal memperbarui stok.";
+
+      // Same as above: the rollback only succeeds for an admin. Saying
+      // "blocked" when the order is in fact on screen is how duplicates happen.
+      if (rollbackError) {
+        await fetchOrders();
+        return {
+          error: `${reason} Pesanan terlanjur dibuat dan stok belum dikurangi — cek daftar pesanan, jangan buat ulang.`,
+        };
       }
-      return { error: "Gagal memperbarui stok. Silakan coba lagi." };
+
+      return { error: `${reason} Pesanan dibatalkan, silakan coba lagi.` };
     }
 
     await fetchOrders();
@@ -280,7 +325,16 @@ export function OrderProvider({ children }: { children: ReactNode }) {
           }
         );
 
-        if (!checkError && checkData?.shortages?.length > 0) {
+        // Same reasoning as addOrder: an errored check is not a passed check.
+        if (checkError) {
+          return {
+            error: null,
+            stockWarning:
+              "Stok tidak bisa diperiksa saat ini. Lanjutkan tanpa pengecekan stok?",
+          };
+        }
+
+        if (checkData?.shortages?.length > 0) {
           const names = checkData.shortages
             .map((s: any) => s.stock_name)
             .join(", ");
