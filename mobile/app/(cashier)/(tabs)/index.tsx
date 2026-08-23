@@ -5,15 +5,21 @@ import {
   ScrollView,
   TouchableOpacity,
   ActivityIndicator,
+  Modal,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { router } from "expo-router";
 import { Printer, Check, RefreshCw, ChefHat, Receipt, Utensils, Pencil} from "lucide-react-native";
 import { useOrders } from "../../../context/OrderContext";
 import { usePrinter, PrinterRole } from "../../../context/PrinterContext";
-import { Order } from "../../../types/order";
+import { Order, OrderItem } from "../../../types/order";
 import PrinterSelector from "../../../components/PrinterSelector";
 import { printReceipt } from "../../../lib/printer";
+import {
+  latestPrintBatch,
+  unprintedEarlierItems,
+  unprintedLatestBatch,
+} from "../../../lib/receiptLayout";
 import { useUser } from "@/hooks/useUser";
 import { orderTotal as orderTotalOf } from "../../../lib/constants";
 
@@ -30,6 +36,7 @@ type OrderCardProps = {
   order: Order;
   onPrintKitchenPress: (order: Order) => void;
   onPrintBillPress: (order: Order) => void;
+  onEditPress: (order: Order) => void;
 };
 
 function useOrderTimer(createdAt: Date) {
@@ -60,7 +67,59 @@ function TimerDot({ createdAt }: { createdAt: Date }) {
   );
 }
 
-function OrderCard({ order, onPrintKitchenPress, onPrintBillPress }: OrderCardProps) {
+
+type BatchWarningProps = {
+  order: Order | null;
+  title: string;
+  body: string;
+  items: OrderItem[];
+  hint: string;
+  confirmLabel: string;
+  onCancel: () => void;
+  onConfirm: (order: Order) => void;
+};
+
+function BatchWarningDialog({
+  order, title, body, items, hint, confirmLabel, onCancel, onConfirm,
+}: BatchWarningProps) {
+  return (
+    <Modal visible={order !== null} transparent animationType="fade" onRequestClose={onCancel}>
+      <View className="flex-1 bg-black/40 items-center justify-center px-8">
+        <View className="w-full bg-white rounded-3xl px-6 py-5">
+          <Text className="text-base font-extrabold text-gray-700">{title}</Text>
+          <Text className="text-xs font-bold text-gray-400 mt-2">{body}</Text>
+
+          <View className="bg-amber-50 border border-amber-100 rounded-2xl px-4 py-3 mt-3">
+            {items.map((item, idx) => (
+              <Text
+                key={`${item.menuId ?? "custom"}-${item.printBatch}-${idx}`}
+                className="text-xs font-extrabold text-amber-700"
+              >
+                {item.quantity}x {item.name}
+              </Text>
+            ))}
+          </View>
+
+          <Text className="text-xs font-bold text-gray-400 mt-3">{hint}</Text>
+
+          <View className="flex-row gap-3 mt-5">
+            <TouchableOpacity onPress={onCancel} className="flex-1 bg-gray-100 rounded-2xl py-3 items-center">
+              <Text className="text-sm font-extrabold text-gray-500">Batal</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => { if (order) onConfirm(order); }}
+              className="flex-1 bg-orange-400 rounded-2xl py-3 items-center"
+            >
+              <Text className="text-sm font-extrabold text-white">{confirmLabel}</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+function OrderCard({ order, onPrintKitchenPress, onPrintBillPress, onEditPress }: OrderCardProps) {
   const isPaid = order.status === "paid";
 
   return (
@@ -90,7 +149,7 @@ function OrderCard({ order, onPrintKitchenPress, onPrintBillPress }: OrderCardPr
 
           {!isPaid && (
             <>
-              <TouchableOpacity onPress={() => router.push(`/(cashier)/order/${order.id}`)}>
+              <TouchableOpacity onPress={() => onEditPress(order)}>
                 <Pencil size={18} color="#eab308" />
               </TouchableOpacity>
 
@@ -128,6 +187,33 @@ export default function CashierHomeScreen() {
   const [printing, setPrinting] = useState(false);
   const [printError, setPrintError] = useState<string | null>(null);
 
+  // Set when a kitchen print would silently leave an earlier batch unprinted.
+  const [skippedBatchOrder, setSkippedBatchOrder] = useState<Order | null>(null);
+
+  // "order id:batch" for warnings the cashier has already accepted. The ticket
+  // is normally printed three times in a row, for the bar, the kitchen and one
+  // more station, and asking again on the second and third copy would train
+  // people to dismiss it without reading. Adding a new batch produces a new key
+  // and the warning comes back.
+  const [acknowledgedSkips, setAcknowledgedSkips] = useState<Set<string>>(new Set());
+
+  // Set when opening an order to edit would strand the newest batch.
+  const [unprintedEditOrder, setUnprintedEditOrder] = useState<Order | null>(null);
+
+  const openOrderEditor = (order: Order) => router.push(`/(cashier)/order/${order.id}`);
+
+  // Adding items creates a batch above the current one, and a kitchen ticket
+  // only ever covers the newest batch — so anything still unprinted here would
+  // be stranded the moment the cashier saves. This is the point where the
+  // mistake can still be prevented rather than merely reported.
+  const handleEdit = (order: Order) => {
+    if (unprintedLatestBatch(order).length > 0) {
+      setUnprintedEditOrder(order);
+      return;
+    }
+    openOrderEditor(order);
+  };
+
   const unpaid = orders.filter((o) => o.status === "unpaid");
   const paid = orders.filter((o) => o.status === "paid");
   
@@ -137,6 +223,23 @@ export default function CashierHomeScreen() {
   const handlePrint = async (order: Order, type: "kitchen" | "bill") => {
     setPrintError(null);
 
+    // A kitchen ticket only ever covers the newest batch, so items added in a
+    // batch that was never printed would just disappear. Ask before that
+    // happens, ahead of the printer prompt so cancelling costs nothing.
+    const skipKey = `${order.id}:${latestPrintBatch(order)}`;
+    if (
+      type === "kitchen" &&
+      !acknowledgedSkips.has(skipKey) &&
+      unprintedEarlierItems(order).length > 0
+    ) {
+      setSkippedBatchOrder(order);
+      return;
+    }
+
+    await continuePrint(order, type);
+  };
+
+  const continuePrint = async (order: Order, type: "kitchen" | "bill") => {
     if (type === "kitchen" && !kitchenPrinter) {
       setPendingPrintOrder(order);
       setPendingPrintType("kitchen");
@@ -169,7 +272,7 @@ export default function CashierHomeScreen() {
 
       // Mark the lines as sent once the ticket is physically printed.
       if (!error) {
-        const { error: updateError } = await markItemsSent(order.id);
+        const { error: updateError } = await markItemsSent(order.id, latestPrintBatch(order));
 
         if (updateError) {
           // The ticket is already out of the printer, so surface the mismatch
@@ -288,6 +391,7 @@ export default function CashierHomeScreen() {
               order={o} 
               onPrintKitchenPress={(order) => handlePrint(order, "kitchen")}
               onPrintBillPress={(order) => handlePrint(order, "bill")}
+              onEditPress={handleEdit}
             />
           ))}
           {paid.map((o) => (
@@ -296,6 +400,7 @@ export default function CashierHomeScreen() {
               order={o} 
               onPrintKitchenPress={(order) => handlePrint(order, "kitchen")}
               onPrintBillPress={(order) => handlePrint(order, "bill")}
+              onEditPress={handleEdit}
             />
           ))}
         </ScrollView>
@@ -312,6 +417,39 @@ export default function CashierHomeScreen() {
           </TouchableOpacity>
         </View>
       )}
+
+      {/* Adding items would strand the newest batch — prevent it here. */}
+      <BatchWarningDialog
+        order={unprintedEditOrder}
+        title="Tambahan terakhir belum dicetak"
+        body="Kalau menambah pesanan sekarang, item berikut tidak akan pernah masuk struk dapur:"
+        items={unprintedEditOrder ? unprintedLatestBatch(unprintedEditOrder) : []}
+        hint="Cetak struk dapur dulu, lalu tambah pesanannya."
+        confirmLabel="Tetap tambah"
+        onCancel={() => setUnprintedEditOrder(null)}
+        onConfirm={(order) => {
+          setUnprintedEditOrder(null);
+          openOrderEditor(order);
+        }}
+      />
+
+      {/* An earlier batch was already stranded — report it before printing. */}
+      <BatchWarningDialog
+        order={skippedBatchOrder}
+        title="Ada tambahan yang belum dicetak"
+        body="Struk dapur hanya memuat tambahan terakhir. Item berikut sudah masuk pesanan tapi tidak akan ikut tercetak:"
+        items={skippedBatchOrder ? unprintedEarlierItems(skippedBatchOrder) : []}
+        hint="Cetak struk dapur setiap kali menambah pesanan agar ini tidak terjadi."
+        confirmLabel="Cetak saja"
+        onCancel={() => setSkippedBatchOrder(null)}
+        onConfirm={(order) => {
+          setSkippedBatchOrder(null);
+          setAcknowledgedSkips((prev) =>
+            new Set(prev).add(`${order.id}:${latestPrintBatch(order)}`)
+          );
+          continuePrint(order, "kitchen");
+        }}
+      />
 
       {/* Printer selector */}
       <PrinterSelector

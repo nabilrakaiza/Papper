@@ -10,7 +10,7 @@ type OrderContextType = {
   addOrder: (order: Omit<Order, "id" | "createdAt">, force?: boolean) => Promise<{ error: string | null; stockWarning?: string }>;
   updateOrder: (id: number, order: Partial<Order>, force?: boolean) => Promise<{ error: string | null; stockWarning?: string }>;
   cancelOrderWithPin: (orderId: number, pin: string) => Promise<{ success: boolean; error: string | null }>;
-  markItemsSent: (orderId: number) => Promise<{ error: string | null }>;
+  markItemsSent: (orderId: number, printBatch: number) => Promise<{ error: string | null }>;
   markPaid: (id: number, discount: number, methodOfPayment: string, paymentAmount: number) => Promise<{ error: string | null }>;
   toggleMenuAvailability: (menuId: number) => Promise<void>;
   refetch: () => Promise<void>;
@@ -462,11 +462,18 @@ export function OrderProvider({ children }: { children: ReactNode }) {
   // whole item set with a delete + reinsert. That is blocked on paid orders, and
   // would also reset is_stock_deducted and discard the existing row ids just to
   // flip a boolean.
-  const markItemsSent = async (orderId: number): Promise<{ error: string | null }> => {
+  //
+  // Scoped to the batch that was actually printed. Marking every line in the
+  // order sent would also clear the flag on a batch that was added and then
+  // skipped — which is precisely the state the cashier screen checks for before
+  // printing, so a blanket update would destroy the only evidence of the
+  // mistake it is meant to catch.
+  const markItemsSent = async (orderId: number, printBatch: number): Promise<{ error: string | null }> => {
     const { error } = await supabase
       .from("order_items")
       .update({ is_sent: true })
-      .eq("order_id", orderId);
+      .eq("order_id", orderId)
+      .eq("print_batch", printBatch);
 
     if (error) {
       return { error: "Gagal memperbarui status terkirim." };
@@ -475,7 +482,12 @@ export function OrderProvider({ children }: { children: ReactNode }) {
     setOrders((prev) =>
       prev.map((o) =>
         o.id === orderId
-          ? { ...o, items: o.items.map((i) => ({ ...i, isSent: true })) }
+          ? {
+              ...o,
+              items: o.items.map((i) =>
+                i.printBatch === printBatch ? { ...i, isSent: true } : i
+              ),
+            }
           : o
       )
     );
