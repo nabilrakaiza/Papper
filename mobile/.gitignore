@@ -48,3 +48,7 @@ data.sql
 # Local-only operational notes: project identifiers, staff accounts, test PINs.
 # Deliberately never committed — the repository is public.
 docs/LOCAL.md
+
+# Receipt preview tooling output (scripts/previewReceipt.ts)
+.preview/
+scripts/.build/

@@ -1,0 +1,17 @@
+{
+  // Standalone from the app's tsconfig: this compiles the preview tooling and
+  // the slice of lib/ it pulls in for plain Node, with none of the React
+  // Native or JSX setup the app needs.
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "CommonJS",
+    "moduleResolution": "node",
+    "rootDir": "..",
+    "outDir": ".build",
+    "strict": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "types": ["node"]
+  },
+  "files": ["previewReceipt.ts"]
+}
