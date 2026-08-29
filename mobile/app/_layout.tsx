@@ -7,11 +7,24 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 import "../global.css";
 import * as NavigationBar from 'expo-navigation-bar';
 import { BottomSheetModalProvider } from "@gorhom/bottom-sheet";
+import { useFonts, Nunito_700Bold } from "@expo-google-fonts/nunito";
 
 // app/_layout.tsx
 function RootNavigator() {
   const { session, profile, loading } = useAuth();
   const [ready, setReady] = useState(false);
+
+  // The tab bars ask for Nunito_700Bold but nothing ever loaded it, so the
+  // labels silently fell back to the system font.
+  //
+  // Deliberately gated on `fontsLoaded || fontError`, not on `fontsLoaded`
+  // alone: a font that fails to load is a cosmetic problem, and waiting on it
+  // forever would turn it into the same splash-spinner hang we just fixed.
+  const [fontsLoaded, fontError] = useFonts({ Nunito_700Bold });
+
+  useEffect(() => {
+    if (fontError) console.warn("Nunito failed to load, using system font:", fontError);
+  }, [fontError]);
 
   useEffect(() => {
     if (Platform.OS !== 'android') return;
@@ -49,7 +62,7 @@ function RootNavigator() {
     }
   }, [session, profile, ready]);
 
-  if (!ready) {
+  if (!ready || (!fontsLoaded && !fontError)) {
     return (
       <View className="flex-1 items-center justify-center bg-gray-100">
         <ActivityIndicator size="large" color="#3a7bd5" />
