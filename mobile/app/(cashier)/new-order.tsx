@@ -387,14 +387,20 @@ export default function NewOrderScreen() {
           })}
         </ScrollView>
 
-        {!!error && (
-          <View className="mx-4 mb-2 bg-red-50 border border-red-100 rounded-2xl px-4 py-3">
-            <Text className="text-xs font-bold text-red-500 text-center">{error}</Text>
-          </View>
-        )}
-
         {totalItems > 0 && (
           <View className="absolute bottom-0 left-0 right-0">
+            {/* Inside the bar, not above it. As a sibling in normal flow this
+                banner rendered underneath the absolutely-positioned summary and
+                was painted over — a failed confirm looked like nothing at all
+                had happened. It can only be set here with items selected
+                (handleConfirm returns early otherwise), so it belongs with the
+                bar it reports on. */}
+            {!!error && (
+              <View className="mx-4 mb-2 bg-red-50 border border-red-100 rounded-2xl px-4 py-3">
+                <Text className="text-xs font-bold text-red-500 text-center">{error}</Text>
+              </View>
+            )}
+
             <View className="mx-4 mb-2 bg-green-400 rounded-3xl px-5 py-4 shadow-sm">
               {summaryOpen && (
                 <View className="mb-3" style={{ maxHeight: summaryMaxHeight }}>

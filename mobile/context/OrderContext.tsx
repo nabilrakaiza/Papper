@@ -1,6 +1,7 @@
 import { createContext, useContext, useState, useEffect, ReactNode } from "react";
 import { Order, MenuItem, OrderItem } from "../types/order";
 import { supabase } from "../lib/supabase";
+import { isConnectionError, NO_CONNECTION } from "../lib/errors";
 
 type OrderContextType = {
   orders: Order[];
@@ -166,7 +167,17 @@ export function OrderProvider({ children }: { children: ReactNode }) {
       // shortage inside deduct_stock_for_order, on a path that cannot clean up
       // after itself. Surfaced as a warning rather than a hard block so a
       // flaky connection cannot stop the cafe taking orders.
+      //
+      // Unless there is no connection at all, in which case every write below
+      // is going to fail too. Offering "Lanjutkan saja" there produced a
+      // guaranteed failure one tap later, described as a stock problem — the
+      // cashier was told stock might be out when the phone simply had no
+      // network. Name the actual problem and stop.
       if (checkError) {
+        if (isConnectionError(checkError)) {
+          return { error: `${NO_CONNECTION} Pesanan belum tersimpan.` };
+        }
+
         return {
           error: null,
           stockWarning:
@@ -199,6 +210,11 @@ export function OrderProvider({ children }: { children: ReactNode }) {
       .single();
 
     if (orderError || !newOrder) {
+      // Covers a connection dropping between the check and the write, and the
+      // force path, which skips the check entirely.
+      if (isConnectionError(orderError)) {
+        return { error: `${NO_CONNECTION} Pesanan belum tersimpan.` };
+      }
       return { error: "Gagal membuat pesanan. Silakan coba lagi." };
     }
 
@@ -288,8 +304,14 @@ export function OrderProvider({ children }: { children: ReactNode }) {
         }
       );
 
-      // Same reasoning as addOrder: an errored check is not a passed check.
+      // Same reasoning as addOrder, including the connection case: with no
+      // network the writes below cannot succeed, so an override offer is a
+      // guaranteed failure wearing a stock warning's label.
       if (checkError) {
+        if (isConnectionError(checkError)) {
+          return { error: `${NO_CONNECTION} Perubahan belum tersimpan.` };
+        }
+
         return {
           error: null,
           stockWarning:
@@ -325,6 +347,9 @@ export function OrderProvider({ children }: { children: ReactNode }) {
         .eq("id", id);
 
       if (updateError) {
+        if (isConnectionError(updateError)) {
+          return { error: `${NO_CONNECTION} Perubahan belum tersimpan.` };
+        }
         return { error: "Gagal memperbarui pesanan. Silakan coba lagi." };
       }
     }
@@ -508,6 +533,9 @@ export function OrderProvider({ children }: { children: ReactNode }) {
       .eq("print_batch", printBatch);
 
     if (error) {
+      if (isConnectionError(error)) {
+        return { error: `${NO_CONNECTION} Status terkirim belum tersimpan.` };
+      }
       return { error: "Gagal memperbarui status terkirim." };
     }
 
@@ -534,6 +562,9 @@ export function OrderProvider({ children }: { children: ReactNode }) {
       .eq("id", id);
 
     if (error) {
+      if (isConnectionError(error)) {
+        return { error: `${NO_CONNECTION} Pembayaran belum tercatat.` };
+      }
       return { error: "Gagal mengonfirmasi pembayaran. Silakan coba lagi." };
     }
 
