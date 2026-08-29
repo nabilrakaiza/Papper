@@ -43,9 +43,27 @@ function formatDate(dateStr: string): string {
   return d.toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric" });
 }
 
+/**
+ * True when an expense was entered on a later calendar day than the one it is
+ * dated to — i.e. the date was chosen by whoever typed it in, not observed.
+ *
+ * Worth flagging because the list filters on expense_date, not created_at, so a
+ * backdated row lands in an earlier week or month bucket than the day it was
+ * actually recorded, and the comparison screen compares months. Usually that is
+ * honest catch-up bookkeeping; it is also the shape that moves spending between
+ * reporting periods, and nothing else on the screen tells the two apart.
+ *
+ * Compares calendar days rather than a millisecond delta. The old `> 24h` rule
+ * sat exactly on the boundary for the commonest case: the picker starts at
+ * `new Date()` and changes the day while keeping the time, so choosing
+ * yesterday produced a difference of almost precisely 24h and flagged or not
+ * depending on the seconds that had elapsed.
+ */
 function isBackdated(expenseDate: string, createdAt: string): boolean {
-  const diff = new Date(createdAt).getTime() - new Date(expenseDate).getTime();
-  return diff > 1000 * 60 * 60 * 24; // more than 1 day apart
+  const startOfDay = (d: Date) =>
+    new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+
+  return startOfDay(new Date(createdAt)) > startOfDay(new Date(expenseDate));
 }
 
 // Helper to get ISO date strings for our Supabase filters
@@ -156,11 +174,11 @@ function ExpenseCard({ item, onDelete }: { item: ExpenseItem; onDelete?: () => v
             <Text className="text-[11px] font-bold text-gray-400">
               {formatDate(item.expense_date)}
             </Text>
-            {/* {backdated && (
+            {backdated && (
               <View className="bg-orange-100 px-1.5 py-0.5 rounded-md ml-1">
-                <Text className="text-[9px] font-extrabold text-orange-500">BACKDATED</Text>
+                <Text className="text-[9px] font-extrabold text-orange-500">SUSULAN</Text>
               </View>
-            )} */}
+            )}
           </View>
         </View>
         <View className="items-end">
