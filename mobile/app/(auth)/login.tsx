@@ -11,6 +11,7 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { supabase } from "../../lib/supabase";
+import { isAuthRetryableFetchError } from "@supabase/supabase-js";
 import { useAuth } from "../../context/AuthContext"; // adjust path to match your project
 
 export default function LoginScreen() {
@@ -51,7 +52,14 @@ export default function LoginScreen() {
     });
 
     if (authSignInError) {
-      setError("Nama pengguna atau kata sandi salah");
+      // Every failure used to read as bad credentials, so signing in with no
+      // network told the cashier their password was wrong — and they would
+      // retype a correct password until someone thought to check the wifi.
+      setError(
+        isAuthRetryableFetchError(authSignInError)
+          ? "Tidak ada koneksi internet. Periksa jaringan Anda."
+          : "Nama pengguna atau kata sandi salah"
+      );
       setLoading(false);
       return;
     }

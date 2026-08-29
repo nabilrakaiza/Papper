@@ -393,7 +393,7 @@ export default function CashierHomeScreen() {
             <Text numberOfLines={1} className="text-xs font-extrabold text-gray-400 max-w-[104px]">
               Kasir ·{" "}
               <Text className={cashierPrinter ? "text-gray-700" : "text-gray-400"}>
-                {cashierPrinter ? cashierPrinter.name : "belum diatur"}
+                {cashierPrinter ? cashierPrinter.name : "—"}
               </Text>
             </Text>
           </TouchableOpacity>
@@ -406,7 +406,7 @@ export default function CashierHomeScreen() {
             <Text numberOfLines={1} className="text-xs font-extrabold text-gray-400 max-w-[104px]">
               Dapur ·{" "}
               <Text className={kitchenPrinter ? "text-gray-700" : "text-gray-400"}>
-                {kitchenPrinter ? kitchenPrinter.name : "belum diatur"}
+                {kitchenPrinter ? kitchenPrinter.name : "—"}
               </Text>
             </Text>
           </TouchableOpacity>
