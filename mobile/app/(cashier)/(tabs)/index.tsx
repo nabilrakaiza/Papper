@@ -9,7 +9,7 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { router } from "expo-router";
-import { Printer, Check, RefreshCw, ChefHat, Receipt, Utensils, Pencil} from "lucide-react-native";
+import { Printer, Check, RefreshCw, ChefHat, Receipt, Utensils, Pencil, UtensilsCrossed, ShoppingBag } from "lucide-react-native";
 import { useOrders } from "../../../context/OrderContext";
 import { usePrinter, PrinterRole } from "../../../context/PrinterContext";
 import { Order, OrderItem } from "../../../types/order";
@@ -161,10 +161,39 @@ function OrderCard({ order, onPrintKitchenPress, onPrintBillPress, onEditPress }
         </View>
       </View>
 
-      <View className="flex-row justify-between mt-2 px-1">
-        <Text className={`text-xs font-bold ${isPaid ? "text-white/70" : "text-gray-400"}`}>
-          Tempat Duduk: {order.seat}
-        </Text>
+      <View className="flex-row items-center justify-between mt-2 px-1 gap-2">
+        <View className="flex-row items-center gap-2 flex-1">
+          {/* Dine-in vs takeaway drives how the order is handed over, and the
+              card gave no sign of it — the two looked identical right up to
+              carrying the plates out. Tinted like the name chip so it reads on
+              both the paid and unpaid card. */}
+          <View
+            className={`flex-row items-center gap-1 rounded-lg px-2 py-0.5 ${
+              isPaid ? "bg-white/20" : "bg-white/80"
+            }`}
+          >
+            {order.isDineIn ? (
+              <UtensilsCrossed size={11} color={isPaid ? "#ffffff" : "#3a7bd5"} />
+            ) : (
+              <ShoppingBag size={11} color={isPaid ? "#ffffff" : "#f97316"} />
+            )}
+            <Text
+              className={`text-[10px] font-extrabold ${
+                isPaid ? "text-white" : order.isDineIn ? "text-blue-600" : "text-orange-600"
+              }`}
+            >
+              {order.isDineIn ? "Di Tempat" : "Bawa Pulang"}
+            </Text>
+          </View>
+
+          <Text
+            numberOfLines={1}
+            className={`text-xs font-bold flex-1 ${isPaid ? "text-white/70" : "text-gray-400"}`}
+          >
+            Tempat Duduk: {order.seat}
+          </Text>
+        </View>
+
         <Text className={`text-xs font-bold ${isPaid ? "text-white/70" : "text-gray-400"}`}>
           {formatRupiah(orderTotal(order))}
         </Text>
