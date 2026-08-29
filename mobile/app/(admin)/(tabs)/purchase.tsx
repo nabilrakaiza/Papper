@@ -217,23 +217,43 @@ export default function ExpensesScreen() {
   const [loading, setLoading] = useState(true);
   const [activeFilter, setActiveFilter] = useState("This Week");
   const [pendingDeleteId, setPendingDeleteId] = useState<number | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   const fetchExpenses = useCallback(async () => {
     setLoading(true);
     const { start, end } = getDateRange(activeFilter);
 
-    // Fetch from the expenses table, filtered by our date range, sorted newest first
-    const { data, error } = await supabase
-      .from("expenses")
-      .select("*")
-      .gte("expense_date", start)
-      .lte("expense_date", end)
-      .order("expense_date", { ascending: false });
+    // try/finally so a thrown request (dropped connection mid-flight) can't skip
+    // setLoading(false) and strand the spinner.
+    try {
+      // Fetch from the expenses table, filtered by our date range, sorted newest first
+      const { data, error: fetchError } = await supabase
+        .from("expenses")
+        .select("*")
+        .gte("expense_date", start)
+        .lte("expense_date", end)
+        .order("expense_date", { ascending: false });
 
-    if (!error && data) {
-      setExpenses(data);
+      // A failure used to leave the previous filter's rows on screen with no
+      // message, so they read as this filter's results — the worst outcome on a
+      // screen people open specifically to confirm what was spent. Clear the
+      // list and say so.
+      if (fetchError) {
+        console.error("Failed to fetch expenses:", fetchError.message);
+        setExpenses([]);
+        setError("Gagal memuat pengeluaran. Periksa koneksi Anda.");
+        return;
+      }
+
+      setExpenses(data ?? []);
+      setError(null);
+    } catch (e) {
+      console.error("Failed to fetch expenses:", e);
+      setExpenses([]);
+      setError("Gagal memuat pengeluaran. Periksa koneksi Anda.");
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   }, [activeFilter]);
 
   // Refetch on filter change, and stay live afterwards.
@@ -271,8 +291,18 @@ export default function ExpensesScreen() {
     const id = pendingDeleteId;
     setPendingDeleteId(null);
 
-    const { error } = await supabase.rpc("delete_expense_entry", { p_expense_id: id });
-    if (!error) fetchExpenses();
+    const { error: deleteError } = await supabase.rpc("delete_expense_entry", { p_expense_id: id });
+
+    // Silently ignoring this made a denied or failed delete look like the row
+    // simply refused to go away.
+    if (deleteError) {
+      console.error("Failed to delete expense:", deleteError.message);
+      setError("Gagal menghapus pengeluaran. Silakan coba lagi.");
+      return;
+    }
+
+    setError(null);
+    fetchExpenses();
   };
 
   return (
@@ -291,6 +321,15 @@ export default function ExpensesScreen() {
           </TouchableOpacity>
         )}
       </View>
+
+      {!!error && (
+        <TouchableOpacity
+          onPress={() => setError(null)}
+          className="mx-4 mb-2 bg-red-50 border border-red-200 rounded-2xl px-4 py-3"
+        >
+          <Text className="text-xs font-bold text-red-600">{error}</Text>
+        </TouchableOpacity>
+      )}
 
       {/* Filter chips */}
       <View className="h-[50px] flex-none mb-2">

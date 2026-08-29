@@ -119,79 +119,84 @@ export default function AdminOrdersScreen() {
     setLoading(true);
     setError("");
 
-    const { from, to } = getRange(period);
+    // Every returned-error branch cleared the spinner itself; a thrown request
+    // cleared none of them. One finally covers all four exits.
+    try {
+      const { from, to } = getRange(period);
 
-    // One query for the orders, one for every line item across them — rather
-    // than a nested select, which PostgREST would return per order and which
-    // makes the row shape harder to keep in step with OrderContext.
-    let query = supabase
-      .from("orders")
-      .select("id, customer_name, seat, created_at, status, discount, method_of_payment, is_dine_in, payment_amount")
-      .gte("created_at", from.toISOString())
-      .lt("created_at", to.toISOString())
-      .order("created_at", { ascending: false });
+      // One query for the orders, one for every line item across them — rather
+      // than a nested select, which PostgREST would return per order and which
+      // makes the row shape harder to keep in step with OrderContext.
+      let query = supabase
+        .from("orders")
+        .select("id, customer_name, seat, created_at, status, discount, method_of_payment, is_dine_in, payment_amount")
+        .gte("created_at", from.toISOString())
+        .lt("created_at", to.toISOString())
+        .order("created_at", { ascending: false });
 
-    if (status !== "Semua") {
-      query = query.eq("status", STATUS_VALUE[status]);
-    }
+      if (status !== "Semua") {
+        query = query.eq("status", STATUS_VALUE[status]);
+      }
 
-    const { data: orderData, error: orderError } = await query;
+      const { data: orderData, error: orderError } = await query;
 
-    if (orderError) {
+      if (orderError) {
+        setError("Gagal memuat pesanan.");
+        setOrders([]);
+        return;
+      }
+
+      if (!orderData || orderData.length === 0) {
+        setOrders([]);
+        return;
+      }
+
+      const { data: itemData, error: itemError } = await supabase
+        .from("order_items")
+        .select("order_id, name, price, quantity, notes, is_cancelled, menu_id")
+        .in("order_id", orderData.map((o) => o.id));
+
+      if (itemError) {
+        setError("Gagal memuat item pesanan.");
+        setOrders([]);
+        return;
+      }
+
+      setOrders(
+        orderData.map((o) => {
+          const items = (itemData ?? []).filter((i) => i.order_id === o.id);
+          const subtotal = items.reduce((s, i) => s + i.price * i.quantity, 0);
+
+          return {
+            id: o.id,
+            customerName: o.customer_name,
+            seat: o.seat,
+            createdAt: new Date(o.created_at),
+            status: o.status,
+            discount: o.discount,
+            methodOfPayment: o.method_of_payment,
+            isDineIn: o.is_dine_in,
+            paymentAmount: o.payment_amount,
+            subtotal,
+            total: orderTotal(subtotal, o.discount),
+            items: items.map((i) => ({
+              name: i.name,
+              price: i.price,
+              quantity: i.quantity,
+              notes: i.notes,
+              is_cancelled: i.is_cancelled,
+              menu_id: i.menu_id,
+            })),
+          };
+        })
+      );
+    } catch (e) {
+      console.error("Failed to fetch orders:", e);
       setError("Gagal memuat pesanan.");
       setOrders([]);
+    } finally {
       setLoading(false);
-      return;
     }
-
-    if (!orderData || orderData.length === 0) {
-      setOrders([]);
-      setLoading(false);
-      return;
-    }
-
-    const { data: itemData, error: itemError } = await supabase
-      .from("order_items")
-      .select("order_id, name, price, quantity, notes, is_cancelled, menu_id")
-      .in("order_id", orderData.map((o) => o.id));
-
-    if (itemError) {
-      setError("Gagal memuat item pesanan.");
-      setOrders([]);
-      setLoading(false);
-      return;
-    }
-
-    setOrders(
-      orderData.map((o) => {
-        const items = (itemData ?? []).filter((i) => i.order_id === o.id);
-        const subtotal = items.reduce((s, i) => s + i.price * i.quantity, 0);
-
-        return {
-          id: o.id,
-          customerName: o.customer_name,
-          seat: o.seat,
-          createdAt: new Date(o.created_at),
-          status: o.status,
-          discount: o.discount,
-          methodOfPayment: o.method_of_payment,
-          isDineIn: o.is_dine_in,
-          paymentAmount: o.payment_amount,
-          subtotal,
-          total: orderTotal(subtotal, o.discount),
-          items: items.map((i) => ({
-            name: i.name,
-            price: i.price,
-            quantity: i.quantity,
-            notes: i.notes,
-            is_cancelled: i.is_cancelled,
-            menu_id: i.menu_id,
-          })),
-        };
-      })
-    );
-
-    setLoading(false);
   }, [period, status]);
 
   useEffect(() => {

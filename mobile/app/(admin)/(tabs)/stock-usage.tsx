@@ -81,22 +81,31 @@ export default function StockUsageScreen() {
     setLoading(true);
     setError("");
 
-    const { from, to } = getRange(period);
-    const { data, error: rpcError } = await supabase.rpc("stock_usage_report", {
-      p_from: from.toISOString(),
-      p_to: to.toISOString(),
-    });
+    // try/finally so a thrown request can't skip setLoading(false) and leave
+    // the report spinning with no way back.
+    try {
+      const { from, to } = getRange(period);
+      const { data, error: rpcError } = await supabase.rpc("stock_usage_report", {
+        p_from: from.toISOString(),
+        p_to: to.toISOString(),
+      });
 
-    if (rpcError) {
+      if (rpcError) {
+        setError("Gagal memuat laporan pemakaian stok.");
+        setRows([]);
+        setUnmapped(null);
+      } else {
+        setRows(data?.items ?? []);
+        setUnmapped(data?.unmapped ?? null);
+      }
+    } catch (e) {
+      console.error("Failed to fetch stock usage report:", e);
       setError("Gagal memuat laporan pemakaian stok.");
       setRows([]);
       setUnmapped(null);
-    } else {
-      setRows(data?.items ?? []);
-      setUnmapped(data?.unmapped ?? null);
+    } finally {
+      setLoading(false);
     }
-
-    setLoading(false);
   }, [period, isSuperadmin]);
 
   useEffect(() => {

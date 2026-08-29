@@ -36,31 +36,38 @@ export default function StockScreen() {
     setLoading(true);
     setError(null);
 
-    const { data, error } = await supabase
-      .from("stock")
-      .select("*")
-      .order("name", { ascending: true });
+    // setLoading(false) moved into a finally: a returned error was handled, but
+    // a thrown one (a dropped connection mid-request) skipped it and left the
+    // stock list spinning with no retry.
+    try {
+      const { data, error: fetchError } = await supabase
+        .from("stock")
+        .select("*")
+        .order("name", { ascending: true });
 
-    if (error) {
+      if (fetchError) {
+        setError("Gagal memuat stok. Periksa koneksi Anda.");
+        return;
+      }
+
+      if (data) {
+        setItems(
+          data.map((s) => ({
+            id: s.id,
+            name: s.name,
+            quantity: s.quantity,
+            unit: s.unit,
+            pricePerUnit: s.price_per_unit,
+            isActive: s.is_active,
+          }))
+        );
+      }
+    } catch (e) {
+      console.error("Failed to fetch stock:", e);
       setError("Gagal memuat stok. Periksa koneksi Anda.");
+    } finally {
       setLoading(false);
-      return;
     }
-
-    if (data) {
-      setItems(
-        data.map((s) => ({
-          id: s.id,
-          name: s.name,
-          quantity: s.quantity,
-          unit: s.unit,
-          pricePerUnit: s.price_per_unit,
-          isActive: s.is_active,
-        }))
-      );
-    }
-
-    setLoading(false);
   }, []);
 
   useEffect(() => {

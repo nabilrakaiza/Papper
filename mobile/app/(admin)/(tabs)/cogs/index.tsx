@@ -241,57 +241,73 @@ export default function CogsScreen() {
   const [search, setSearch] = useState("");
   const [showDeleted, setShowDeleted] = useState(false);
   const [pendingDeleteId, setPendingDeleteId] = useState<number | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   const fetchData = useCallback(async (isInitial: boolean) => {
     if (isInitial) setLoading(true);
 
-    const { data: menuData } = await supabase
-      .from("menus")
-      .select("id, name, price, cogs_mode, manual_cogs, is_active");
+    // try/finally: the mapping below reaches into `i.stock`, which comes back
+    // null when the embed fails rather than merely empty, so this block can
+    // throw outright — and a throw used to skip setLoading(false) and strand
+    // the spinner with no way back.
+    try {
+      const { data: menuData, error: menuError } = await supabase
+        .from("menus")
+        .select("id, name, price, cogs_mode, manual_cogs, is_active");
 
-    const { data: ingredientData } = await supabase
-      .from("menu_ingredients")
-      .select("menu_id, quantity, stock:stock_id(id, name, price_per_unit)");
+      const { data: ingredientData } = await supabase
+        .from("menu_ingredients")
+        .select("menu_id, quantity, stock:stock_id(id, name, price_per_unit)");
 
-    if (!menuData) {
+      // A failed load used to render as an empty list, which on this screen
+      // reads as "no menus have HPP set" rather than "nothing loaded".
+      if (menuError || !menuData) {
+        console.error("Failed to fetch menus:", menuError?.message);
+        setMenus([]);
+        setError("Gagal memuat data HPP. Periksa koneksi Anda.");
+        return;
+      }
+
+      const result: MenuWithCogs[] = menuData.map((menu) => {
+        const ingredients: Ingredient[] = (ingredientData ?? [])
+          .filter((i) => i.menu_id === menu.id)
+          .map((i) => ({
+            stockId: (i.stock as any).id,
+            stockName: (i.stock as any).name,
+            quantity: i.quantity,
+            pricePerUnit: (i.stock as any).price_per_unit,
+          }));
+
+        const cogsMode = (menu.cogs_mode ?? "ingredients") as CogsMode;
+
+        // Resolve rawCogs strictly based on mode - never mixed
+        const rawCogs =
+          cogsMode === "ingredients"
+            ? ingredients.length > 0
+              ? ingredients.reduce((sum, i) => sum + i.quantity * i.pricePerUnit, 0)
+              : null
+            : menu.manual_cogs;
+
+        return {
+          id: menu.id,
+          name: menu.name,
+          sellingPrice: menu.price,
+          ingredients,
+          cogsMode,
+          manualCogs: menu.manual_cogs,
+          rawCogs,
+          isActive: menu.is_active,
+        };
+      });
+      setMenus(result);
+      setError(null);
+    } catch (e) {
+      console.error("Failed to fetch HPP data:", e);
+      setMenus([]);
+      setError("Gagal memuat data HPP. Periksa koneksi Anda.");
+    } finally {
       setLoading(false);
-      return;
     }
-
-    const result: MenuWithCogs[] = menuData.map((menu) => {
-      const ingredients: Ingredient[] = (ingredientData ?? [])
-        .filter((i) => i.menu_id === menu.id)
-        .map((i) => ({
-          stockId: (i.stock as any).id,
-          stockName: (i.stock as any).name,
-          quantity: i.quantity,
-          pricePerUnit: (i.stock as any).price_per_unit,
-        }));
-
-      const cogsMode = (menu.cogs_mode ?? "ingredients") as CogsMode;
-
-      // Resolve rawCogs strictly based on mode - never mixed
-      const rawCogs =
-        cogsMode === "ingredients"
-          ? ingredients.length > 0
-            ? ingredients.reduce((sum, i) => sum + i.quantity * i.pricePerUnit, 0)
-            : null
-          : menu.manual_cogs;
-
-      return {
-        id: menu.id,
-        name: menu.name,
-        sellingPrice: menu.price,
-        ingredients,
-        cogsMode,
-        manualCogs: menu.manual_cogs,
-        rawCogs,
-        isActive: menu.is_active,
-      };
-    });
-
-    setMenus(result);
-    setLoading(false);
   }, []);
 
   useFocusEffect(
@@ -314,14 +330,29 @@ export default function CogsScreen() {
     setExpandedId((prev) => (prev === id ? null : id));
   }, []);
 
+  // Both of these used to drop the error on the floor, so a denied or failed
+  // write looked exactly like a tap that never registered — the card just
+  // stayed where it was.
   const handleDeleteMenu = useCallback(async (id: number) => {
-    const { error } = await supabase.from("menus").update({ is_active: false }).eq("id", id);
-    if (!error) fetchData(false);
+    const { error: deleteError } = await supabase.from("menus").update({ is_active: false }).eq("id", id);
+    if (deleteError) {
+      console.error("Failed to archive menu:", deleteError.message);
+      setError("Gagal menghapus menu. Silakan coba lagi.");
+      return;
+    }
+    setError(null);
+    fetchData(false);
   }, [fetchData]);
 
   const handleRestoreMenu = useCallback(async (id: number) => {
-    const { error } = await supabase.from("menus").update({ is_active: true }).eq("id", id);
-    if (!error) fetchData(false);
+    const { error: restoreError } = await supabase.from("menus").update({ is_active: true }).eq("id", id);
+    if (restoreError) {
+      console.error("Failed to restore menu:", restoreError.message);
+      setError("Gagal memulihkan menu. Silakan coba lagi.");
+      return;
+    }
+    setError(null);
+    fetchData(false);
   }, [fetchData]);
 
   const renderItem = useCallback(
@@ -362,6 +393,15 @@ export default function CogsScreen() {
           </TouchableOpacity>
         )}
       </View>
+
+      {!!error && (
+        <TouchableOpacity
+          onPress={() => setError(null)}
+          className="mx-4 mb-2 bg-red-50 border border-red-200 rounded-2xl px-4 py-3"
+        >
+          <Text className="text-xs font-bold text-red-600">{error}</Text>
+        </TouchableOpacity>
+      )}
 
       {/* Search */}
       <View className="px-4 mb-2">

@@ -127,39 +127,56 @@ export default function CogsEditScreen() {
     if (isNew) return;
     setLoading(true);
 
-    const { data: menu } = await supabase
-      .from("menus")
-      .select("id, name, price, cogs_mode, manual_cogs")
-      .eq("id", menuId)
-      .single();
+    // try/finally: the ingredient mapping dereferences `i.stock`, which is null
+    // when the embed fails rather than merely empty, so this can throw and skip
+    // setLoading(false) entirely.
+    try {
+      const { data: menu, error: menuError } = await supabase
+        .from("menus")
+        .select("id, name, price, cogs_mode, manual_cogs")
+        .eq("id", menuId)
+        .single();
 
-    const { data: ingredientData } = await supabase
-      .from("menu_ingredients")
-      .select("id, quantity, stock:stock_id(id, name, unit, price_per_unit)")
-      .eq("menu_id", menuId);
+      const { data: ingredientData } = await supabase
+        .from("menu_ingredients")
+        .select("id, quantity, stock:stock_id(id, name, unit, price_per_unit)")
+        .eq("menu_id", menuId);
 
-    if (menu) {
+      // A failed load used to leave the form blank while still looking ready to
+      // edit — and saving from there would write those blanks back over a real
+      // menu. Say it failed instead.
+      if (menuError || !menu) {
+        console.error("Failed to load menu:", menuError?.message);
+        setError("Gagal memuat menu. Periksa koneksi Anda, lalu buka ulang.");
+        return;
+      }
+
       setMenuName(menu.name);
       setSellingPrice(menu.price);
       setCogsMode((menu.cogs_mode ?? "ingredients") as CogsMode);
       setManualCogsInput(menu.manual_cogs != null ? menu.manual_cogs.toString() : "");
+
+      setIngredients(
+        (ingredientData ?? []).map((i) => ({
+          rowId: i.id,
+          stockId: (i.stock as any).id,
+          stockName: (i.stock as any).name,
+          unit: (i.stock as any).unit,
+          quantity: i.quantity,
+          pricePerUnit: (i.stock as any).price_per_unit,
+        }))
+      );
+
+      setDeletedRowIds([]);
+      setIsDirty(false);
+      setError("");
+    } catch (e) {
+      console.error("Failed to load menu:", e);
+      setError("Gagal memuat menu. Periksa koneksi Anda, lalu buka ulang.");
+    } finally {
+      setLoading(false);
     }
-
-    setIngredients(
-      (ingredientData ?? []).map((i) => ({
-        rowId: i.id,
-        stockId: (i.stock as any).id,
-        stockName: (i.stock as any).name,
-        unit: (i.stock as any).unit,
-        quantity: i.quantity,
-        pricePerUnit: (i.stock as any).price_per_unit,
-      }))
-    );
-
-    setDeletedRowIds([]);
-    setIsDirty(false);
-    setLoading(false);
-  }, [menuId]);
+  }, [menuId, isNew]);
 
   useFocusEffect(
     useCallback(() => {
