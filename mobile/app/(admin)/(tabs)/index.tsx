@@ -12,6 +12,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { router } from "expo-router";
 import { RefreshCw, Search, X, BarChart2 } from "lucide-react-native";
 import { supabase } from "../../../lib/supabase";
+import { isConnectionError, NO_CONNECTION } from "../../../lib/errors";
 import StockCard from "@/components/stock/StockCard";
 import AddStockSheet from "@/components/stock/AddStockSheet";
 import CorrectStockDialog from "@/components/stock/CorrectStockDialog";
@@ -151,11 +152,27 @@ export default function StockScreen() {
   };
 
   const handleRequestRemove = async (item: StockItem) => {
-    const { data } = await supabase
+    const { data, error: dependencyError } = await supabase
       .from("menu_ingredients")
       .select("menus!inner(name, is_active)")
       .eq("stock_id", item.id)
       .eq("menus.is_active", true);
+
+    // A check that failed to run is not a check that passed — the same rule
+    // addOrder's stock pre-check follows. The error was never destructured, so
+    // a failed query gave data: null, dependentMenus: [], and the item was
+    // archived on the spot: removing one that three menus depend on looked
+    // exactly like removing an unused one, skipping the confirmation below that
+    // exists to prevent precisely that.
+    if (dependencyError) {
+      console.error("Failed to check stock dependencies:", dependencyError.message);
+      setError(
+        isConnectionError(dependencyError)
+          ? `${NO_CONNECTION} Item stok belum dihapus.`
+          : "Tidak bisa memeriksa menu yang memakai item ini. Item stok belum dihapus."
+      );
+      return;
+    }
 
     const dependentMenus = (data ?? []).map((row: any) => row.menus.name as string);
 

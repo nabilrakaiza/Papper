@@ -221,10 +221,18 @@ export default function CogsEditScreen() {
   };
 
   const fetchStockOptions = useCallback(async () => {
-    const { data } = await supabase
+    const { data, error: fetchError } = await supabase
       .from("stock")
       .select("id, name, unit, price_per_unit")
       .order("name", { ascending: true });
+
+    // An empty list here reads as "no stock items exist" rather than "the list
+    // did not load", which is misleading on the screen where recipes are built.
+    if (fetchError) {
+      console.error("Failed to load stock options:", fetchError.message);
+      setError("Gagal memuat daftar stok. Periksa koneksi Anda.");
+      return;
+    }
 
     setStockOptions(
       (data ?? []).map((s) => ({
