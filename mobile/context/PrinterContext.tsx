@@ -24,13 +24,34 @@ export function PrinterProvider({ children }: { children: ReactNode }) {
   // Rehydrate remembered printers on app start — the actual Bluetooth
   // connection is (re)established later, at print time.
   useEffect(() => {
+    // Parsed per printer rather than in one block: an unparseable value used to
+    // throw out of the whole function, so a corrupt cashier entry also cost the
+    // kitchen printer its saved pairing. A bad entry is dropped instead, which
+    // puts that one printer back to "not set up" rather than losing both.
+    const parseDevice = (raw: string | null, role: PrinterRole): PrinterDevice | null => {
+      if (!raw) return null;
+      try {
+        return JSON.parse(raw) as PrinterDevice;
+      } catch {
+        console.warn(`Discarding unreadable saved ${role} printer`);
+        AsyncStorage.removeItem(STORAGE_KEYS[role]);
+        return null;
+      }
+    };
+
     const restore = async () => {
-      const [savedCashier, savedKitchen] = await Promise.all([
-        AsyncStorage.getItem(STORAGE_KEYS.cashier),
-        AsyncStorage.getItem(STORAGE_KEYS.kitchen),
-      ]);
-      if (savedCashier) setCashierPrinter(JSON.parse(savedCashier));
-      if (savedKitchen) setKitchenPrinter(JSON.parse(savedKitchen));
+      try {
+        const [savedCashier, savedKitchen] = await Promise.all([
+          AsyncStorage.getItem(STORAGE_KEYS.cashier),
+          AsyncStorage.getItem(STORAGE_KEYS.kitchen),
+        ]);
+        const cashier = parseDevice(savedCashier, "cashier");
+        const kitchen = parseDevice(savedKitchen, "kitchen");
+        if (cashier) setCashierPrinter(cashier);
+        if (kitchen) setKitchenPrinter(kitchen);
+      } catch (e) {
+        console.error("Failed to restore saved printers:", e);
+      }
     };
     restore();
   }, []);

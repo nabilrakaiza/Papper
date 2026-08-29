@@ -221,6 +221,12 @@ export default function CashierHomeScreen() {
 
   // Unified handler to route to the correct printer logic
   const handlePrint = async (order: Order, type: "kitchen" | "bill") => {
+    // The "Sedang mencetak" indicator is an inline banner, not a blocking
+    // overlay, so nothing stopped a second tap from opening a second connection
+    // to the same device mid-print — two tickets out of the printer, and
+    // markItemsSent running twice.
+    if (printing) return;
+
     setPrintError(null);
 
     // A kitchen ticket only ever covers the newest batch, so items added in a
@@ -260,12 +266,26 @@ export default function CashierHomeScreen() {
   };
 
   const doPrint = async (order: Order, type: "kitchen" | "bill", specificPrinter?: { name: string; address: string }) => {
+    // A receipt carries the cashier's name, so there is nothing to print
+    // without one. This used to be expressed as `if (type === "kitchen" && user)
+    // ... else if (user)`, which meant a null user matched neither branch and
+    // fell out of the function having done nothing: no receipt, no error, just
+    // the "Sedang mencetak" flash. Say what happened instead.
+    if (!user) {
+      setPrintError(
+        userLoading
+          ? "Memuat data pengguna, coba lagi sebentar lagi."
+          : "Tidak bisa mencetak: data pengguna tidak tersedia. Coba masuk ulang."
+      );
+      return;
+    }
+
     setPrinting(true);
     setPrintError(null);
 
     let printErr = null;
 
-    if (type === "kitchen" && user) {
+    if (type === "kitchen") {
       const targetPrinter = specificPrinter || kitchenPrinter;
       const { error } = await printReceipt(order, null, targetPrinter, user); // Passing null to cashier to prevent dual-printing
       printErr = error;
@@ -281,7 +301,7 @@ export default function CashierHomeScreen() {
         }
       }
 
-    } else if (user) {
+    } else {
       const targetPrinter = specificPrinter || cashierPrinter;
       const { error } = await printReceipt(order, targetPrinter, null, user); // Passing null to kitchen to prevent dual-printing
       printErr = error;
@@ -321,29 +341,44 @@ export default function CashierHomeScreen() {
           <Text className="text-2xl font-black text-gray-900">Pesanan</Text>
         </View>
 
-        {/* Printer status indicators */}
+        {/* Saved printers — NOT a connection status.
+            
+            These come from AsyncStorage and only record which printer each role
+            should print to. Nothing here is connected: the Bluetooth link is
+            opened at print time, in printReceipt. Styling them as a lit-up
+            accent with a bare device name read as "connected to TP-806", so a
+            pairing from days earlier looked live even with the printer switched
+            off. Naming the role and keeping the chip neutral makes it a setting
+            again, which is all it ever was.
+            
+            The module cannot honestly do better: isDeviceConnected() never
+            settles its Promise when mService is null (the state on every cold
+            start), and getConnectedDeviceAddress() returns the last address
+            connected rather than a live one. */}
         <View className="flex-row gap-2">
           <TouchableOpacity
             onPress={() => { setPrinterSelectorRole("cashier"); setPrinterSelectorVisible(true); }}
-            className={`flex-row items-center gap-1.5 px-2.5 py-1.5 rounded-xl ${
-              cashierPrinter ? "bg-blue-50" : "bg-gray-100"
-            }`}
+            className="flex-row items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-gray-100"
           >
-            <Printer size={13} color={cashierPrinter ? "#3a7bd5" : "#aaa"} />
-            <Text className={`text-xs font-extrabold ${cashierPrinter ? "text-blue-500" : "text-gray-400"}`}>
-              {cashierPrinter ? cashierPrinter.name : "Kasir"}
+            <Printer size={13} color={cashierPrinter ? "#555" : "#bbb"} />
+            <Text numberOfLines={1} className="text-xs font-extrabold text-gray-400 max-w-[104px]">
+              Kasir ·{" "}
+              <Text className={cashierPrinter ? "text-gray-700" : "text-gray-400"}>
+                {cashierPrinter ? cashierPrinter.name : "belum diatur"}
+              </Text>
             </Text>
           </TouchableOpacity>
 
           <TouchableOpacity
             onPress={() => { setPrinterSelectorRole("kitchen"); setPrinterSelectorVisible(true); }}
-            className={`flex-row items-center gap-1.5 px-2.5 py-1.5 rounded-xl ${
-              kitchenPrinter ? "bg-orange-50" : "bg-gray-100"
-            }`}
+            className="flex-row items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-gray-100"
           >
-            <ChefHat size={13} color={kitchenPrinter ? "#f97316" : "#aaa"} />
-            <Text className={`text-xs font-extrabold ${kitchenPrinter ? "text-orange-500" : "text-gray-400"}`}>
-              {kitchenPrinter ? kitchenPrinter.name : "Dapur"}
+            <ChefHat size={13} color={kitchenPrinter ? "#555" : "#bbb"} />
+            <Text numberOfLines={1} className="text-xs font-extrabold text-gray-400 max-w-[104px]">
+              Dapur ·{" "}
+              <Text className={kitchenPrinter ? "text-gray-700" : "text-gray-400"}>
+                {kitchenPrinter ? kitchenPrinter.name : "belum diatur"}
+              </Text>
             </Text>
           </TouchableOpacity>
         </View>
