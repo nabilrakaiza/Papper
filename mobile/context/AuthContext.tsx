@@ -28,51 +28,69 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [authError, setAuthError] = useState<string | null>(null);
 
-  const fetchProfile = async (userId: string): Promise<Profile | null> => {
-    const { data, error } = await supabase
-      .from("profiles")
-      .select("id, role, name")
-      .eq("id", userId)
-      .single();
-
-    if (error || !data) {
-      console.error("Error fetching profile:", error);
-      return null;
-    }
-
-    if (Platform.OS === "web" && data.role !== "admin" && data.role !== "superadmin") {
-      await supabase.auth.signOut();
-      setAuthError("Hanya akun admin yang dapat masuk di versi web.");
-      return null;
-    }
-
-    return data as Profile;
-  };
-
+  // supabase-js runs onAuthStateChange callbacks while holding its internal auth
+  // lock, and every supabase.from()/auth.* call awaits that same lock to attach
+  // the access token. Awaiting one from inside the callback deadlocks: the lock
+  // waits on the callback, the callback waits on the lock, and `loading` never
+  // flips — the app sits on the splash spinner forever. So this callback stays
+  // synchronous; the profile is fetched in the effect below, outside the lock.
   useEffect(() => {
-    let isMounted = true;
-
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, s) => {
-      const prof = s ? await fetchProfile(s.user.id) : null;
-      if (!isMounted) return;
-
-      // If we rejected this user (web + non-admin), don't keep the session around
-      if (s && !prof) {
-        setSession(null);
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, s) => {
+      setSession(s);
+      if (!s) {
         setProfile(null);
-      } else {
-        setSession(s);
-        setProfile(prof);
+        setLoading(false);
       }
-
-      setLoading(false);
     });
 
     return () => {
-      isMounted = false;
       subscription.unsubscribe();
     };
   }, []);
+
+  const userId = session?.user.id ?? null;
+
+  useEffect(() => {
+    if (!userId) return;
+
+    let cancelled = false;
+
+    (async () => {
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("id, role, name")
+        .eq("id", userId)
+        .single();
+
+      if (cancelled) return;
+
+      if (error || !data) {
+        console.error("Error fetching profile:", error);
+        setProfile(null);
+        setLoading(false);
+        return;
+      }
+
+      const prof = data as Profile;
+
+      if (Platform.OS === "web" && prof.role !== "admin" && prof.role !== "superadmin") {
+        setAuthError("Hanya akun admin yang dapat masuk di versi web.");
+        setProfile(null);
+        setLoading(false);
+        // Don't keep the rejected session around. Safe to await here — we are
+        // outside the auth-state-change callback, so no lock is held.
+        await supabase.auth.signOut();
+        return;
+      }
+
+      setProfile(prof);
+      setLoading(false);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [userId]);
 
   const signOut = async () => {
     await supabase.auth.signOut();
