@@ -102,7 +102,7 @@ export default function AvailabilityScreen() {
       )}
 
       <ScrollView
-        contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 120 }}
+        contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 24 }}
         showsVerticalScrollIndicator={false}
       >
         {CATEGORIES.map((category) => {
@@ -162,15 +162,6 @@ export default function AvailabilityScreen() {
           );
         })}
       </ScrollView>
-
-      {/* Confirm button */}
-      <View className="absolute bottom-0 left-0 right-0 px-4 pb-6">
-        <TouchableOpacity className="w-full bg-green-400 rounded-2xl py-4 items-center shadow shadow-green-600/30">
-          <Text className="text-sm font-extrabold text-white">
-            Simpan Ketersediaan
-          </Text>
-        </TouchableOpacity>
-      </View>
     </SafeAreaView>
   );
 }
