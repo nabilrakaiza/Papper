@@ -12,7 +12,7 @@ type OrderContextType = {
   cancelOrderWithPin: (orderId: number, pin: string) => Promise<{ success: boolean; error: string | null }>;
   markItemsSent: (orderId: number, printBatch: number) => Promise<{ error: string | null }>;
   markPaid: (id: number, discount: number, methodOfPayment: string, paymentAmount: number) => Promise<{ error: string | null }>;
-  toggleMenuAvailability: (menuId: number) => Promise<void>;
+  toggleMenuAvailability: (menuId: number) => Promise<{ error: string | null }>;
   refetch: () => Promise<void>;
 };
 
@@ -41,29 +41,38 @@ export function OrderProvider({ children }: { children: ReactNode }) {
   const [error, setError] = useState<string | null>(null);
 
   const fetchMenu = async () => {
-    const { data, error } = await supabase.from("menus").select("*").eq("is_active", true);
-    if (error) {
-      console.error("Failed to fetch menu:", error.message);
-      return;
+    try {
+      const { data, error } = await supabase.from("menus").select("*").eq("is_active", true);
+      if (error) {
+        console.error("Failed to fetch menu:", error.message);
+        return;
+      }
+      if (data) setMenu(data);
+    } catch (e) {
+      console.error("Failed to fetch menu:", e);
     }
-    if (data) setMenu(data);
   };
 
   const fetchOrders = async () => {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const tomorrow = new Date(today);
-    tomorrow.setDate(tomorrow.getDate() + 1);
+    // Everything below runs inside try/finally: a thrown error (a network
+    // failure, or a malformed row hitting the mapping) used to skip
+    // setLoading(false) entirely and leave the order list spinning forever
+    // with no way back except restarting the app.
+    try {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const tomorrow = new Date(today);
+      tomorrow.setDate(tomorrow.getDate() + 1);
 
-    // Fetch all unpaid orders
-    const { data: unpaidData, error: unpaidError } = await supabase
+      // Fetch all unpaid orders
+      const { data: unpaidData, error: unpaidError } = await supabase
         .from("orders")
         .select("*, order_items(*)")
         .eq("status", "unpaid")
         .order("created_at", { ascending: false });
 
-    // Fetch today's paid orders only
-    const { data: paidData, error: paidError } = await supabase
+      // Fetch today's paid orders only
+      const { data: paidData, error: paidError } = await supabase
         .from("orders")
         .select("*, order_items(*)")
         .eq("status", "paid")
@@ -71,26 +80,27 @@ export function OrderProvider({ children }: { children: ReactNode }) {
         .lt("created_at", tomorrow.toISOString())
         .order("created_at", { ascending: false });
 
-    if (unpaidError || paidError) {
+      if (unpaidError || paidError) {
         setError("Gagal memuat pesanan. Periksa koneksi Anda.");
-        setLoading(false);
         return;
-    }
+      }
 
-    const combined = [...(unpaidData ?? []), ...(paidData ?? [])];
+      const combined = [...(unpaidData ?? []), ...(paidData ?? [])];
 
-    setOrders(
+      setOrders(
         combined.map((o) => ({
-        id: o.id,
-        customerName: o.customer_name,
-        seat: o.seat,
-        discount: o.discount,
-        status: o.status,
-        createdAt: new Date(o.created_at),
-        methodOfPayment: o.method_of_payment,
-        isDineIn: o.is_dine_in,
-        paymentAmount: o.payment_amount,
-        items: o.order_items.map((i: any) => ({
+          id: o.id,
+          customerName: o.customer_name,
+          seat: o.seat,
+          discount: o.discount,
+          status: o.status,
+          createdAt: new Date(o.created_at),
+          methodOfPayment: o.method_of_payment,
+          isDineIn: o.is_dine_in,
+          paymentAmount: o.payment_amount,
+          // An order with no rows in order_items comes back as [], but a failed
+          // embed comes back as null — don't map straight off it.
+          items: (o.order_items ?? []).map((i: any) => ({
             // null for a custom off-menu item
             menuId: i.menu_id ?? null,
             name: i.name,
@@ -102,13 +112,18 @@ export function OrderProvider({ children }: { children: ReactNode }) {
             printBatch: i.print_batch ?? 1,
             note: i.notes ?? undefined,
             isStockDeducted: i.is_stock_deducted,
-        })),
+          })),
         }))
-    );
+      );
 
-    setError(null);
-    setLoading(false);
-    };
+      setError(null);
+    } catch (e) {
+      console.error("Failed to fetch orders:", e);
+      setError("Gagal memuat pesanan. Periksa koneksi Anda.");
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
     fetchMenu();
@@ -261,22 +276,60 @@ export function OrderProvider({ children }: { children: ReactNode }) {
     updated: Partial<Order>,
     force = false
   ): Promise<{ error: string | null; stockWarning?: string }> => {
-    // 1. Update order-level fields
-    const { error: updateError } = await supabase
-      .from("orders")
-      .update({
-        ...(updated.customerName && { customer_name: updated.customerName }),
-        ...(updated.seat && { seat: updated.seat }),
-        ...(updated.discount !== undefined && { discount: updated.discount }),
-        ...(updated.status && { status: updated.status }),
-      })
-      .eq("id", id);
+    // 1. Pre-check stock before writing ANYTHING. This used to sit further down,
+    // after the order-level update had already been committed, so a cashier who
+    // answered "Batal" to the shortage warning still had the name/seat/discount
+    // change stuck on the order — half an edit they never agreed to.
+    if (updated.items && !force) {
+      const { data: checkData, error: checkError } = await supabase.rpc(
+        "check_stock_for_order",
+        {
+          p_items: stockCheckedItems(updated.items),
+        }
+      );
 
-    if (updateError) {
-      return { error: "Gagal memperbarui pesanan. Silakan coba lagi." };
+      // Same reasoning as addOrder: an errored check is not a passed check.
+      if (checkError) {
+        return {
+          error: null,
+          stockWarning:
+            "Stok tidak bisa diperiksa saat ini. Lanjutkan tanpa pengecekan stok?",
+        };
+      }
+
+      if (checkData?.shortages?.length > 0) {
+        const names = checkData.shortages
+          .map((s: any) => s.stock_name)
+          .join(", ");
+        return {
+          error: null,
+          stockWarning: `Stok menipis: ${names}. Tetap lanjutkan?`,
+        };
+      }
     }
 
-    // 2. Handle cancellation
+    // 2. Update order-level fields. Built up first so an edit that only touches
+    // line items doesn't fire a PATCH with an empty body — there is nothing to
+    // write, and whether PostgREST tolerates that is not worth depending on.
+    const orderPatch = {
+      ...(updated.customerName && { customer_name: updated.customerName }),
+      ...(updated.seat && { seat: updated.seat }),
+      ...(updated.discount !== undefined && { discount: updated.discount }),
+      ...(updated.status && { status: updated.status }),
+    };
+
+    if (Object.keys(orderPatch).length > 0) {
+      const { error: updateError } = await supabase
+        .from("orders")
+        .update(orderPatch)
+        .eq("id", id);
+
+      if (updateError) {
+        return { error: "Gagal memperbarui pesanan. Silakan coba lagi." };
+      }
+    }
+
+    // 3. Handle cancellation
     if (updated.status === "cancelled") {
       const { error: cancelItemsError } = await supabase
         .from("order_items")
@@ -288,7 +341,7 @@ export function OrderProvider({ children }: { children: ReactNode }) {
       }
     }
 
-    // 3. Handle item updates
+    // 4. Handle item updates
     if (updated.items) {
       // Fetch original items first so we can revert if something goes wrong
       const { data: originalData, error: fetchError } = await supabase
@@ -315,35 +368,6 @@ export function OrderProvider({ children }: { children: ReactNode }) {
         notes: i.notes ?? null,
         is_stock_deducted: i.is_stock_deducted ?? false,
       }));
-
-      // Pre-check stock before touching anything (skip if forcing)
-      if (!force) {
-        const { data: checkData, error: checkError } = await supabase.rpc(
-          "check_stock_for_order",
-          {
-            p_items: stockCheckedItems(updated.items),
-          }
-        );
-
-        // Same reasoning as addOrder: an errored check is not a passed check.
-        if (checkError) {
-          return {
-            error: null,
-            stockWarning:
-              "Stok tidak bisa diperiksa saat ini. Lanjutkan tanpa pengecekan stok?",
-          };
-        }
-
-        if (checkData?.shortages?.length > 0) {
-          const names = checkData.shortages
-            .map((s: any) => s.stock_name)
-            .join(", ");
-          return {
-            error: null,
-            stockWarning: `Stok menipis: ${names}. Tetap lanjutkan?`,
-          };
-        }
-      }
 
       // Replace items
       const { error: deleteError } = await supabase
@@ -416,46 +440,54 @@ export function OrderProvider({ children }: { children: ReactNode }) {
   };
 
   const cancelOrderWithPin = async (orderId: number, pin: string) => {
-    // v2 returns { ok, reason, ... } so a lockout can be told apart from a wrong
-    // PIN. The v1 boolean RPC still exists for installs on the older build.
-    const { data, error } = await supabase.rpc("cancel_order_with_pin_v2", {
-      p_order_id: orderId,
-      p_pin: pin,
-    });
+    // Wrapped because PinOverrideModal turns its spinner off from this result:
+    // a thrown request propagated straight through submit() and left the modal
+    // stuck mid-submit, with the order neither cancelled nor released.
+    try {
+      // v2 returns { ok, reason, ... } so a lockout can be told apart from a wrong
+      // PIN. The v1 boolean RPC still exists for installs on the older build.
+      const { data, error } = await supabase.rpc("cancel_order_with_pin_v2", {
+        p_order_id: orderId,
+        p_pin: pin,
+      });
 
-    if (error) return { success: false, error: "Terjadi kesalahan" };
+      if (error) return { success: false, error: "Terjadi kesalahan" };
 
-    if (!data?.ok) {
-      if (data?.reason === "locked_out") {
-        const minutes = Math.ceil((data.retry_after_seconds ?? 0) / 60);
+      if (!data?.ok) {
+        if (data?.reason === "locked_out") {
+          const minutes = Math.ceil((data.retry_after_seconds ?? 0) / 60);
+          return {
+            success: false,
+            error: `Terlalu banyak percobaan. Coba lagi dalam ${minutes} menit.`,
+          };
+        }
+
+        const left = data?.attempts_left ?? 0;
         return {
           success: false,
-          error: `Terlalu banyak percobaan. Coba lagi dalam ${minutes} menit.`,
+          error: left > 0 ? `PIN salah. Sisa ${left} percobaan.` : "PIN salah.",
         };
       }
 
-      const left = data?.attempts_left ?? 0;
-      return {
-        success: false,
-        error: left > 0 ? `PIN salah. Sisa ${left} percobaan.` : "PIN salah.",
-      };
+      // sync local state the same way updateOrder does. The RPC cancels the line
+      // items alongside the order, so mirror both.
+      setOrders((prev) =>
+        prev.map((o) =>
+          o.id === orderId
+            ? {
+                ...o,
+                status: "cancelled",
+                items: o.items.map((i) => ({ ...i, isCancelled: true })),
+              }
+            : o
+        )
+      );
+
+      return { success: true, error: null };
+    } catch (e) {
+      console.error("Failed to cancel order:", e);
+      return { success: false, error: "Terjadi kesalahan. Periksa koneksi Anda." };
     }
-
-    // sync local state the same way updateOrder does. The RPC cancels the line
-    // items alongside the order, so mirror both.
-    setOrders((prev) =>
-      prev.map((o) =>
-        o.id === orderId
-          ? {
-              ...o,
-              status: "cancelled",
-              items: o.items.map((i) => ({ ...i, isCancelled: true })),
-            }
-          : o
-      )
-    );
-
-    return { success: true, error: null };
   };
 
   // Targeted update rather than going through updateOrder, which replaces the
@@ -510,9 +542,12 @@ export function OrderProvider({ children }: { children: ReactNode }) {
     return { error: null };
   };
 
-  const toggleMenuAvailability = async (menuId: number) => {
+  // Returns the failure rather than swallowing it. The switch reverting on its
+  // own with no explanation reads as the toggle being ignored, and the cashier
+  // just taps it again.
+  const toggleMenuAvailability = async (menuId: number): Promise<{ error: string | null }> => {
     const item = menu.find((m) => m.id === menuId);
-    if (!item) return;
+    if (!item) return { error: null };
 
     // Optimistic update
     setMenu((prev) =>
@@ -526,7 +561,10 @@ export function OrderProvider({ children }: { children: ReactNode }) {
       setMenu((prev) =>
         prev.map((m) => (m.id === menuId ? { ...m, available: item.available } : m))
       );
+      return { error: `Gagal mengubah ketersediaan ${item.name}. Periksa koneksi Anda.` };
     }
+
+    return { error: null };
   };
 
   return (

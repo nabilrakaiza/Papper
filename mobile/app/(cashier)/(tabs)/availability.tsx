@@ -17,7 +17,15 @@ function formatRupiah(amount: number): string {
 
 export default function AvailabilityScreen() {
   const { menu, toggleMenuAvailability } = useOrders();
-  const [expandedCategory, setExpandedCategory] = useState<MenuCategory | null>("Ayam");
+  const [expandedCategory, setExpandedCategory] = useState<MenuCategory | null>();
+  const [toggleError, setToggleError] = useState<string | null>(null);
+
+  // Without this the switch just slides back on its own when the write fails,
+  // which looks like the tap was ignored rather than rejected.
+  const handleToggle = async (menuId: number) => {
+    const { error } = await toggleMenuAvailability(menuId);
+    setToggleError(error);
+  };
 
   return (
     <SafeAreaView className="flex-1 bg-gray-100">
@@ -25,6 +33,15 @@ export default function AvailabilityScreen() {
       <View className="px-5 pt-4 pb-3">
         <Text className="text-2xl font-black text-gray-900">Ketersediaan</Text>
       </View>
+
+      {!!toggleError && (
+        <TouchableOpacity
+          onPress={() => setToggleError(null)}
+          className="mx-4 mb-2 bg-red-50 border border-red-200 rounded-2xl px-4 py-3"
+        >
+          <Text className="text-xs font-bold text-red-600">{toggleError}</Text>
+        </TouchableOpacity>
+      )}
 
       <ScrollView
         contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 120 }}
@@ -71,7 +88,7 @@ export default function AvailabilityScreen() {
                         </View>
                         <Switch
                           value={item.available}
-                          onValueChange={() => toggleMenuAvailability(item.id)}
+                          onValueChange={() => handleToggle(item.id)}
                           trackColor={{ false: "#e5e7eb", true: "#a78bfa" }}
                           thumbColor={item.available ? "white" : "#f4f3f4"}
                         />
