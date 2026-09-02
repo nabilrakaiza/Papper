@@ -10,7 +10,8 @@
     "web": "expo start --web",
     "lint": "expo lint",
     "preview:receipt": "tsc -p scripts/tsconfig.json && node scripts/.build/scripts/previewReceipt.js",
-    "build:logo": "python3 scripts/build_receipt_logo.py"
+    "build:logo": "python3 scripts/build_receipt_logo.py",
+    "postinstall": "patch-package"
   },
   "dependencies": {
     "@expo-google-fonts/nunito": "^0.4.2",
@@ -60,6 +61,7 @@
     "babel-preset-expo": "~54.0.11",
     "eslint": "^9.25.0",
     "eslint-config-expo": "~10.0.0",
+    "patch-package": "^8.0.1",
     "typescript": "~5.9.2"
   },
   "private": true

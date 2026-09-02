@@ -1,0 +1,152 @@
+diff --git a/node_modules/@vardrz/react-native-bluetooth-escpos-printer/android/src/main/java/cn/jystudio/bluetooth/BluetoothService.java b/node_modules/@vardrz/react-native-bluetooth-escpos-printer/android/src/main/java/cn/jystudio/bluetooth/BluetoothService.java
+index e785d03..c99a8ae 100644
+--- a/node_modules/@vardrz/react-native-bluetooth-escpos-printer/android/src/main/java/cn/jystudio/bluetooth/BluetoothService.java
++++ b/node_modules/@vardrz/react-native-bluetooth-escpos-printer/android/src/main/java/cn/jystudio/bluetooth/BluetoothService.java
+@@ -139,8 +139,12 @@ public class BluetoothService {
+             this.stop();
+             // Start the thread to manage the connection and perform transmissions
+             mConnectedThread = new ConnectedThread(device);
+-            mConnectedThread.start();
++            // Set before start(), not after: a fast connect could otherwise
++            // reach STATE_CONNECTED and then be overwritten back to CONNECTING
++            // by this line, after which every write is silently dropped as
++            // COMMAND_NOT_SEND against a printer that is in fact connected.
+             setState(STATE_CONNECTING, null);
++            mConnectedThread.start();
+         }
+     }
+ 
+@@ -168,6 +172,10 @@ public class BluetoothService {
+             if (mState != STATE_CONNECTED) return;
+             r = mConnectedThread;
+         }
++        // stop() clears mConnectedThread, and until cancel() below was fixed it
++        // could leave the state at CONNECTED while doing so. An NPE here runs on
++        // the native modules thread, where it is fatal rather than catchable.
++        if (r == null) return;
+         r.write(out);
+     }
+ 
+@@ -204,6 +212,31 @@ public class BluetoothService {
+ 
+         @Override
+         public void run() {
++            // A bare Thread has no exception handler, so anything escaping here
++            // kills the process instead of failing the print. Two real paths do
++            // escape: cancelDiscovery() and getName() below both throw
++            // SecurityException when BLUETOOTH_SCAN / BLUETOOTH_CONNECT is not
++            // granted, which the app can hit with a printer restored from
++            // storage and no picker ever opened.
++            try {
++                runConnection();
++            } catch (Throwable t) {
++                Log.e(TAG, "connection thread failed", t);
++                try {
++                    // Qualified: inside a Thread subclass, a bare getState()
++                    // is Thread.getState().
++                    if (BluetoothService.this.getState() == STATE_CONNECTED) {
++                        connectionLost();
++                    } else {
++                        connectionFailed();
++                    }
++                } catch (Throwable ignored) {
++                    // Nothing left to do; never rethrow from here.
++                }
++            }
++        }
++
++        private void runConnection() {
+             Log.i(TAG, "BEGIN mConnectThread");
+             setName("ConnectThread");
+             Map<String, Object> bundle = new HashMap<String, Object>();
+@@ -342,10 +375,21 @@ public class BluetoothService {
+ 
+         public void cancel() {
+             try {
+-                mmSocket.close();
+-                connectionLost();
+-            } catch (IOException e) {
++                // Still null whenever this thread has not reached socket
++                // creation in run() yet, which is precisely the window a second
++                // connect() arrives in.
++                if (mmSocket != null) {
++                    mmSocket.close();
++                }
++            } catch (Exception e) {
++                // Was IOException only, so anything else escaped into the
++                // caller of stop() -- i.e. into a @ReactMethod, i.e. a crash.
+                 Log.e(TAG, "close() of connect socket failed", e);
++            } finally {
++                // Has to run even when close() failed: otherwise the state
++                // stays CONNECTED with no thread behind it, and the next write
++                // dereferences null.
++                connectionLost();
+             }
+         }
+     }
+diff --git a/node_modules/@vardrz/react-native-bluetooth-escpos-printer/android/src/main/java/cn/jystudio/bluetooth/RNBluetoothManagerModule.java b/node_modules/@vardrz/react-native-bluetooth-escpos-printer/android/src/main/java/cn/jystudio/bluetooth/RNBluetoothManagerModule.java
+index a4ca430..0254f0c 100644
+--- a/node_modules/@vardrz/react-native-bluetooth-escpos-printer/android/src/main/java/cn/jystudio/bluetooth/RNBluetoothManagerModule.java
++++ b/node_modules/@vardrz/react-native-bluetooth-escpos-printer/android/src/main/java/cn/jystudio/bluetooth/RNBluetoothManagerModule.java
+@@ -215,8 +215,25 @@ public class RNBluetoothManagerModule extends ReactContextBaseJavaModule
+         BluetoothAdapter adapter = this.getBluetoothAdapter();
+         if (adapter!=null && adapter.isEnabled()) {
+             BluetoothDevice device = adapter.getRemoteDevice(address);
+-            promiseMap.put(PROMISE_CONNECT, promise);
+-            mService.connect(device);
++            // One slot for the whole app. Whatever is already in it is being
++            // orphaned by this call, and an unsettled promise hangs its caller
++            // forever -- the print that started it never finishes and never
++            // fails. Settle it instead of dropping it.
++            Promise superseded = promiseMap.put(PROMISE_CONNECT, promise);
++            if (superseded != null) {
++                superseded.reject("CONNECT_SUPERSEDED", "Another connection was started");
++            }
++            try {
++                mService.connect(device);
++            } catch (Exception e) {
++                // Exceptions out of a @ReactMethod are fatal, not catchable in
++                // JS. Turn this one into a rejection the print path can report.
++                Log.e(TAG, "connect failed", e);
++                Promise pending = promiseMap.remove(PROMISE_CONNECT);
++                if (pending != null) {
++                    pending.reject("CONNECT_FAILED", e);
++                }
++            }
+         } else {
+             promise.reject("BT NOT ENABLED");
+         }
+@@ -432,8 +449,7 @@ public class RNBluetoothManagerModule extends ReactContextBaseJavaModule
+                         foundDevice.put(deviceFound);
+                         WritableMap params = Arguments.createMap();
+                         params.putString("device", deviceFound.toString());
+-                        reactContext.getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter.class)
+-                                .emit(EVENT_DEVICE_FOUND, params);
++                        emitRNEvent(EVENT_DEVICE_FOUND, params);
+                     }
+ 
+                 }
+@@ -460,8 +476,21 @@ public class RNBluetoothManagerModule extends ReactContextBaseJavaModule
+     };
+ 
+     private void emitRNEvent(String event, @Nullable WritableMap params) {
+-        getReactApplicationContext().getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter.class)
+-                .emit(event, params);
++        // Reached from the Bluetooth thread, including when a connection drops
++        // while the app is backgrounded or shutting down. Asking for the JS
++        // module with no live instance throws, and an uncaught throw on that
++        // thread takes the process with it.
++        try {
++            ReactApplicationContext context = getReactApplicationContext();
++            if (context == null || !context.hasActiveReactInstance()) {
++                Log.w(TAG, "Dropping " + event + ": no active React instance");
++                return;
++            }
++            context.getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter.class)
++                    .emit(event, params);
++        } catch (Exception e) {
++            Log.e(TAG, "Failed to emit " + event, e);
++        }
+     }
+ 
+     @Override
