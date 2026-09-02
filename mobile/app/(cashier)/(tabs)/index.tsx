@@ -6,6 +6,7 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   Modal,
+  Share,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { router } from "expo-router";
@@ -120,6 +121,53 @@ function BatchWarningDialog({
   );
 }
 
+/**
+ * The previous session's print trail, on screen. The trail is written for a
+ * tablet at the till with no console attached, so a console.warn is not a way
+ * to read it -- this and the share sheet are.
+ */
+function PrintTrailDialog({
+  visible, step, text, onClose,
+}: {
+  visible: boolean;
+  step: string | null;
+  text: string;
+  onClose: () => void;
+}) {
+  return (
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+      <View className="flex-1 bg-black/40 items-center justify-center px-8">
+        <View className="w-full bg-white rounded-3xl px-6 py-5">
+          <Text className="text-base font-extrabold text-gray-700">Rincian cetak terakhir</Text>
+          <Text className="text-xs font-bold text-gray-400 mt-2">
+            Aplikasi berhenti di langkah &quot;{step}&quot;.
+          </Text>
+
+          <ScrollView className="bg-gray-50 border border-gray-100 rounded-2xl px-4 py-3 mt-3 max-h-64">
+            <Text className="text-[10px] font-bold text-gray-500">{text || "(kosong)"}</Text>
+          </ScrollView>
+
+          <View className="flex-row gap-3 mt-5">
+            <TouchableOpacity onPress={onClose} className="flex-1 bg-gray-100 rounded-2xl py-3 items-center">
+              <Text className="text-sm font-extrabold text-gray-500">Tutup</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => {
+                // Nothing to do if the sheet is dismissed, and a rejection here
+                // must not take down the screen reporting the crash.
+                Share.share({ message: text }).catch(() => {});
+              }}
+              className="flex-1 bg-orange-400 rounded-2xl py-3 items-center"
+            >
+              <Text className="text-sm font-extrabold text-white">Kirim</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
 function OrderCard({ order, onPrintKitchenPress, onPrintBillPress, onEditPress }: OrderCardProps) {
   const isPaid = order.status === "paid";
 
@@ -217,6 +265,13 @@ export default function CashierHomeScreen() {
   const [printing, setPrinting] = useState(false);
   const [printError, setPrintError] = useState<string | null>(null);
 
+  // The previous session's unfinished print: the step it stopped on, and the
+  // whole trail behind it.
+  const [trailStep, setTrailStep] = useState<string | null>(null);
+  const [trailText, setTrailText] = useState("");
+  const [trailOpen, setTrailOpen] = useState(false);
+  const [trailSeen, setTrailSeen] = useState(false);
+
   // Set when a kitchen print would silently leave an earlier batch unprinted.
   const [skippedBatchOrder, setSkippedBatchOrder] = useState<Order | null>(null);
 
@@ -262,10 +317,11 @@ export default function CashierHomeScreen() {
       const step = unfinishedPrint();
       if (!step) return;
 
+      // Still to the console, which is the easier copy on the rare occasion
+      // metro is attached.
       console.warn("Previous print trail:\n" + previousTrailText());
-      setPrintError(
-        `Cetak sebelumnya tidak selesai (berhenti di "${step}"). Aplikasi mungkin tertutup saat mencetak.`
-      );
+      setTrailText(previousTrailText());
+      setTrailStep(step);
     });
 
     return () => {
@@ -466,6 +522,26 @@ export default function CashierHomeScreen() {
         </View>
       )}
 
+      {/* An unfinished print from the previous session. Tappable, because the
+          trail is the only witness we get and it has to be readable from the
+          device itself. */}
+      {trailStep && !trailSeen && (
+        <TouchableOpacity
+          onPress={() => setTrailOpen(true)}
+          className="mx-4 mb-2 bg-amber-50 border border-amber-100 rounded-2xl px-4 py-3 flex-row items-center justify-between gap-3"
+        >
+          <View className="flex-1">
+            <Text className="text-xs font-bold text-amber-700">
+              Cetak sebelumnya tidak selesai. Aplikasi mungkin tertutup saat mencetak.
+            </Text>
+            <Text className="text-[10px] font-bold text-amber-500 mt-1">
+              Ketuk untuk lihat dan kirim rinciannya
+            </Text>
+          </View>
+          <Text className="text-xs font-extrabold text-amber-400">Lihat</Text>
+        </TouchableOpacity>
+      )}
+
       {/* Printing indicator */}
       {printing && (
         <View className="mx-4 mb-2 bg-blue-50 border border-blue-100 rounded-2xl px-4 py-3 flex-row items-center gap-2">
@@ -553,6 +629,18 @@ export default function CashierHomeScreen() {
             new Set(prev).add(`${order.id}:${latestPrintBatch(order)}`)
           );
           continuePrint(order, "kitchen");
+        }}
+      />
+
+      <PrintTrailDialog
+        visible={trailOpen}
+        step={trailStep}
+        text={trailText}
+        onClose={() => {
+          setTrailOpen(false);
+          // Dismisses the banner without discarding the trail, which would
+          // otherwise blank the step name through the modal's fade-out.
+          setTrailSeen(true);
         }}
       />
 
