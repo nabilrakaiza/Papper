@@ -8,6 +8,7 @@ import "../global.css";
 import * as NavigationBar from 'expo-navigation-bar';
 import { BottomSheetModalProvider } from "@gorhom/bottom-sheet";
 import { useFonts, Nunito_700Bold } from "@expo-google-fonts/nunito";
+import { startTrail } from "../lib/printerTrail";
 
 // app/_layout.tsx
 function RootNavigator() {
@@ -108,6 +109,12 @@ function RootNavigator() {
 }
 
 export default function RootLayout() {
+  // Read back the previous session's print trail before anything can overwrite
+  // it. If the app died mid-print, this is the only record of how far it got.
+  useEffect(() => {
+    startTrail();
+  }, []);
+
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>

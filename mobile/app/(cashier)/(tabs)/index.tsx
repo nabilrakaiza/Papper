@@ -21,6 +21,7 @@ import {
   unprintedLatestBatch,
 } from "../../../lib/receiptLayout";
 import { useUser } from "@/hooks/useUser";
+import { unfinishedPrint, previousTrailText, whenTrailReady } from "../../../lib/printerTrail";
 import { orderTotal as orderTotalOf } from "../../../lib/constants";
 
 function formatRupiah(amount: number): string {
@@ -248,6 +249,30 @@ export default function CashierHomeScreen() {
   
   const { user, loading: userLoading } = useUser();
 
+  // A print that never reached an end state means the previous session stopped
+  // in the middle of one — the app was killed while printing. Say so on the
+  // next start, because otherwise the only witness is whoever was standing at
+  // the till, and "it closed by itself" is all we ever get back.
+  useEffect(() => {
+    let active = true;
+
+    whenTrailReady().then(() => {
+      if (!active) return;
+
+      const step = unfinishedPrint();
+      if (!step) return;
+
+      console.warn("Previous print trail:\n" + previousTrailText());
+      setPrintError(
+        `Cetak sebelumnya tidak selesai (berhenti di "${step}"). Aplikasi mungkin tertutup saat mencetak.`
+      );
+    });
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
   // Unified handler to route to the correct printer logic
   const handlePrint = async (order: Order, type: "kitchen" | "bill") => {
     // The "Sedang mencetak" indicator is an inline banner, not a blocking
@@ -314,34 +339,43 @@ export default function CashierHomeScreen() {
 
     let printErr = null;
 
-    if (type === "kitchen") {
-      const targetPrinter = specificPrinter || kitchenPrinter;
-      const { error } = await printReceipt(order, null, targetPrinter, user); // Passing null to cashier to prevent dual-printing
-      printErr = error;
+    // Every exit from here has to clear `printing`, including the ones nobody
+    // planned for: handlePrint refuses to start while it is set, so a single
+    // throw on the way out left the print buttons dead for the rest of the
+    // session — no spinner, no error, nothing happening on any tap. The only
+    // way back was force-closing the app.
+    try {
+      if (type === "kitchen") {
+        const targetPrinter = specificPrinter || kitchenPrinter;
+        const { error } = await printReceipt(order, null, targetPrinter, user); // Passing null to cashier to prevent dual-printing
+        printErr = error;
 
-      // Mark the lines as sent once the ticket is physically printed.
-      if (!error) {
-        const { error: updateError } = await markItemsSent(order.id, latestPrintBatch(order));
+        // Mark the lines as sent once the ticket is physically printed.
+        if (!error) {
+          const { error: updateError } = await markItemsSent(order.id, latestPrintBatch(order));
 
-        if (updateError) {
-          // The ticket is already out of the printer, so surface the mismatch
-          // rather than letting the two states diverge silently.
-          printErr = "Berhasil dicetak, tetapi gagal memperbarui status 'terkirim' di sistem.";
+          if (updateError) {
+            // The ticket is already out of the printer, so surface the mismatch
+            // rather than letting the two states diverge silently.
+            printErr = "Berhasil dicetak, tetapi gagal memperbarui status 'terkirim' di sistem.";
+          }
         }
-      }
 
-    } else {
-      const targetPrinter = specificPrinter || cashierPrinter;
-      const { error } = await printReceipt(order, targetPrinter, null, user); // Passing null to kitchen to prevent dual-printing
-      printErr = error;
+      } else {
+        const targetPrinter = specificPrinter || cashierPrinter;
+        const { error } = await printReceipt(order, targetPrinter, null, user); // Passing null to kitchen to prevent dual-printing
+        printErr = error;
+      }
+    } catch (e) {
+      printErr = `Gagal mencetak: ${e instanceof Error && e.message ? e.message : "kesalahan tidak diketahui"}.`;
+    } finally {
+      setPrinting(false);
     }
 
     if (printErr) {
       // If it's our custom string error, show that. Otherwise show the default connection error.
       setPrintError(typeof printErr === "string" ? printErr : `Gagal mencetak ${type === "kitchen" ? "dapur" : "bon"}. Pastikan printer menyala dan terhubung.`);
     }
-    
-    setPrinting(false);
   };
 
   const handlePrinterConnected = async (role: PrinterRole, device: { name: string; address: string }) => {
@@ -383,11 +417,17 @@ export default function CashierHomeScreen() {
             The module cannot honestly do better: isDeviceConnected() never
             settles its Promise when mService is null (the state on every cold
             start), and getConnectedDeviceAddress() returns the last address
-            connected rather than a live one. */}
+            connected rather than a live one.
+
+            Closed while a print is running: the picker opens its own connection,
+            and doing that on top of an in-flight print is exactly the overlap
+            the native module mishandles. It is also what a cashier reaches for
+            when a print seems stuck, which is the worst possible moment. */}
         <View className="flex-row gap-2">
           <TouchableOpacity
             onPress={() => { setPrinterSelectorRole("cashier"); setPrinterSelectorVisible(true); }}
-            className="flex-row items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-gray-100"
+            disabled={printing}
+            className={`flex-row items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-gray-100 ${printing ? "opacity-40" : ""}`}
           >
             <Printer size={13} color={cashierPrinter ? "#555" : "#bbb"} />
             <Text numberOfLines={1} className="text-xs font-extrabold text-gray-400 max-w-[104px]">
@@ -400,7 +440,8 @@ export default function CashierHomeScreen() {
 
           <TouchableOpacity
             onPress={() => { setPrinterSelectorRole("kitchen"); setPrinterSelectorVisible(true); }}
-            className="flex-row items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-gray-100"
+            disabled={printing}
+            className={`flex-row items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-gray-100 ${printing ? "opacity-40" : ""}`}
           >
             <ChefHat size={13} color={kitchenPrinter ? "#555" : "#bbb"} />
             <Text numberOfLines={1} className="text-xs font-extrabold text-gray-400 max-w-[104px]">
