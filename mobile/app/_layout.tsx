@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
-import { Slot, router } from "expo-router";
+import { Slot, router, useSegments } from "expo-router";
 import { ActivityIndicator, View, Platform, Text, TouchableOpacity } from "react-native";
 import { AuthProvider, useAuth } from "../context/AuthContext";
 import { SafeAreaProvider } from "react-native-safe-area-context";
@@ -10,10 +10,56 @@ import { BottomSheetModalProvider } from "@gorhom/bottom-sheet";
 import { useFonts, Nunito_700Bold } from "@expo-google-fonts/nunito";
 import { startTrail } from "../lib/printerTrail";
 
+function Spinner() {
+  return (
+    <View className="flex-1 items-center justify-center bg-gray-100">
+      <ActivityIndicator size="large" color="#3a7bd5" />
+    </View>
+  );
+}
+
+type Target = {
+  group: string;
+  path: "/(auth)/login" | "/(admin)/(tabs)" | "/(cashier)/(tabs)";
+};
+
+/**
+ * Where a user belongs: the group the guard waits for, and the route the
+ * redirect sends them to. Deliberately one function -- a guard that disagreed
+ * with the redirect would hold the spinner forever.
+ *
+ * Null means there is nothing to decide: a session whose profile could not be
+ * fetched, which gets the retry screen rather than a redirect.
+ */
+function targetFor(
+  session: unknown,
+  role: string | undefined,
+  profileError: string | null
+): Target | null {
+  if (!session) return { group: "(auth)", path: "/(auth)/login" };
+  if (role === "admin" || role === "superadmin") {
+    return { group: "(admin)", path: "/(admin)/(tabs)" };
+  }
+  if (role === "cashier") return { group: "(cashier)", path: "/(cashier)/(tabs)" };
+
+  // No profile and no excuse for it -- the account really has no usable role.
+  if (!profileError) return { group: "(auth)", path: "/(auth)/login" };
+
+  return null;
+}
+
 // app/_layout.tsx
 function RootNavigator() {
   const { session, profile, loading, profileError, retryProfile, signOut } = useAuth();
   const [ready, setReady] = useState(false);
+  const segments = useSegments();
+
+  // Memoised so the object identity is stable: the redirect effect below
+  // depends on it, and a fresh object each render would re-fire it each render.
+  const target = useMemo(
+    () => targetFor(session, profile?.role, profileError),
+    [session, profile?.role, profileError]
+  );
 
   // The tab bars ask for Nunito_700Bold but nothing ever loaded it, so the
   // labels silently fell back to the system font.
@@ -50,28 +96,13 @@ function RootNavigator() {
   }, [loading]);
 
   useEffect(() => {
-    if (!ready) return;
+    if (!ready || !target) return;
 
-    if (!session) {
-      router.replace("/(auth)/login");
-    } else if (profile?.role === "admin" || profile?.role === "superadmin") {
-      router.replace("/(admin)/(tabs)");
-    } else if (profile?.role === "cashier") {
-      router.replace("/(cashier)/(tabs)");
-    } else if (!profileError) {
-      // No profile and no excuse for it — the account really has no usable
-      // role. A profileError means we simply could not ask, which is not
-      // grounds for logging anyone out; the screen below handles that.
-      router.replace("/(auth)/login");
-    }
-  }, [session, profile, ready, profileError]);
+    router.replace(target.path);
+  }, [ready, target]);
 
   if (!ready || (!fontsLoaded && !fontError)) {
-    return (
-      <View className="flex-1 items-center justify-center bg-gray-100">
-        <ActivityIndicator size="large" color="#3a7bd5" />
-      </View>
-    );
+    return <Spinner />;
   }
 
   // A valid session whose profile could not be fetched. Sending the user to log
@@ -103,6 +134,16 @@ function RootNavigator() {
         </TouchableOpacity>
       </View>
     );
+  }
+
+  // Nothing renders until the route matches who is logged in. router.replace
+  // only runs in the effect above, a render *after* the one that would have
+  // mounted the screen -- and that frame was enough for the admin Stok screen
+  // to run its queries with no session, which the database refused out loud
+  // once anon lost its grants. A screen the user has no business on should not
+  // mount at all, not even briefly.
+  if (!target || segments[0] !== target.group) {
+    return <Spinner />;
   }
 
   return <Slot />;
