@@ -599,7 +599,7 @@ export default function PaymentScreen() {
                 busy || !canResplit(order) ? "text-gray-400" : "text-blue-600"
               }`}
             >
-              {split ? "Ubah Pembagian" : "Pisah Tagihan"}
+              {split ? "Ubah Pembagian" : "Split Bill"}
             </Text>
           </TouchableOpacity>
         </View>

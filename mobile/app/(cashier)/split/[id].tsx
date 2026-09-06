@@ -8,11 +8,12 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { router, useLocalSearchParams } from "expo-router";
-import { ChevronLeft, Plus, Minus, Users } from "lucide-react-native";
+import { ChevronLeft, Plus, Minus, Users, Merge } from "lucide-react-native";
 import { useOrders } from "../../../context/OrderContext";
 import { OrderItem } from "../../../types/order";
 import { orderTotal } from "../../../lib/constants";
-import { canResplit, defaultPayerLabel, payerNumbers } from "../../../lib/splitBill";
+import { canResplit, defaultPayerLabel, isSplit, payerNumbers } from "../../../lib/splitBill";
+import { itemKey } from "../../../lib/orderItems";
 import ConfirmDialog from "@/components/ConfirmDialog";
 
 const MAX_PAYERS = 8;
@@ -38,6 +39,7 @@ export default function SplitBillScreen() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
+  const [merging, setMerging] = useState(false);
 
   // Seeded from how the order is divided right now, so reopening the screen
   // shows the current split rather than starting from nothing.
@@ -188,6 +190,69 @@ export default function SplitBillScreen() {
     return next;
   };
 
+  /**
+   * Put the bill back together: every line on payer 1.
+   *
+   * Rows that were carved apart are recombined as well, not just retagged.
+   * Splitting 2x Kopi one each leaves two rows of one, and merging without
+   * this would leave them that way — screens group by item so it would look
+   * right, but a kitchen reprint would list "1x Kopi" twice instead of once
+   * for two.
+   *
+   * Only rows that agree on everything a merged row can carry are combined:
+   * the print batch, whether it was sent, the note, and crucially
+   * is_stock_deducted, since one row cannot hold two different answers to
+   * "have these ingredients already left the store".
+   *
+   * The row that absorbs the others keeps its id; the others are simply absent
+   * from the payload, which is how save_order_items is told to delete them.
+   */
+  const buildMergedItems = (): OrderItem[] => {
+    const merged = new Map<string, OrderItem>();
+
+    for (const item of rows) {
+      const key = [
+        itemKey(item),
+        item.printBatch,
+        item.isSent,
+        item.isStockDeducted ?? false,
+        item.note ?? "",
+      ].join("|");
+
+      const existing = merged.get(key);
+
+      if (existing) {
+        existing.quantity += item.quantity;
+      } else {
+        merged.set(key, { ...item, customerNum: 1 });
+      }
+    }
+
+    return [...merged.values()];
+  };
+
+  const handleMerge = async () => {
+    setMerging(false);
+    setSaving(true);
+    setError(null);
+
+    try {
+      const { error: saveError } = await splitBill(order.id, buildMergedItems());
+
+      if (saveError) {
+        setError(saveError);
+        return;
+      }
+
+      router.back();
+    } catch (e) {
+      console.error("Failed to merge bill:", e);
+      setError("Terjadi kesalahan. Periksa koneksi Anda.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const handleConfirm = async () => {
     setConfirming(false);
     setSaving(true);
@@ -222,7 +287,7 @@ export default function SplitBillScreen() {
         <TouchableOpacity onPress={() => router.back()}>
           <ChevronLeft size={24} color="#333" />
         </TouchableOpacity>
-        <Text className="text-xl font-black text-gray-900">Pisah Tagihan</Text>
+        <Text className="text-xl font-black text-gray-900">Split Bill</Text>
         <View className="w-6" />
       </View>
 
@@ -278,6 +343,28 @@ export default function SplitBillScreen() {
           </View>
         </View>
 
+        {/* Only offered on an order that is actually divided, and only while
+            nobody has paid — canResplit already gates this whole screen, but
+            the button is the thing a cashier reaches for by mistake. */}
+        {isSplit(order) && (
+          <TouchableOpacity
+            onPress={() => setMerging(true)}
+            disabled={saving}
+            className={`flex-row items-center justify-center gap-2 rounded-2xl py-3 mb-4 border-2 ${
+              saving ? "border-gray-200 bg-gray-100" : "border-gray-300 bg-white"
+            }`}
+          >
+            <Merge size={15} color={saving ? "#bbb" : "#555"} />
+            <Text
+              className={`text-sm font-extrabold ${
+                saving ? "text-gray-400" : "text-gray-600"
+              }`}
+            >
+              Gabungkan Kembali
+            </Text>
+          </TouchableOpacity>
+        )}
+
         {/* Item allocation */}
         {rows.map((item) => {
           const slots = slotsFor(item);
@@ -296,7 +383,7 @@ export default function SplitBillScreen() {
                     {item.name}
                   </Text>
                   <Text className="text-xs font-bold text-gray-400 mt-0.5">
-                    {formatRupiah(item.price)} × {item.quantity}
+                    {formatRupiah(item.price)} x {item.quantity}
                   </Text>
                 </View>
                 {left > 0 && (
@@ -330,7 +417,7 @@ export default function SplitBillScreen() {
                     >
                       <Minus size={14} color={qty <= 0 ? "#ddd" : "#555"} />
                     </TouchableOpacity>
-                    <Text className="text-sm font-extrabold text-gray-900 w-4 text-center">
+                    <Text className="text-sm font-extrabold text-gray-900 w-5 text-center">
                       {qty}
                     </Text>
                     <TouchableOpacity
@@ -424,6 +511,16 @@ export default function SplitBillScreen() {
           )}
         </TouchableOpacity>
       </View>
+
+      <ConfirmDialog
+        visible={merging}
+        title="Gabungkan Kembali"
+        message="Semua item kembali jadi satu tagihan untuk satu pembayar. Pembagian yang sekarang akan hilang."
+        confirmLabel="Gabungkan"
+        cancelLabel="Batal"
+        onConfirm={handleMerge}
+        onCancel={() => setMerging(false)}
+      />
 
       <ConfirmDialog
         visible={confirming}

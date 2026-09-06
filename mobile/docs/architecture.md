@@ -182,10 +182,14 @@ row in `order_payments` records what each of them handed over and how.
 
 Points that follow from that shape:
 
-- **Splitting is reversible** while nobody has paid — it is an `UPDATE` of
-  `customer_num`, and putting the bill back together assigns every line to
-  payer 1. Sibling orders were rejected precisely because cashiers hold no
-  `DELETE` on `orders`, so that shape could never be undone at the till.
+- **Splitting is reversible** while nobody has paid — "Gabungkan Kembali" on the
+  split screen assigns every line back to payer 1. Sibling orders were rejected
+  precisely because cashiers hold no `DELETE` on `orders`, so that shape could
+  never be undone at the till. Merging also recombines rows that were carved
+  apart, so a line split one-each does not stay two rows of one and reprint as
+  two kitchen lines; only rows agreeing on print batch, sent flag, note and
+  `is_stock_deducted` are combined, since one row cannot hold two answers to
+  whether its ingredients have left the store.
 - **Nothing moves between orders**, so stock is untouched and no kitchen ticket
   is disturbed. Dividing a line of 2 into 1 and 1 splits the row, and the new
   row carries `is_stock_deducted` across so the portions are not deducted twice.
