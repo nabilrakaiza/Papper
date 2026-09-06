@@ -79,25 +79,37 @@ const order: Order = {
 };
 
 /**
- * The same order, split two ways, as it stands the moment payer 2 has paid and
- * their receipt prints: the drinks and the sambal on one side, the food on the
- * other, and only payer 2 has a payment row.
+ * The same order, split two ways: the drinks, sambal and pastry on one side,
+ * the food on the other.
  *
- * Payer 2 settles in cash with change due, which is the case that exercises
- * every line of the payment block.
+ * Both payers have settled, deliberately by different means — payer 1 by QRIS,
+ * which settles for exactly the bill, and payer 2 in cash with change due.
+ * Between them they cover both branches of the payment block, which is the part
+ * of the layout a split bill actually changes.
+ *
+ * Status stays 'unpaid' because a share prints the moment that person pays,
+ * which is before the order as a whole is closed.
  */
 const splitOrder: Order = {
   ...order,
-  // The order as a whole is not closed until the last payer settles — the share
-  // receipt prints before that.
   status: 'unpaid',
   items: order.items.map((item, idx) => ({ ...item, customerNum: idx === 1 ? 2 : 1 })),
   payments: [
     {
       id: 1,
+      customerNum: 1,
+      customerLabel: 'Alex',
+      // 2x Es Kopi Susu + 3x Sambal + Croissant = 93.000, less 10%, plus tax.
+      amount: 92070,
+      amountTendered: null,
+      methodOfPayment: 'QRIS',
+      createdAt: NOW,
+    },
+    {
+      id: 2,
       customerNum: 2,
       customerLabel: 'Hina',
-      // 1x Nasi Goreng, less 10%, plus tax.
+      // 1x Nasi Goreng = 35.000, less 10%, plus tax.
       amount: 34650,
       amountTendered: 50000,
       methodOfPayment: 'Cash',
@@ -133,16 +145,19 @@ async function main(): Promise<void> {
     })
   );
 
-  // One payer's share of a split bill: only their lines, their own method and
-  // tender, and printed while the order as a whole is still open.
-  await capture('customer-receipt-split', (printer) =>
-    renderCustomerReceipt(printer, {
-      order: splitOrder,
-      cashierName: 'Nabil',
-      payment: splitOrder.payments[0],
-      now: NOW,
-    })
-  );
+  // Both shares of the same split bill: each covers only that payer's lines and
+  // settles with their own method. Rendered as a pair because the useful check
+  // is that the two together account for the whole order and nothing is on both.
+  for (const payment of splitOrder.payments) {
+    await capture(`customer-receipt-split-payer${payment.customerNum}`, (printer) =>
+      renderCustomerReceipt(printer, {
+        order: splitOrder,
+        cashierName: 'Nabil',
+        payment,
+        now: NOW,
+      })
+    );
+  }
 
   // Both kitchen variants: the ticket differs only by the "Additional order"
   // line, and that line is the whole point of the batch logic, so the preview
