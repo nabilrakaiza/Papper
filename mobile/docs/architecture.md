@@ -48,6 +48,7 @@ app/
     (tabs)/profile.tsx
     new-order.tsx
     order/[id].tsx         edit an open order; cancellation entry point
+    split/[id].tsx         divide an open order's lines between payers
     payment/[id].tsx       take payment, close the order
   (admin)/(tabs)/
     index.tsx              stock: list, restock; superadmin: create/remove item types
@@ -110,6 +111,13 @@ An **unpaid** order is an open tab: cashiers freely add, remove and edit line
 items. Once it is **paid** or **cancelled** the line items are frozen by a
 database trigger — see [security.md](security.md#the-order_items-lock).
 
+Line items are edited through the `save_order_items` RPC, which updates the rows
+named in its payload, inserts those without an id, deletes those left out, and
+leaves unmentioned columns alone. It deducts stock in the same transaction, so a
+shortage aborts the edit. See
+[database.md](database.md#editing-line-items) for why it replaced a wholesale
+delete-and-reinsert.
+
 Cancellation never happens by a direct write. A trigger rejects any update that
 moves `status` to `'cancelled'` unless a transaction-local flag is set, and only
 the PIN RPCs set it.
@@ -148,6 +156,52 @@ total    = subtotal × (1 − discount/100) × (1 + TAX_RATE)
 
 `orders.discount` is a whole-number percentage constrained to 0–100. All money
 columns are integer Rupiah; there are no fractional currency units.
+
+How an order was paid lives in `order_payments`, never on `orders` — one row for
+an ordinary order, one per payer for a split bill. The two columns that used to
+hold it are deprecated and pending removal; see
+[database.md](database.md#orders).
+
+### Split bills
+
+A group ordering under one name can pay separately. The order stays **one
+order**: `order_items.customer_num` says which payer settles each line, and a
+row in `order_payments` records what each of them handed over and how.
+
+```
+  unpaid ──── split/[id] ────▶ unpaid, lines tagged 1..N
+                                     │
+                       recordPayment │  (per payer, freezes their lines)
+                                     ▼
+                          unpaid, partially settled
+                                     │
+                    completeSplitPayment (all payers done)
+                                     ▼
+                                   paid
+```
+
+Points that follow from that shape:
+
+- **Splitting is reversible** while nobody has paid — it is an `UPDATE` of
+  `customer_num`, and putting the bill back together assigns every line to
+  payer 1. Sibling orders were rejected precisely because cashiers hold no
+  `DELETE` on `orders`, so that shape could never be undone at the till.
+- **Nothing moves between orders**, so stock is untouched and no kitchen ticket
+  is disturbed. Dividing a line of 2 into 1 and 1 splits the row, and the new
+  row carries `is_stock_deducted` across so the portions are not deducted twice.
+- **Each share rounds on its own**, through the same `orderTotal`. Shares can
+  therefore sum to a rupiah or two away from the whole order's total; each
+  figure is what was actually charged to, and printed for, that person.
+- **The discount freezes at the first payment.** Changing it afterwards would
+  mean earlier payers settled on a different basis from later ones.
+- **The order closes on an explicit action**, not on the payments adding up.
+  `completeSplitPayment` is enabled only once every payer has settled.
+
+Reports need no new arithmetic for the totals: an order becomes `paid` only when
+it is fully settled, so revenue still comes from its line items. What did change
+is the payment-method breakdown, which reads `order_payments` when present and
+falls back to `orders.method_of_payment` otherwise, and the outstanding figures,
+which subtract what a part-settled order has already taken.
 
 ## Printing
 

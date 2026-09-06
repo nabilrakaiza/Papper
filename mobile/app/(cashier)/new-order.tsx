@@ -115,9 +115,7 @@ export default function NewOrderScreen() {
           items: selectedItems,
           discount: 0,
           status: "unpaid",
-          methodOfPayment: null, // TODO, add the UI
           isDineIn: isDineIn,
-          paymentAmount: 0
         },
         force
       );

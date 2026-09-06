@@ -1,18 +1,31 @@
 import { createContext, useContext, useState, useEffect, ReactNode } from "react";
-import { Order, MenuItem, OrderItem } from "../types/order";
+import { Order, MenuItem, OrderItem, OrderPayment } from "../types/order";
 import { supabase } from "../lib/supabase";
 import { isConnectionError, NO_CONNECTION } from "../lib/errors";
+import { orderTotal } from "../lib/constants";
 
 type OrderContextType = {
   orders: Order[];
   menu: MenuItem[];
   loading: boolean;
   error: string | null;
-  addOrder: (order: Omit<Order, "id" | "createdAt">, force?: boolean) => Promise<{ error: string | null; stockWarning?: string }>;
+  addOrder: (order: Omit<Order, "id" | "createdAt" | "payments">, force?: boolean) => Promise<{ error: string | null; stockWarning?: string }>;
   updateOrder: (id: number, order: Partial<Order>, force?: boolean) => Promise<{ error: string | null; stockWarning?: string }>;
   cancelOrderWithPin: (orderId: number, pin: string) => Promise<{ success: boolean; error: string | null }>;
   markItemsSent: (orderId: number, printBatch: number) => Promise<{ error: string | null }>;
   markPaid: (id: number, discount: number, methodOfPayment: string, paymentAmount: number) => Promise<{ error: string | null }>;
+  splitBill: (orderId: number, items: OrderItem[]) => Promise<{ error: string | null }>;
+  recordPayment: (
+    orderId: number,
+    payment: {
+      customerNum: number;
+      customerLabel: string | null;
+      amount: number;
+      amountTendered: number | null;
+      methodOfPayment: string;
+    }
+  ) => Promise<{ error: string | null; payment?: OrderPayment }>;
+  completeSplitPayment: (orderId: number, discount: number) => Promise<{ error: string | null }>;
   toggleMenuAvailability: (menuId: number) => Promise<{ error: string | null }>;
   refetch: () => Promise<void>;
 };
@@ -68,14 +81,14 @@ export function OrderProvider({ children }: { children: ReactNode }) {
       // Fetch all unpaid orders
       const { data: unpaidData, error: unpaidError } = await supabase
         .from("orders")
-        .select("*, order_items(*)")
+        .select("*, order_items(*), order_payments(*)")
         .eq("status", "unpaid")
         .order("created_at", { ascending: false });
 
       // Fetch today's paid orders only
       const { data: paidData, error: paidError } = await supabase
         .from("orders")
-        .select("*, order_items(*)")
+        .select("*, order_items(*), order_payments(*)")
         .eq("status", "paid")
         .gte("created_at", today.toISOString())
         .lt("created_at", tomorrow.toISOString())
@@ -96,12 +109,27 @@ export function OrderProvider({ children }: { children: ReactNode }) {
           discount: o.discount,
           status: o.status,
           createdAt: new Date(o.created_at),
-          methodOfPayment: o.method_of_payment,
           isDineIn: o.is_dine_in,
-          paymentAmount: o.payment_amount,
+          // The whole payment record: one row for an ordinary order, one per
+          // payer for a split bill, none while it is still open. Sorted so the
+          // payer cards on the payment screen keep a stable order.
+          payments: (o.order_payments ?? [])
+            .map((p: any) => ({
+              id: p.id,
+              customerNum: p.customer_num,
+              customerLabel: p.customer_label ?? null,
+              amount: p.amount,
+              amountTendered: p.amount_tendered ?? null,
+              methodOfPayment: p.method_of_payment,
+              createdAt: new Date(p.created_at),
+            }))
+            .sort((a: OrderPayment, b: OrderPayment) => a.customerNum - b.customerNum),
           // An order with no rows in order_items comes back as [], but a failed
           // embed comes back as null — don't map straight off it.
           items: (o.order_items ?? []).map((i: any) => ({
+            // Carried so an edit can name the row it is changing rather than
+            // replacing the whole set, and so a line can be assigned to a payer.
+            id: i.id,
             // null for a custom off-menu item
             menuId: i.menu_id ?? null,
             name: i.name,
@@ -113,6 +141,7 @@ export function OrderProvider({ children }: { children: ReactNode }) {
             printBatch: i.print_batch ?? 1,
             note: i.notes ?? undefined,
             isStockDeducted: i.is_stock_deducted,
+            customerNum: i.customer_num ?? 1,
           })),
         }))
       );
@@ -138,6 +167,13 @@ export function OrderProvider({ children }: { children: ReactNode }) {
       .on("postgres_changes", { event: "*", schema: "public", table: "order_items" }, () => {
         fetchOrders();
       })
+      // A payer settling their share changes what the other tablets must show —
+      // who still owes, and which lines are now frozen. Without this a second
+      // device would go on offering to take a payment that has already been
+      // taken, and only find out from the unique-constraint error.
+      .on("postgres_changes", { event: "*", schema: "public", table: "order_payments" }, () => {
+        fetchOrders();
+      })
       .subscribe();
 
     return () => {
@@ -146,7 +182,7 @@ export function OrderProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const addOrder = async (
-    order: Omit<Order, "id" | "createdAt">,
+    order: Omit<Order, "id" | "createdAt" | "payments">,
     force = false
   ): Promise<{ error: string | null; stockWarning?: string }> => {
 
@@ -202,9 +238,7 @@ export function OrderProvider({ children }: { children: ReactNode }) {
         seat: order.seat,
         discount: order.discount,
         status: order.status,
-        method_of_payment: order.methodOfPayment,
         is_dine_in: order.isDineIn,
-        payment_amount: order.paymentAmount
       })
       .select()
       .single();
@@ -368,56 +402,28 @@ export function OrderProvider({ children }: { children: ReactNode }) {
 
     // 4. Handle item updates
     if (updated.items) {
-      // Fetch original items first so we can revert if something goes wrong
-      const { data: originalData, error: fetchError } = await supabase
-        .from("order_items")
-        .select("*")
-        .eq("order_id", id);
-
-      if (fetchError || !originalData) {
-        return { error: "Gagal mengambil item pesanan yang ada. Silakan coba lagi." };
-      }
-
-      // No `category` here — order_items has no such column, so including it
-      // made the revert insert below fail with an unknown-column error, in the
-      // exact situation where the revert is the only thing saving the order.
-      const originalItems = originalData.map((i: any) => ({
-        order_id: id,
-        menu_id: i.menu_id,
-        name: i.name,
-        price: i.price,
-        quantity: i.quantity,
-        is_sent: i.is_sent ?? false,
-        is_cancelled: i.is_cancelled ?? false,
-        print_batch: i.print_batch ?? 1,
-        notes: i.notes ?? null,
-        is_stock_deducted: i.is_stock_deducted ?? false,
-      }));
-
-      // Replace items
-      const { error: deleteError } = await supabase
-        .from("order_items")
-        .delete()
-        .eq("order_id", id);
-
-      if (deleteError) {
-        return { error: "Gagal memperbarui item pesanan. Silakan coba lagi." };
-      }
-
-      // is_stock_deducted is carried over, not reset. Editing an order replaces
-      // its rows wholesale, so hardcoding false here re-presented every existing
-      // line to deduct_stock_for_order as if it were new — a second save took
-      // the whole order's ingredients out of stock a second time, a third took
-      // them a third time, and the shortfall was indistinguishable from
-      // ordinary consumption.
+      // save_order_items names the rows it changes: a line carrying an id is
+      // updated in place, one without is inserted, and anything absent from the
+      // payload is deleted. Columns the payload does not mention are left
+      // alone — which is what retires the class of bug this used to be.
       //
-      // The screens preserve the flag on lines they keep and leave it unset on
-      // lines they add, so only genuinely new quantity deducts. (A client could
-      // always have sent this column freely on an open order; the database
-      // guards it from payment onwards, via prevent_locked_order_item_change.)
-      const { error: itemsError } = await supabase.from("order_items").insert(
-        updated.items.map((item) => ({
-          order_id: id,
+      // It replaced a delete-everything-and-reinsert that had to restate every
+      // column, so any column it forgot was destroyed. That cost us
+      // is_stock_deducted twice over (each re-save deducted the whole order's
+      // ingredients again) and broke the revert path with a `category` key that
+      // order_items has no column for.
+      //
+      // The RPC deducts stock as its last act, inside the same transaction, so
+      // a shortage aborts the edit outright and there is no revert to hand-roll
+      // any more — the old one issued its own writes to undo the previous ones,
+      // and could itself fail, which is a repair path that needs a repair path.
+      const { error: itemsError } = await supabase.rpc("save_order_items", {
+        p_order_id: id,
+        p_force: force,
+        p_items: updated.items.map((item) => ({
+          // Absent for a line the cashier has just added; present for one being
+          // carried over, which is how the RPC tells an insert from an update.
+          id: item.id ?? null,
           menu_id: item.menuId,
           name: item.name,
           price: item.price,
@@ -426,37 +432,29 @@ export function OrderProvider({ children }: { children: ReactNode }) {
           is_cancelled: item.isCancelled ?? false,
           print_batch: item.printBatch ?? 1,
           notes: item.note ?? null,
+          // Still sent explicitly rather than left to the RPC's default: the
+          // screens carry it on lines they keep and leave it unset on lines
+          // they add, so only genuinely new quantity is deducted.
           is_stock_deducted: item.isStockDeducted ?? false,
-        }))
-      );
-
-      if (itemsError) {
-        // Revert to original items
-        await supabase.from("order_items").insert(originalItems);
-        return { error: "Gagal memperbarui item pesanan. Silakan coba lagi." };
-      }
-
-      // Deduct stock
-      const { error: stockError } = await supabase.rpc("deduct_stock_for_order", {
-        p_order_id: id,
-        p_force: force,
+          customer_num: item.customerNum ?? 1,
+        })),
       });
 
-      if (stockError) {
-        // Revert to original items
-        await supabase.from("order_items").delete().eq("order_id", id);
-        const { error: revertError } = await supabase
-          .from("order_items")
-          .insert(originalItems);
-
-        if (revertError) {
-          console.error("CRITICAL: Failed to revert order items after stock error:", revertError);
+      if (itemsError) {
+        if (isConnectionError(itemsError)) {
+          return { error: `${NO_CONNECTION} Perubahan belum tersimpan.` };
         }
-
-        if (stockError.message.includes("Insufficient stock")) {
+        if (itemsError.message.includes("Insufficient stock")) {
           return { error: "Pembaruan diblokir — satu atau lebih bahan habis." };
         }
-        return { error: "Gagal memperbarui stok. Silakan coba lagi." };
+        // The per-payer lock, raised as 42501 by prevent_locked_order_item_change.
+        if (itemsError.message.includes("has already paid")) {
+          return {
+            error:
+              "Item milik pelanggan yang sudah membayar tidak bisa diubah. Batalkan pembagian tagihan dulu jika perlu.",
+          };
+        }
+        return { error: "Gagal memperbarui item pesanan. Silakan coba lagi." };
       }
     }
 
@@ -555,22 +553,250 @@ export function OrderProvider({ children }: { children: ReactNode }) {
     return { error: null };
   };
 
-  const markPaid = async (id: number, discount: number, methodOfPayment: string, paymentAmount: number): Promise<{ error: string | null }> => {
-    const { error } = await supabase
-      .from("orders")
-      .update({ status: "paid", discount: discount, method_of_payment: methodOfPayment, payment_amount: Math.round(paymentAmount)})
-      .eq("id", id);
+  /**
+   * Settle an order paid by one person.
+   *
+   * Two writes, in this order: the payment row first, then the order closes.
+   * The payment row cannot be written afterwards —
+   * prevent_locked_order_payment_change refuses any write against an order that
+   * is already 'paid', which is the same rule that stops a settled bill's
+   * takings being rewritten later. Closing first would lock the order against
+   * the very row that records how it was paid.
+   *
+   * `amount` is the bill and `amountTendered` is the cash handed over. They used
+   * to share one column on `orders`, which is why that column could not be
+   * summed into a revenue figure.
+   */
+  const markPaid = async (
+    id: number,
+    discount: number,
+    methodOfPayment: string,
+    paymentAmount: number
+  ): Promise<{ error: string | null }> => {
+    try {
+      // The discount has to land before the share is computed against it, and
+      // it is an order-level fact rather than a payment one.
+      const { error: discountError } = await supabase
+        .from("orders")
+        .update({ discount })
+        .eq("id", id);
 
-    if (error) {
-      if (isConnectionError(error)) {
-        return { error: `${NO_CONNECTION} Pembayaran belum tercatat.` };
+      if (discountError) {
+        if (isConnectionError(discountError)) {
+          return { error: `${NO_CONNECTION} Pembayaran belum tercatat.` };
+        }
+        return { error: "Gagal mengonfirmasi pembayaran. Silakan coba lagi." };
       }
-      return { error: "Gagal mengonfirmasi pembayaran. Silakan coba lagi." };
+
+      // Refuse rather than guess. The bill is computed from the order's items,
+      // and an order missing from local state would silently produce a subtotal
+      // of 0 and record a payment of nothing against a real transaction.
+      const order = orders.find((o) => o.id === id);
+      if (!order) {
+        return { error: "Pesanan tidak ditemukan. Muat ulang daftar pesanan." };
+      }
+
+      const subtotal = order.items.reduce((sum, i) => sum + i.price * i.quantity, 0);
+      const bill = orderTotal(subtotal, discount);
+
+      const { error: paymentError } = await supabase.from("order_payments").insert({
+        order_id: id,
+        customer_num: 1,
+        customer_label: null,
+        amount: bill,
+        // Only cash is handed over in a different amount than the bill; every
+        // other method settles for exactly the bill, and claiming a tender for
+        // them would invent a cash-handling detail.
+        amount_tendered:
+          methodOfPayment === "Cash" ? Math.round(paymentAmount) : null,
+        method_of_payment: methodOfPayment,
+      });
+
+      if (paymentError) {
+        if (isConnectionError(paymentError)) {
+          return { error: `${NO_CONNECTION} Pembayaran belum tercatat.` };
+        }
+        // The unique constraint on (order_id, customer_num): this order already
+        // has a payment against it, from a double tap or a second tablet.
+        if (paymentError.code === "23505") {
+          return { error: "Pembayaran untuk pesanan ini sudah tercatat." };
+        }
+        return { error: "Gagal mencatat pembayaran. Silakan coba lagi." };
+      }
+
+      const { error } = await supabase
+        .from("orders")
+        .update({ status: "paid" })
+        .eq("id", id);
+
+      if (error) {
+        // The money is recorded; only the order is still showing as open. Say
+        // exactly that, because "payment failed" here would have the cashier
+        // take it a second time.
+        await fetchOrders();
+        if (isConnectionError(error)) {
+          return {
+            error: `${NO_CONNECTION} Pembayaran sudah tercatat, tetapi pesanan belum ditutup.`,
+          };
+        }
+        return {
+          error:
+            "Pembayaran tercatat, tetapi pesanan gagal ditutup. Coba tutup lagi — jangan menagih ulang.",
+        };
+      }
+
+      await fetchOrders();
+
+      return { error: null };
+    } catch (e) {
+      console.error("Failed to mark order paid:", e);
+      return {
+        error:
+          "Tidak yakin pembayaran tercatat — periksa koneksi, lalu muat ulang daftar pesanan sebelum menagih lagi.",
+      };
     }
+  };
 
-    await fetchOrders();
+  /**
+   * Divide an order's lines between payers.
+   *
+   * Takes the whole item set rather than a list of assignments, because
+   * dividing 2× Kopi one each has to become two rows — a row carries a single
+   * customer_num. The screen builds that set: it keeps the original row id for
+   * the first payer to take a share of it and adds fresh rows for the rest,
+   * carrying is_stock_deducted across so nothing is deducted a second time.
+   *
+   * Forced, because a split cannot change what was sold — every ingredient is
+   * already out of the store and there is nothing new to check stock for.
+   * Putting a bill back together is the same call with every line on payer 1,
+   * which is why this needs no undo of its own.
+   */
+  const splitBill = async (
+    orderId: number,
+    items: OrderItem[]
+  ): Promise<{ error: string | null }> => {
+    // Wrapped for the same reason cancelOrderWithPin is: the split screen turns
+    // its spinner off from this result, so a thrown request would propagate
+    // straight through and leave the button dead with the bill neither split
+    // nor released.
+    try {
+      return await updateOrder(orderId, { items }, true);
+    } catch (e) {
+      console.error("Failed to split bill:", e);
+      return { error: "Terjadi kesalahan. Periksa koneksi Anda." };
+    }
+  };
 
-    return { error: null };
+  /**
+   * Record what one payer handed over. Writing this row freezes their line
+   * items — see prevent_locked_order_item_change — so it is deliberately the
+   * last step for that person, after their receipt has been worked out.
+   *
+   * The order itself stays `unpaid`: it is closed separately, once the cashier
+   * says everyone is done.
+   */
+  const recordPayment = async (
+    orderId: number,
+    payment: {
+      customerNum: number;
+      customerLabel: string | null;
+      amount: number;
+      amountTendered: number | null;
+      methodOfPayment: string;
+    }
+  ): Promise<{ error: string | null; payment?: OrderPayment }> => {
+    // Wrapped like cancelOrderWithPin: the payment screen turns its spinner off
+    // from this result. A thrown request here is the worst version of that bug —
+    // the cashier is left with a dead button, no error, and no way to tell
+    // whether the money was recorded.
+    try {
+      // The inserted row comes back so the caller can print it immediately. It
+      // cannot wait for the refetch below: `orders` in a component closure is
+      // still the pre-refetch array until React re-renders, so looking the new
+      // payment up there finds nothing and the receipt silently never prints.
+      const { data, error } = await supabase
+        .from("order_payments")
+        .insert({
+          order_id: orderId,
+          customer_num: payment.customerNum,
+          customer_label: payment.customerLabel,
+          amount: Math.round(payment.amount),
+          amount_tendered:
+            payment.amountTendered == null ? null : Math.round(payment.amountTendered),
+          method_of_payment: payment.methodOfPayment,
+        })
+        .select()
+        .single();
+
+      if (error) {
+        if (isConnectionError(error)) {
+          return { error: `${NO_CONNECTION} Pembayaran belum tercatat.` };
+        }
+        // The unique constraint on (order_id, customer_num) — a double tap, or two
+        // tablets on the same order. Saying "already recorded" is the truth and
+        // stops the cashier taking the money twice.
+        if (error.code === "23505") {
+          return { error: "Pembayaran pelanggan ini sudah tercatat." };
+        }
+        return { error: "Gagal mencatat pembayaran. Silakan coba lagi." };
+      }
+
+      await fetchOrders();
+
+      return {
+        error: null,
+        payment: {
+          id: data.id,
+          customerNum: data.customer_num,
+          customerLabel: data.customer_label ?? null,
+          amount: data.amount,
+          amountTendered: data.amount_tendered ?? null,
+          methodOfPayment: data.method_of_payment,
+          createdAt: new Date(data.created_at),
+        },
+      };
+    } catch (e) {
+      console.error("Failed to record payment:", e);
+      // Deliberately does not say the payment failed: the insert may well have
+      // reached the database before the throw. Telling the cashier it failed is
+      // how the same person gets charged twice.
+      return {
+        error:
+          "Tidak yakin pembayaran tercatat — periksa koneksi, lalu muat ulang daftar pesanan sebelum menagih lagi.",
+      };
+    }
+  };
+
+  /**
+   * Close a split order once every payer has settled.
+   *
+   * `payment_amount` is the sum of what was actually charged — the shares as
+   * they were rounded and printed — rather than a recomputed order total, which
+   * can differ by a rupiah or two because each share rounds on its own.
+   */
+  const completeSplitPayment = async (
+    orderId: number,
+    discount: number
+  ): Promise<{ error: string | null }> => {
+    try {
+      const { error } = await supabase
+        .from("orders")
+        .update({ status: "paid", discount })
+        .eq("id", orderId);
+
+      if (error) {
+        if (isConnectionError(error)) {
+          return { error: `${NO_CONNECTION} Pesanan belum ditutup.` };
+        }
+        return { error: "Gagal menutup pesanan. Silakan coba lagi." };
+      }
+
+      await fetchOrders();
+      return { error: null };
+    } catch (e) {
+      console.error("Failed to close split order:", e);
+      return { error: "Terjadi kesalahan. Periksa koneksi Anda." };
+    }
   };
 
   // Returns the failure rather than swallowing it. The switch reverting on its
@@ -610,6 +836,9 @@ export function OrderProvider({ children }: { children: ReactNode }) {
         cancelOrderWithPin,
         markItemsSent,
         markPaid,
+        splitBill,
+        recordPayment,
+        completeSplitPayment,
         toggleMenuAvailability,
         refetch: fetchOrders,
       }}

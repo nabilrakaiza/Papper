@@ -29,12 +29,27 @@ type OrderRow = {
   createdAt: Date;
   status: string;
   discount: number;
-  methodOfPayment: string | null;
   isDineIn: boolean | null;
-  paymentAmount: number | null;
+  /**
+   * How it was paid, for the one-line summary: the method for an ordinary
+   * order, "Split" when several people paid, null while it is still open.
+   */
+  methodLabel: string | null;
+  /** Cash handed over, when a single payer settled in cash. */
+  tendered: number | null;
   subtotal: number;
   total: number;
   items: OrderLine[];
+  /** Per-payer rows on a split bill; empty on an ordinary order. */
+  payments: PaymentLine[];
+};
+
+type PaymentLine = {
+  customerNum: number;
+  customerLabel: string | null;
+  amount: number;
+  amountTendered: number | null;
+  methodOfPayment: string;
 };
 
 const PERIODS = ["Hari Ini", "7 Hari", "Bulan Ini", "Bulan Lalu"] as const;
@@ -54,6 +69,7 @@ const METHOD_LABELS: Record<string, string> = {
   "Bank Transfer": "Transfer Bank",
   QRIS: "QRIS",
   Debit: "Debit",
+  Split: "Terpisah",
 };
 
 const STATUS_STYLE: Record<string, { bg: string; text: string; label: string }> = {
@@ -129,7 +145,7 @@ export default function AdminOrdersScreen() {
       // makes the row shape harder to keep in step with OrderContext.
       let query = supabase
         .from("orders")
-        .select("id, customer_name, seat, created_at, status, discount, method_of_payment, is_dine_in, payment_amount")
+        .select("id, customer_name, seat, created_at, status, discount, is_dine_in")
         .gte("created_at", from.toISOString())
         .lt("created_at", to.toISOString())
         .order("created_at", { ascending: false });
@@ -162,10 +178,28 @@ export default function AdminOrdersScreen() {
         return;
       }
 
+      // Split bills only. A failure here is not worth blanking the screen for —
+      // the orders themselves are already loaded and correct, and the payer
+      // breakdown is detail on top of them.
+      const { data: paymentData } = await supabase
+        .from("order_payments")
+        .select("order_id, customer_num, customer_label, amount, amount_tendered, method_of_payment")
+        .in("order_id", orderData.map((o) => o.id));
+
       setOrders(
         orderData.map((o) => {
           const items = (itemData ?? []).filter((i) => i.order_id === o.id);
           const subtotal = items.reduce((s, i) => s + i.price * i.quantity, 0);
+          const payments: PaymentLine[] = (paymentData ?? [])
+            .filter((p) => p.order_id === o.id)
+            .map((p) => ({
+              customerNum: p.customer_num,
+              customerLabel: p.customer_label,
+              amount: p.amount,
+              amountTendered: p.amount_tendered,
+              methodOfPayment: p.method_of_payment,
+            }))
+            .sort((a, b) => a.customerNum - b.customerNum);
 
           return {
             id: o.id,
@@ -174,11 +208,15 @@ export default function AdminOrdersScreen() {
             createdAt: new Date(o.created_at),
             status: o.status,
             discount: o.discount,
-            methodOfPayment: o.method_of_payment,
             isDineIn: o.is_dine_in,
-            paymentAmount: o.payment_amount,
+            // Derived from the payment rows, which are the only record of how an
+            // order was paid. Null means nothing has been paid against it yet.
+            methodLabel:
+              payments.length > 1 ? "Split" : payments[0]?.methodOfPayment ?? null,
+            tendered: payments.length === 1 ? payments[0].amountTendered : null,
             subtotal,
             total: orderTotal(subtotal, o.discount),
+            payments,
             items: items.map((i) => ({
               name: i.name,
               price: i.price,
@@ -386,8 +424,8 @@ export default function AdminOrdersScreen() {
                       </Text>
                       <Text className="text-xs font-bold text-gray-400 mt-0.5">
                         {formatDateTime(order.createdAt)}
-                        {order.methodOfPayment
-                          ? ` · ${METHOD_LABELS[order.methodOfPayment] ?? order.methodOfPayment}`
+                        {order.methodLabel
+                          ? ` · ${METHOD_LABELS[order.methodLabel] ?? order.methodLabel}`
                           : ""}
                       </Text>
                     </View>
@@ -482,18 +520,44 @@ export default function AdminOrdersScreen() {
                       </Text>
                     </View>
 
-                    {/* Cash is the only method where payment_amount differs from
-                        the bill — it is what the customer handed over. */}
-                    {order.status === "paid" &&
-                      order.methodOfPayment === "Cash" &&
-                      order.paymentAmount != null && (
+                    {/* Who paid what, when the bill was divided. Without this
+                        a split order shows a single "Terpisah" and no way to
+                        reconcile it against the till. */}
+                    {order.payments.length > 1 && (
+                      <View className="pt-1.5">
+                        <Text className="text-xs font-extrabold text-gray-400 mb-1">
+                          Pembayaran Terpisah
+                        </Text>
+                        {order.payments.map((p) => (
+                          <View
+                            key={p.customerNum}
+                            className="flex-row justify-between py-0.5"
+                          >
+                            <Text className="text-xs font-bold text-gray-500 flex-1 pr-2">
+                              {p.customerLabel || `Pelanggan ${p.customerNum}`} ·{" "}
+                              {METHOD_LABELS[p.methodOfPayment] ?? p.methodOfPayment}
+                              {p.methodOfPayment === "Cash" && p.amountTendered != null
+                                ? ` (bayar ${formatRupiah(p.amountTendered)})`
+                                : ""}
+                            </Text>
+                            <Text className="text-xs font-bold text-gray-700">
+                              {formatRupiah(p.amount)}
+                            </Text>
+                          </View>
+                        ))}
+                      </View>
+                    )}
+
+                    {/* Cash is the only method where what was handed over
+                        differs from the bill. */}
+                    {order.status === "paid" && order.tendered != null && (
                         <>
                           <View className="flex-row justify-between pt-1.5">
                             <Text className="text-xs font-bold text-gray-500">
                               Jumlah Bayar
                             </Text>
                             <Text className="text-xs font-bold text-gray-700">
-                              {formatRupiah(order.paymentAmount)}
+                              {formatRupiah(order.tendered)}
                             </Text>
                           </View>
                           <View className="flex-row justify-between py-0.5">
@@ -501,7 +565,7 @@ export default function AdminOrdersScreen() {
                               Kembalian
                             </Text>
                             <Text className="text-xs font-bold text-gray-700">
-                              {formatRupiah(order.paymentAmount - order.total)}
+                              {formatRupiah(order.tendered - order.total)}
                             </Text>
                           </View>
                         </>

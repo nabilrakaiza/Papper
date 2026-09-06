@@ -16,6 +16,8 @@ type OrderRow = {
   seat: string;
   total: number;
   status: "paid" | "unpaid";
+  /** Already handed over on a split bill; 0 on an ordinary order. */
+  collected: number;
 };
 
 type TopMenuItem = { name: string; quantity: number };
@@ -76,6 +78,20 @@ export default function CashierSalesScreen() {
         .select("order_id, name, price, quantity")
         .in("order_id", orderIds);
 
+      // What each order has already taken from a split bill. An order stays
+      // 'unpaid' until the last payer settles, so without this a table that has
+      // paid two shares of three counts as wholly unpaid — the "Belum Dibayar"
+      // figure would claim money that is already in the till.
+      const { data: payments } = await supabase
+        .from("order_payments")
+        .select("order_id, amount")
+        .in("order_id", orderIds);
+
+      const collectedByOrder = new Map<number, number>();
+      for (const p of payments ?? []) {
+        collectedByOrder.set(p.order_id, (collectedByOrder.get(p.order_id) ?? 0) + p.amount);
+      }
+
       // Build order rows with totals
       let paidTotal = 0;
       let unpaidTotal = 0;
@@ -84,10 +100,16 @@ export default function CashierSalesScreen() {
         const orderItems = (items ?? []).filter((i) => i.order_id === order.id);
         const subtotal = orderItems.reduce((sum, i) => sum + i.price * i.quantity, 0);
         const total = orderTotal(subtotal, order.discount);
-      
+        const collected = collectedByOrder.get(order.id) ?? 0;
 
-        if (order.status === "paid") paidTotal += total;
-        else if (order.status === "unpaid") unpaidTotal += total;
+        if (order.status === "paid") {
+          paidTotal += total;
+        } else if (order.status === "unpaid") {
+          // A part-settled order lands on both sides: what has been handed over
+          // is takings, what is left is still owed.
+          paidTotal += Math.min(collected, total);
+          unpaidTotal += Math.max(0, total - collected);
+        }
 
         return {
           id: order.id,
@@ -95,6 +117,7 @@ export default function CashierSalesScreen() {
           seat: order.seat,
           total,
           status: order.status,
+          collected,
         };
       });
 
@@ -252,9 +275,16 @@ export default function CashierSalesScreen() {
                 <View>
                   <Text className="text-sm font-bold text-gray-800">{order.customerName}</Text>
                   <Text className="text-xs font-bold text-gray-400">Tempat Duduk {order.seat}</Text>
+                  {order.collected > 0 && (
+                    <Text className="text-[10px] font-extrabold text-blue-600 mt-0.5">
+                      Sudah dibayar sebagian · {formatRupiah(order.collected)}
+                    </Text>
+                  )}
                 </View>
+                {/* What is still owed, not the whole bill — part of this one may
+                    already be in the till. */}
                 <Text className="text-sm font-extrabold text-yellow-600">
-                  {formatRupiah(order.total)}
+                  {formatRupiah(Math.max(0, order.total - order.collected))}
                 </Text>
               </View>
             ))}

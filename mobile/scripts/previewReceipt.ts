@@ -55,14 +55,54 @@ const order: Order = {
   discount: 10,
   status: 'paid',
   createdAt: NOW,
-  methodOfPayment: 'Cash',
   isDineIn: true,
-  paymentAmount: 200000,
+  // Settled by one person: exactly one payment row, which is where the method
+  // and the cash tendered now live.
+  payments: [
+    {
+      id: 1,
+      customerNum: 1,
+      customerLabel: null,
+      // 128.000 less 10%, plus tax.
+      amount: 126720,
+      amountTendered: 200000,
+      methodOfPayment: 'Cash',
+      createdAt: NOW,
+    },
+  ],
   items: [
     { menuId: 12, name: 'Es Kopi Susu Gula Aren', price: 25000, quantity: 2, isSent: true, isCancelled: false, printBatch: 1 },
     { menuId: 3, name: 'Nasi Goreng', price: 35000, quantity: 1, isSent: true, isCancelled: false, printBatch: 1, note: 'pedas' },
     { menuId: null, name: 'Sambal Extra', price: 5000, quantity: 3, isSent: false, isCancelled: false, printBatch: 2 },
     { menuId: 21, name: 'Croissant', price: 28000, quantity: 1, isSent: false, isCancelled: false, printBatch: 2 },
+  ],
+};
+
+/**
+ * The same order, split two ways, as it stands the moment payer 2 has paid and
+ * their receipt prints: the drinks and the sambal on one side, the food on the
+ * other, and only payer 2 has a payment row.
+ *
+ * Payer 2 settles in cash with change due, which is the case that exercises
+ * every line of the payment block.
+ */
+const splitOrder: Order = {
+  ...order,
+  // The order as a whole is not closed until the last payer settles — the share
+  // receipt prints before that.
+  status: 'unpaid',
+  items: order.items.map((item, idx) => ({ ...item, customerNum: idx === 1 ? 2 : 1 })),
+  payments: [
+    {
+      id: 1,
+      customerNum: 2,
+      customerLabel: 'Hina',
+      // 1x Nasi Goreng, less 10%, plus tax.
+      amount: 34650,
+      amountTendered: 50000,
+      methodOfPayment: 'Cash',
+      createdAt: NOW,
+    },
   ],
 };
 
@@ -88,7 +128,18 @@ async function main(): Promise<void> {
     renderCustomerReceipt(printer, {
       order,
       cashierName: 'Nabil',
-      moneyGiven: order.paymentAmount,
+      payment: order.payments[0],
+      now: NOW,
+    })
+  );
+
+  // One payer's share of a split bill: only their lines, their own method and
+  // tender, and printed while the order as a whole is still open.
+  await capture('customer-receipt-split', (printer) =>
+    renderCustomerReceipt(printer, {
+      order: splitOrder,
+      cashierName: 'Nabil',
+      payment: splitOrder.payments[0],
       now: NOW,
     })
   );

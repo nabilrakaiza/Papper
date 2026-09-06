@@ -1,6 +1,6 @@
 import { BluetoothEscposPrinter, BluetoothManager } from '@vardrz/react-native-bluetooth-escpos-printer';
 import { PermissionsAndroid, Platform, Linking } from 'react-native';
-import { Order } from '../types/order';
+import { Order, OrderPayment } from '../types/order';
 import { CurrentUser } from '@/hooks/useUser';
 import type { PicOptions, ReceiptPrinter, TextOptions } from './escpos';
 import { renderCustomerReceipt, renderKitchenTicket } from './receiptLayout';
@@ -272,6 +272,12 @@ export async function printReceipt(
   cashierPrinter: { address: string } | null,
   kitchenPrinter: { address: string } | null,
   user: CurrentUser,
+  /**
+   * One payer's share of a split bill: the receipt then covers only their lines
+   * and settles with their own method and tender. Omitted, the order's own
+   * single payment is used, which is the ordinary case.
+   */
+  payment?: OrderPayment,
 ): Promise<{ error: string | null }> {
   return withPrinter(async () => {
     const runPrint = async (): Promise<{ error: string | null }> => {
@@ -301,7 +307,10 @@ export async function printReceipt(
           await renderCustomerReceipt(bluetoothPrinter, {
             order,
             cashierName: user.name,
-            moneyGiven: order.paymentAmount,
+            // Falls back to the order's own single payment when no particular
+            // share was named, so an ordinary receipt still prints how it was
+            // paid. An unpaid order has neither, and prints as a plain bill.
+            payment: payment ?? order.payments[0],
           });
           breadcrumb('render:cashier ok');
         } catch (e) {

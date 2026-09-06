@@ -24,6 +24,7 @@ import {
 import { useUser } from "@/hooks/useUser";
 import { unfinishedPrint, previousTrailText, whenTrailReady } from "../../../lib/printerTrail";
 import { orderTotal as orderTotalOf } from "../../../lib/constants";
+import { isSplit, unpaidPayers } from "../../../lib/splitBill";
 
 function formatRupiah(amount: number): string {
   return "Rp " + Math.round(amount).toLocaleString("id-ID");
@@ -171,6 +172,13 @@ function PrintTrailDialog({
 function OrderCard({ order, onPrintKitchenPress, onPrintBillPress, onEditPress }: OrderCardProps) {
   const isPaid = order.status === "paid";
 
+  // A split bill stays 'unpaid' until the last payer settles, so an order that
+  // is two-thirds paid looks identical to one nobody has touched. The card is
+  // where a cashier decides what still needs chasing, so it has to say.
+  const split = isSplit(order);
+  const settled = order.payments.length;
+  const outstanding = split ? unpaidPayers(order).length : 0;
+
   return (
     <View
       className={`rounded-2xl px-4 py-4 mb-3 ${
@@ -186,6 +194,14 @@ function OrderCard({ order, onPrintKitchenPress, onPrintBillPress, onEditPress }
           </Text>
           {!isPaid && <TimerDot createdAt={order.createdAt} />}
         </View>
+
+        {!isPaid && split && (
+          <View className="bg-blue-100 rounded-lg px-2 py-0.5">
+            <Text className="text-[10px] font-extrabold text-blue-700">
+              {settled}/{settled + outstanding} bayar
+            </Text>
+          </View>
+        )}
 
         <View className="flex-row items-center gap-5">
           <TouchableOpacity onPress={() => onPrintKitchenPress(order)}>
@@ -285,6 +301,10 @@ export default function CashierHomeScreen() {
   // Set when opening an order to edit would strand the newest batch.
   const [unprintedEditOrder, setUnprintedEditOrder] = useState<Order | null>(null);
 
+  // Set when an order has a payer who has already settled, so its lines are no
+  // longer freely editable.
+  const [partiallyPaidEditOrder, setPartiallyPaidEditOrder] = useState<Order | null>(null);
+
   const openOrderEditor = (order: Order) => router.push(`/(cashier)/order/${order.id}`);
 
   // Adding items creates a batch above the current one, and a kitchen ticket
@@ -292,6 +312,16 @@ export default function CashierHomeScreen() {
   // be stranded the moment the cashier saves. This is the point where the
   // mistake can still be prevented rather than merely reported.
   const handleEdit = (order: Order) => {
+    // Someone on this order has already paid, which freezes their lines in the
+    // database. An edit could still succeed against the payers who haven't —
+    // but a line added here lands on payer 1 by default, and if payer 1 is one
+    // of the settled ones the save is refused halfway through the editor, after
+    // the cashier has done the work. Say it here instead.
+    if (order.payments.length > 0) {
+      setPartiallyPaidEditOrder(order);
+      return;
+    }
+
     if (unprintedLatestBatch(order).length > 0) {
       setUnprintedEditOrder(order);
       return;
@@ -613,6 +643,35 @@ export default function CashierHomeScreen() {
           openOrderEditor(order);
         }}
       />
+
+      {/* Part of this bill is already settled, so its lines are no longer ours
+          to rearrange. Unlike the batch warnings there is no "carry on anyway"
+          — the database refuses it, so offering the choice would be a lie. */}
+      <Modal
+        visible={partiallyPaidEditOrder !== null}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setPartiallyPaidEditOrder(null)}
+      >
+        <View className="flex-1 bg-black/40 items-center justify-center px-8">
+          <View className="w-full bg-white rounded-3xl px-6 py-5">
+            <Text className="text-base font-extrabold text-gray-700">
+              Sebagian tagihan sudah dibayar
+            </Text>
+            <Text className="text-xs font-bold text-gray-400 mt-2">
+              {partiallyPaidEditOrder?.payments.length ?? 0} pelanggan sudah
+              membayar bagiannya, jadi pesanan ini tidak bisa diubah lagi.
+              Selesaikan pembayaran yang tersisa dulu.
+            </Text>
+            <TouchableOpacity
+              onPress={() => setPartiallyPaidEditOrder(null)}
+              className="bg-gray-100 rounded-2xl py-3 items-center mt-5"
+            >
+              <Text className="text-sm font-extrabold text-gray-500">Mengerti</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
 
       {/* An earlier batch was already stranded — report it before printing. */}
       <BatchWarningDialog

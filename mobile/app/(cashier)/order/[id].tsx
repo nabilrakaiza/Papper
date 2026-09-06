@@ -194,6 +194,10 @@ export default function EditOrderScreen() {
       selectedItems.push({ ...origin });
       selectedItems.push({
         ...origin,
+        // The spread copies the row id, and this is a *new* line — the added
+        // quantity in its own batch, not a change to the existing row. Leaving
+        // the id on would name the same row twice in one save.
+        id: undefined,
         quantity: draft.quantity - origin.quantity,
         isSent: false,
         isStockDeducted: false,
