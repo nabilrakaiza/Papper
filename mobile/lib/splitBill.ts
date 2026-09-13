@@ -19,11 +19,28 @@ export function itemsForPayer(order: Order, customerNum: number): OrderItem[] {
 /**
  * Every payer on the order, in order.
  *
- * Derived from the line items rather than from a stored count, so it cannot
- * disagree with them — a payer only exists while something is assigned to them.
+ * Primarily derived from the line items rather than from a stored count, so it
+ * cannot disagree with them — a payer exists while something is assigned to
+ * them.
+ *
+ * **Plus anyone who has already handed money over.** A correction unlocks every
+ * line, which means the cashier can delete a payer's last item; on the item set
+ * alone that payer would simply cease to exist, and with them the record that
+ * they are owed a refund. Their card would never render, they would never block
+ * the order from closing, and the cafe would quietly keep their money while the
+ * books showed revenue for the remaining payers only.
+ *
+ * So a payer with payment history stays in the set. With no lines left their
+ * share computes to 0, which makes their outstanding the full negative of what
+ * they paid — exactly the refund they are due.
+ *
+ * This adds nothing on an order that has never been corrected: the per-payer
+ * lock refuses to delete a settled payer's rows, so there they always have
+ * lines.
  */
 export function payerNumbers(order: Order): number[] {
   const seen = new Set(order.items.map((i) => i.customerNum ?? 1));
+  for (const p of order.payments) seen.add(p.customerNum);
   return [...seen].sort((a, b) => a - b);
 }
 
@@ -48,11 +65,37 @@ export function payerTotal(
   return orderTotal(payerSubtotal(order, customerNum), discountPct);
 }
 
+/**
+ * What this payer handed over in the round the order is currently in.
+ *
+ * Scoped to the round because `order_payments` is append-only: after a
+ * correction the original row is still there, and matching on payer alone would
+ * find it and report someone as settled who has not yet paid the difference.
+ */
 export function paymentFor(
   order: Order,
   customerNum: number
 ): OrderPayment | undefined {
-  return order.payments.find((p) => p.customerNum === customerNum);
+  return order.payments.find(
+    (p) => p.customerNum === customerNum && p.reopenSeq === order.reopenSeq
+  );
+}
+
+/** Every row this payer has, across all rounds, oldest first. */
+export function paymentsFor(order: Order, customerNum: number): OrderPayment[] {
+  return order.payments
+    .filter((p) => p.customerNum === customerNum)
+    .sort((a, b) => a.reopenSeq - b.reopenSeq);
+}
+
+/**
+ * The net already taken from this payer before the current round — what they
+ * are owed credit for when the corrected bill is worked out.
+ */
+export function collectedFromPayer(order: Order, customerNum: number): number {
+  return order.payments
+    .filter((p) => p.customerNum === customerNum && p.reopenSeq < order.reopenSeq)
+    .reduce((sum, p) => sum + p.amount, 0);
 }
 
 /** Internal: `unpaidPayers` is the shape screens actually ask for. */
@@ -68,9 +111,35 @@ export function unpaidPayers(order: Order): number[] {
 /**
  * What the order has actually taken so far — the shares as they were charged,
  * not a recomputed total.
+ *
+ * Every row, every round. A correction that handed money back is a negative
+ * row, so this is the net in the till and needs no special case to stay right.
  */
 export function amountCollected(order: Order): number {
   return order.payments.reduce((sum, p) => sum + p.amount, 0);
+}
+
+/** An order that has been reopened at least once to correct it. */
+export function isCorrected(order: Order): boolean {
+  return order.reopenSeq > 0;
+}
+
+/**
+ * What still has to move to settle this payer, for the corrected bill.
+ *
+ * Positive means they owe that much more, negative means it goes back to them,
+ * zero means the correction left their share untouched and no row is written at
+ * all — `order_payments` refuses a correction row that records nothing moving.
+ */
+export function outstandingForPayer(
+  order: Order,
+  customerNum: number,
+  discountPct: number
+): number {
+  return (
+    payerTotal(order, customerNum, discountPct) -
+    collectedFromPayer(order, customerNum)
+  );
 }
 
 /**
@@ -88,7 +157,17 @@ export function defaultPayerLabel(customerNum: number): string {
  * Once anyone has paid, their lines are frozen by the database and the split
  * they paid against has to stand — re-dividing now would mean someone was
  * charged for something the order no longer says they bought.
+ *
+ * Round-aware, so a correction *can* re-divide the bill. That is safe only
+ * because `payerNumbers` keeps anyone with payment history in the payer set: a
+ * payer whose lines all move away does not cease to exist, they end up with a
+ * share of 0 and are owed back everything they paid. Each payer then settles
+ * their own difference and the order still reconciles against its items.
+ *
+ * Without that guarantee this has to be `order.payments.length === 0`, because
+ * a re-divide would otherwise strand the vanished payer's money with no card to
+ * credit it against and the cafe would keep it. The two belong together.
  */
 export function canResplit(order: Order): boolean {
-  return order.payments.length === 0;
+  return !order.payments.some((p) => p.reopenSeq === order.reopenSeq);
 }

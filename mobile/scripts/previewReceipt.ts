@@ -56,6 +56,7 @@ const order: Order = {
   status: 'paid',
   createdAt: NOW,
   isDineIn: true,
+  reopenSeq: 0,
   // Settled by one person: exactly one payment row, which is where the method
   // and the cash tendered now live.
   payments: [
@@ -67,6 +68,8 @@ const order: Order = {
       amount: 126720,
       amountTendered: 200000,
       methodOfPayment: 'Cash',
+      reopenSeq: 0,
+      approvedBy: null,
       createdAt: NOW,
     },
   ],
@@ -103,6 +106,8 @@ const splitOrder: Order = {
       amount: 92070,
       amountTendered: null,
       methodOfPayment: 'QRIS',
+      reopenSeq: 0,
+      approvedBy: null,
       createdAt: NOW,
     },
     {
@@ -113,10 +118,52 @@ const splitOrder: Order = {
       amount: 34650,
       amountTendered: 50000,
       methodOfPayment: 'Cash',
+      reopenSeq: 0,
+      approvedBy: null,
       createdAt: NOW,
     },
   ],
 };
+
+/**
+ * The same order after a correction, with one line taken off.
+ *
+ * The customer is holding a receipt for the original 126.720 and has had the
+ * difference handed back in cash, so the reprint has to account for the gap
+ * rather than just print a smaller total and leave the two pieces of paper
+ * silently disagreeing.
+ *
+ * The payment row carries the movement, not the new total — order_payments is
+ * append-only, and a negative amount is money going back out.
+ */
+const correctedOrder: Order = (() => {
+  // Drop the Nasi Goreng: 128.000 - 35.000 = 93.000, less 10%, plus tax.
+  const items = order.items.filter((i) => i.name !== 'Nasi Goreng');
+  const newTotal = 92070;
+  const originalTotal = 126720;
+
+  return {
+    ...order,
+    items,
+    reopenSeq: 1,
+    payments: [
+      { ...order.payments[0], amount: originalTotal },
+      {
+        id: 2,
+        customerNum: 1,
+        customerLabel: null,
+        amount: newTotal - originalTotal,
+        // Nothing is tendered when money goes the other way — the cashier hands
+        // over exactly the difference.
+        amountTendered: null,
+        methodOfPayment: 'Cash',
+        reopenSeq: 1,
+        approvedBy: null,
+        createdAt: NOW,
+      },
+    ],
+  };
+})();
 
 async function capture(
   name: string,
@@ -158,6 +205,18 @@ async function main(): Promise<void> {
       })
     );
   }
+
+  // The corrected bill. The check worth looking at is the payment block: what
+  // was taken originally, what went back, and a change line that is worked out
+  // against the difference rather than the new total.
+  await capture('customer-receipt-corrected', (printer) =>
+    renderCustomerReceipt(printer, {
+      order: correctedOrder,
+      cashierName: 'Nabil',
+      payment: correctedOrder.payments[1],
+      now: NOW,
+    })
+  );
 
   // Both kitchen variants: the ticket differs only by the "Additional order"
   // line, and that line is the whole point of the batch logic, so the preview

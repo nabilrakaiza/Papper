@@ -10,7 +10,7 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { router } from "expo-router";
-import { Printer, Check, RefreshCw, ChefHat, Receipt, Utensils, Pencil, UtensilsCrossed, ShoppingBag } from "lucide-react-native";
+import { Printer, Check, RefreshCw, ChefHat, Receipt, Utensils, Pencil, UtensilsCrossed, ShoppingBag, Undo2 } from "lucide-react-native";
 import { useOrders } from "../../../context/OrderContext";
 import { usePrinter, PrinterRole } from "../../../context/PrinterContext";
 import { Order, OrderItem } from "../../../types/order";
@@ -24,7 +24,8 @@ import {
 import { useUser } from "@/hooks/useUser";
 import { unfinishedPrint, previousTrailText, whenTrailReady } from "../../../lib/printerTrail";
 import { orderTotal as orderTotalOf } from "../../../lib/constants";
-import { isSplit, unpaidPayers } from "../../../lib/splitBill";
+import { amountCollected, isCorrected, isSplit, unpaidPayers } from "../../../lib/splitBill";
+import PinOverrideModal from "@/components/PinOverrideModal";
 
 function formatRupiah(amount: number): string {
   return "Rp " + Math.round(amount).toLocaleString("id-ID");
@@ -40,6 +41,7 @@ type OrderCardProps = {
   onPrintKitchenPress: (order: Order) => void;
   onPrintBillPress: (order: Order) => void;
   onEditPress: (order: Order) => void;
+  onCorrectPress: (order: Order) => void;
 };
 
 function useOrderTimer(createdAt: Date) {
@@ -169,15 +171,28 @@ function PrintTrailDialog({
   );
 }
 
-function OrderCard({ order, onPrintKitchenPress, onPrintBillPress, onEditPress }: OrderCardProps) {
+function OrderCard({
+  order,
+  onPrintKitchenPress,
+  onPrintBillPress,
+  onEditPress,
+  onCorrectPress,
+}: OrderCardProps) {
   const isPaid = order.status === "paid";
 
   // A split bill stays 'unpaid' until the last payer settles, so an order that
   // is two-thirds paid looks identical to one nobody has touched. The card is
   // where a cashier decides what still needs chasing, so it has to say.
   const split = isSplit(order);
-  const settled = order.payments.length;
+  const settled = order.payments.filter((p) => p.reopenSeq === order.reopenSeq).length;
   const outstanding = split ? unpaidPayers(order).length : 0;
+
+  // A reopened order is back in the unpaid list looking exactly like a fresh
+  // one, which it very much is not: money has already changed hands on it and
+  // the cashier is part-way through fixing it. Say so, and say how much is
+  // already in the till, because that is what the difference is worked out from.
+  const correcting = isCorrected(order) && !isPaid;
+  const alreadyTaken = amountCollected(order);
 
   return (
     <View
@@ -195,7 +210,13 @@ function OrderCard({ order, onPrintKitchenPress, onPrintBillPress, onEditPress }
           {!isPaid && <TimerDot createdAt={order.createdAt} />}
         </View>
 
-        {!isPaid && split && (
+        {correcting && (
+          <View className="bg-orange-100 rounded-lg px-2 py-0.5">
+            <Text className="text-[10px] font-extrabold text-orange-700">Koreksi</Text>
+          </View>
+        )}
+
+        {!isPaid && !correcting && split && (
           <View className="bg-blue-100 rounded-lg px-2 py-0.5">
             <Text className="text-[10px] font-extrabold text-blue-700">
               {settled}/{settled + outstanding} bayar
@@ -212,6 +233,12 @@ function OrderCard({ order, onPrintKitchenPress, onPrintBillPress, onEditPress }
             <Receipt size={20} color={isPaid ? "green" : "#555"} />
           </TouchableOpacity>
 
+          {isPaid && (
+            <TouchableOpacity onPress={() => onCorrectPress(order)}>
+              <Undo2 size={19} color="#ffffff" />
+            </TouchableOpacity>
+          )}
+
           {!isPaid && (
             <>
               <TouchableOpacity onPress={() => onEditPress(order)}>
@@ -225,6 +252,15 @@ function OrderCard({ order, onPrintKitchenPress, onPrintBillPress, onEditPress }
           )}
         </View>
       </View>
+
+      {correcting && (
+        <View className="mt-2 bg-orange-50 rounded-xl px-3 py-2">
+          <Text className="text-[11px] font-bold text-orange-800">
+            Sudah diterima {formatRupiah(alreadyTaken)} — perbaiki pesanan, lalu
+            selesaikan selisihnya.
+          </Text>
+        </View>
+      )}
 
       <View className="flex-row items-center justify-between mt-2 px-1 gap-2">
         <View className="flex-row items-center gap-2 flex-1">
@@ -268,7 +304,7 @@ function OrderCard({ order, onPrintKitchenPress, onPrintBillPress, onEditPress }
 }
 
 export default function CashierHomeScreen() {
-  const { orders, loading, error, refetch, markItemsSent } = useOrders();
+  const { orders, loading, error, refetch, markItemsSent, reopenOrderWithPin } = useOrders();
   const { cashierPrinter, kitchenPrinter, setPrinter } = usePrinter();
 
   const [printerSelectorVisible, setPrinterSelectorVisible] = useState(false);
@@ -305,7 +341,15 @@ export default function CashierHomeScreen() {
   // longer freely editable.
   const [partiallyPaidEditOrder, setPartiallyPaidEditOrder] = useState<Order | null>(null);
 
+  // The paid order a cashier is asking to reopen, held while the manager PIN is
+  // entered. Null closes the modal.
+  const [correctingOrder, setCorrectingOrder] = useState<Order | null>(null);
+
   const openOrderEditor = (order: Order) => router.push(`/(cashier)/order/${order.id}`);
+
+  // Reopening is gated in the database, not here — the PIN modal is where the
+  // superadmin's approval is actually collected and checked.
+  const handleCorrect = (order: Order) => setCorrectingOrder(order);
 
   // Adding items creates a batch above the current one, and a kitchen ticket
   // only ever covers the newest batch — so anything still unprinted here would
@@ -317,7 +361,11 @@ export default function CashierHomeScreen() {
     // but a line added here lands on payer 1 by default, and if payer 1 is one
     // of the settled ones the save is refused halfway through the editor, after
     // the cashier has done the work. Say it here instead.
-    if (order.payments.length > 0) {
+    //
+    // Only the current round counts. A corrected order still carries the rows
+    // recording what was originally paid, and matching on those would refuse to
+    // open the editor for the correction the cashier was just given a PIN for.
+    if (order.payments.some((p) => p.reopenSeq === order.reopenSeq)) {
       setPartiallyPaidEditOrder(order);
       return;
     }
@@ -603,6 +651,7 @@ export default function CashierHomeScreen() {
               onPrintKitchenPress={(order) => handlePrint(order, "kitchen")}
               onPrintBillPress={(order) => handlePrint(order, "bill")}
               onEditPress={handleEdit}
+              onCorrectPress={handleCorrect}
             />
           ))}
           {paid.map((o) => (
@@ -612,6 +661,7 @@ export default function CashierHomeScreen() {
               onPrintKitchenPress={(order) => handlePrint(order, "kitchen")}
               onPrintBillPress={(order) => handlePrint(order, "bill")}
               onEditPress={handleEdit}
+              onCorrectPress={handleCorrect}
             />
           ))}
         </ScrollView>
@@ -659,7 +709,10 @@ export default function CashierHomeScreen() {
               Sebagian tagihan sudah dibayar
             </Text>
             <Text className="text-xs font-bold text-gray-400 mt-2">
-              {partiallyPaidEditOrder?.payments.length ?? 0} pelanggan sudah
+              {partiallyPaidEditOrder?.payments.filter(
+                (p) => p.reopenSeq === partiallyPaidEditOrder.reopenSeq
+              ).length ?? 0}{" "}
+              pelanggan sudah
               membayar bagiannya, jadi pesanan ini tidak bisa diubah lagi.
               Selesaikan pembayaran yang tersisa dulu.
             </Text>
@@ -714,6 +767,31 @@ export default function CashierHomeScreen() {
         }}
         onConnected={handlePrinterConnected}
       />
+
+      {/* Reopening a settled bill. The PIN is checked in the database by
+          reopen_order_with_pin, which is also what writes the audit row naming
+          the superadmin who approved it — nothing here is trusted. */}
+      {correctingOrder && (
+        <PinOverrideModal
+          visible
+          orderId={correctingOrder.id}
+          title="Koreksi Pesanan"
+          message="Masukkan PIN manager untuk membuka pesanan ini"
+          onSubmit={async (pin) => {
+            const { success, error } = await reopenOrderWithPin(correctingOrder.id, pin);
+            if (!success) return { success: false, error: error ?? undefined };
+
+            // Straight into the editor: reopening on its own achieves nothing,
+            // and an order sitting open with money already taken against it is
+            // the one state nobody should be left holding by accident.
+            const id = correctingOrder.id;
+            setCorrectingOrder(null);
+            router.push(`/(cashier)/order/${id}`);
+            return { success: true };
+          }}
+          onClose={() => setCorrectingOrder(null)}
+        />
+      )}
     </SafeAreaView>
   );
 }

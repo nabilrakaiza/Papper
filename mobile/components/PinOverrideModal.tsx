@@ -1,15 +1,29 @@
 import { useState } from 'react';
 import { View, Text, Modal, TouchableOpacity } from 'react-native';
-import { supabase } from '../lib/supabase';
 
 type Props = {
   visible: boolean;
   orderId: number;
   onClose: () => void;
   onSubmit: (pin: string) => Promise<{ success: boolean; error?: string }>;
+  /**
+   * What this PIN is about to authorise. Defaults to cancelling, which is what
+   * the modal did when it was the only PIN-gated action in the app — correcting
+   * a settled bill now uses it too, and a prompt that says "menghapus order"
+   * while the cashier is correcting one is worse than no prompt at all.
+   */
+  title?: string;
+  message?: string;
 };
 
-export default function PinOverrideModal({ visible, orderId, onClose, onSubmit }: Props) {
+export default function PinOverrideModal({
+  visible,
+  orderId,
+  onClose,
+  onSubmit,
+  title = 'Diperlukan Manager PIN',
+  message = 'Masukkan PIN untuk menghapus order',
+}: Props) {
   const [pin, setPin] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -18,14 +32,27 @@ export default function PinOverrideModal({ visible, orderId, onClose, onSubmit }
     setLoading(true);
     setError(null);
 
-    const result = await onSubmit(pin);
+    // The spinner is cleared in `finally`, not after the await. Every button
+    // here is disabled while `loading` is set, so anything thrown by onSubmit
+    // used to strand the modal mid-submit: no error, a dead Konfirmasi button,
+    // and no way out but force-closing the app — with the order left in
+    // whatever state the failure found it.
+    //
+    // The callers wrap their own RPC for this reason, but they also navigate
+    // once it succeeds, and that part sits outside their try/catch. Guaranteeing
+    // it here covers both instead of asking every future caller to remember.
+    try {
+      const result = await onSubmit(pin);
 
-    setLoading(false);
-    setPin('');
-
-    if (!result.success) {
-      setError(result.error ?? 'Terjadi kesalahan');
-      return;
+      if (!result.success) {
+        setError(result.error ?? 'Terjadi kesalahan');
+      }
+    } catch (e) {
+      console.error('PIN override failed:', e);
+      setError('Terjadi kesalahan. Periksa koneksi Anda.');
+    } finally {
+      setPin('');
+      setLoading(false);
     }
   };
 
@@ -35,8 +62,8 @@ export default function PinOverrideModal({ visible, orderId, onClose, onSubmit }
     <Modal visible={visible} transparent animationType="fade">
       <View className="flex-1 bg-black/60 justify-center items-center">
         <View className="bg-zinc-900 rounded-2xl p-6 w-72">
-          <Text className="text-white text-center text-lg mb-2">Diperlukan Manager PIN </Text>
-          <Text className="text-zinc-400 text-center mb-4">Masukkan PIN untuk menghapus order</Text>
+          <Text className="text-white text-center text-lg mb-2">{title}</Text>
+          <Text className="text-zinc-400 text-center mb-4">{message}</Text>
 
           <View className="flex-row justify-center mb-4">
             {[0,1,2,3,4,5].map(i => (

@@ -35,6 +35,8 @@ type OrderRow = {
    * order, "Split" when several people paid, null while it is still open.
    */
   methodLabel: string | null;
+  /** True once this order has been reopened and corrected at least once. */
+  corrected: boolean;
   /** Cash handed over, when a single payer settled in cash. */
   tendered: number | null;
   subtotal: number;
@@ -47,9 +49,12 @@ type OrderRow = {
 type PaymentLine = {
   customerNum: number;
   customerLabel: string | null;
+  /** Negative on a correction that handed money back. */
   amount: number;
   amountTendered: number | null;
   methodOfPayment: string;
+  /** Which correction round this row settles. 0 is the original payment. */
+  reopenSeq: number;
 };
 
 const PERIODS = ["Hari Ini", "7 Hari", "Bulan Ini", "Bulan Lalu"] as const;
@@ -183,7 +188,7 @@ export default function AdminOrdersScreen() {
       // breakdown is detail on top of them.
       const { data: paymentData } = await supabase
         .from("order_payments")
-        .select("order_id, customer_num, customer_label, amount, amount_tendered, method_of_payment")
+        .select("order_id, customer_num, customer_label, amount, amount_tendered, method_of_payment, reopen_seq")
         .in("order_id", orderData.map((o) => o.id));
 
       setOrders(
@@ -194,12 +199,24 @@ export default function AdminOrdersScreen() {
             .filter((p) => p.order_id === o.id)
             .map((p) => ({
               customerNum: p.customer_num,
+              reopenSeq: p.reopen_seq ?? 0,
               customerLabel: p.customer_label,
               amount: p.amount,
               amountTendered: p.amount_tendered,
               methodOfPayment: p.method_of_payment,
             }))
-            .sort((a, b) => a.customerNum - b.customerNum);
+            .sort(
+              (a, b) => a.customerNum - b.customerNum || a.reopenSeq - b.reopenSeq
+            );
+
+          // Divided between people, which is a different question from "has
+          // more than one payment row". A corrected order has a second row for
+          // the same payer, and counting rows labelled every correction
+          // "Terpisah" — the payer count is what actually says it was split.
+          const payerCount = new Set(payments.map((p) => p.customerNum)).size;
+          // The original settlement. A correction appends rather than rewriting,
+          // so this is still the row that says how the bill was first paid.
+          const original = payments.find((p) => p.reopenSeq === 0);
 
           return {
             id: o.id,
@@ -212,8 +229,12 @@ export default function AdminOrdersScreen() {
             // Derived from the payment rows, which are the only record of how an
             // order was paid. Null means nothing has been paid against it yet.
             methodLabel:
-              payments.length > 1 ? "Split" : payments[0]?.methodOfPayment ?? null,
-            tendered: payments.length === 1 ? payments[0].amountTendered : null,
+              payerCount > 1 ? "Split" : original?.methodOfPayment ?? null,
+            corrected: payments.some((p) => p.reopenSeq > 0),
+            // The cash handed over at the original settlement. Keyed on the
+            // payer count, not the row count, so a corrected cash order does
+            // not silently lose its tender to a second row.
+            tendered: payerCount === 1 ? original?.amountTendered ?? null : null,
             subtotal,
             total: orderTotal(subtotal, o.discount),
             payments,
@@ -526,21 +547,34 @@ export default function AdminOrdersScreen() {
                     {order.payments.length > 1 && (
                       <View className="pt-1.5">
                         <Text className="text-xs font-extrabold text-gray-400 mb-1">
-                          Pembayaran Terpisah
+                          {order.corrected
+                            ? "Rincian Pembayaran"
+                            : "Pembayaran Terpisah"}
                         </Text>
                         {order.payments.map((p) => (
                           <View
-                            key={p.customerNum}
+                            key={`${p.customerNum}-${p.reopenSeq}`}
                             className="flex-row justify-between py-0.5"
                           >
                             <Text className="text-xs font-bold text-gray-500 flex-1 pr-2">
-                              {p.customerLabel || `Pelanggan ${p.customerNum}`} ·{" "}
-                              {METHOD_LABELS[p.methodOfPayment] ?? p.methodOfPayment}
+                              {/* A correction row is not another person, it is
+                                  the same person settling a difference — say
+                                  that instead of repeating their name. */}
+                              {p.reopenSeq > 0
+                                ? p.amount < 0
+                                  ? "Dikembalikan"
+                                  : "Tambahan bayar"
+                                : p.customerLabel || `Pelanggan ${p.customerNum}`}{" "}
+                              · {METHOD_LABELS[p.methodOfPayment] ?? p.methodOfPayment}
                               {p.methodOfPayment === "Cash" && p.amountTendered != null
                                 ? ` (bayar ${formatRupiah(p.amountTendered)})`
                                 : ""}
                             </Text>
-                            <Text className="text-xs font-bold text-gray-700">
+                            <Text
+                              className={`text-xs font-bold ${
+                                p.amount < 0 ? "text-red-600" : "text-gray-700"
+                              }`}
+                            >
                               {formatRupiah(p.amount)}
                             </Text>
                           </View>
@@ -565,7 +599,17 @@ export default function AdminOrdersScreen() {
                               Kembalian
                             </Text>
                             <Text className="text-xs font-bold text-gray-700">
-                              {formatRupiah(order.tendered - order.total)}
+                              {/* Against the bill that was actually settled in
+                                  cash, which on a corrected order is not the
+                                  current total — the corrections came after.
+                                  Subtracting them back out recovers it. */}
+                              {formatRupiah(
+                                order.tendered -
+                                  (order.total -
+                                    order.payments
+                                      .filter((p) => p.reopenSeq > 0)
+                                      .reduce((sum, p) => sum + p.amount, 0))
+                              )}
                             </Text>
                           </View>
                         </>

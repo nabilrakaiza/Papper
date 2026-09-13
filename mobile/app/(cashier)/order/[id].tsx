@@ -19,10 +19,25 @@ import { CustomItemDraft, MenuCategory, OrderItem } from "../../../types/order";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import PinOverrideModal from "@/components/PinOverrideModal";
 import { CustomItemSheet, CustomItemList } from "@/components/CustomItemSheet";
+import {
+  amountCollected,
+  defaultPayerLabel,
+  payerNumbers,
+} from "../../../lib/splitBill";
 
 function formatRupiah(amount: number): string {
   return "Rp " + Math.round(amount).toLocaleString("id-ID");
 }
+
+/**
+ * Key for `quantities` and `notes`: one entry per dish PER PAYER.
+ *
+ * Keyed by menu id alone, this screen showed "Kopi 4" for a split bill where
+ * two people were holding two each — so reducing to 3 had to take one from
+ * somebody, and the cashier was never shown the choice. Adding an item was
+ * worse: it always landed on payer 1, with no way to charge anyone else.
+ */
+const qKey = (menuId: number, payer: number) => `${menuId}:${payer}`;
 
 export default function EditOrderScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -41,22 +56,32 @@ export default function EditOrderScreen() {
   const [showCancelDialog, setShowCancelDialog] = useState(false);
   const [showPinModal, setShowPinModal] = useState(false);
 
-  // `quantities` and `notes` are keyed by menu id, so custom off-menu items —
-  // which have none — are tracked separately and merged back in at save time.
-  const [quantities, setQuantities] = useState<Record<number, number>>(() => {
+  // `quantities` and `notes` are keyed by menu id and payer, so custom off-menu
+  // items — which have no menu id — are tracked separately in `customItems` and
+  // merged back in at save time.
+  //
+  // Which payer the +/- buttons and the custom-item sheet are acting on. Only
+  // ever shown when the bill is split; on every other order there is one payer
+  // and this stays 1, which is exactly how the screen behaved before.
+  const [activePayer, setActivePayer] = useState(1);
+
+  const [quantities, setQuantities] = useState<Record<string, number>>(() => {
     const items = order?.items ?? [];
     return items.reduce((acc, item) => {
       if (item.menuId == null) return acc;
-      acc[item.menuId] = (acc[item.menuId] ?? 0) + item.quantity;
+      const k = qKey(item.menuId, item.customerNum ?? 1);
+      acc[k] = (acc[k] ?? 0) + item.quantity;
       return acc;
-    }, {} as Record<number, number>);
+    }, {} as Record<string, number>);
   });
 
-  const [notes, setNotes] = useState<Record<number, string>>(() =>
+  // Per payer too. It was keyed by menu id, so two people ordering the same
+  // dish with different notes kept only whichever row was read last.
+  const [notes, setNotes] = useState<Record<string, string>>(() =>
     Object.fromEntries(
       (order?.items ?? [])
         .filter((i) => i.menuId != null)
-        .map((i) => [i.menuId as number, i.note || ""])
+        .map((i) => [qKey(i.menuId as number, i.customerNum ?? 1), i.note || ""])
     )
   );
 
@@ -75,33 +100,39 @@ export default function EditOrderScreen() {
         price: i.price,
         quantity: i.quantity,
         note: i.note ?? "",
+        customerNum: i.customerNum ?? 1,
       }))
   );
 
   const [customSheetOpen, setCustomSheetOpen] = useState(false);
 
-  const increment = useCallback((menuId: number) => {
-    setQuantities((prev) => ({ ...prev, [menuId]: (prev[menuId] ?? 0) + 1 }));
+  const increment = useCallback((menuId: number, payer: number) => {
+    const k = qKey(menuId, payer);
+    setQuantities((prev) => ({ ...prev, [k]: (prev[k] ?? 0) + 1 }));
   }, []);
 
-  const decrement = useCallback((menuId: number) => {
+  const decrement = useCallback((menuId: number, payer: number) => {
+    const k = qKey(menuId, payer);
     setQuantities((prev) => {
-      const current = prev[menuId] ?? 0;
+      const current = prev[k] ?? 0;
       if (current <= 0) return prev;
       if (current - 1 === 0) {
         setNotes((prevNotes) => {
           const newNotes = { ...prevNotes };
-          delete newNotes[menuId];
+          delete newNotes[k];
           return newNotes;
         });
       }
-      return { ...prev, [menuId]: current - 1 };
+      return { ...prev, [k]: current - 1 };
     });
   }, []);
 
-  const handleNoteChange = useCallback((menuId: number, text: string) => {
-    setNotes((prev) => ({ ...prev, [menuId]: text }));
-  }, []);
+  const handleNoteChange = useCallback(
+    (menuId: number, payer: number, text: string) => {
+      setNotes((prev) => ({ ...prev, [qKey(menuId, payer)]: text }));
+    },
+    []
+  );
 
   if (!order) {
     return (
@@ -119,13 +150,30 @@ export default function EditOrderScreen() {
   const currentMaxBatch = Math.max(...(order.items.map((i) => i.printBatch) ?? [1]), 1);
   const selectedItems: OrderItem[] = [];
 
+  // Every payer on the order, including anyone who has paid but whose lines
+  // have all been removed — see payerNumbers. A single-payer order gives [1]
+  // and everything below reduces to what this screen always did.
+  const editorPayers = payerNumbers(order);
+  const isSplitOrder = editorPayers.length > 1;
+
+  const payerLabel = (p: number) =>
+    order.payments.find((x) => x.customerNum === p)?.customerLabel ||
+    defaultPayerLabel(p);
+
+  // Outer loop over payers, so each person's lines are diffed against their own
+  // quantities. That is what makes "reduce Budi's coffee by one" expressible at
+  // all — before, the screen saw one pooled number per dish and had to guess
+  // whose row to trim.
+  editorPayers.forEach((payer) => {
   menu.forEach((m) => {
-    const finalQty = quantities[m.id] ?? 0;
+    const finalQty = quantities[qKey(m.id, payer)] ?? 0;
     if (finalQty === 0) return;
 
-    const existingEntries = order.items.filter((i) => i.menuId === m.id);
+    const existingEntries = order.items.filter(
+      (i) => i.menuId === m.id && (i.customerNum ?? 1) === payer
+    );
     const oldTotalQty = existingEntries.reduce((sum, i) => sum + i.quantity, 0);
-    const currentNote = notes[m.id] || "";
+    const currentNote = notes[qKey(m.id, payer)] || "";
 
     if (finalQty === oldTotalQty) {
       existingEntries.forEach((entry) => {
@@ -168,22 +216,42 @@ export default function EditOrderScreen() {
           isSent: false,
           isCancelled: false,
           printBatch: currentMaxBatch + 1,
+          customerNum: payer,
         });
       }
     } else {
+      // Ascending print batch, and this is the order things are KEPT in —
+      // whatever sorts last is what gets trimmed. So a reduction comes off the
+      // newest batch and the kitchen is never asked to unmake something it
+      // started earlier.
+      //
+      // No payer tie-break is needed any more: `existingEntries` is one
+      // person's rows, because the cashier picked whose coffee to reduce.
       let remainingToKeep = finalQty;
-      const sortedEntries = [...existingEntries].sort((a, b) => a.printBatch - b.printBatch);
+      const sortedEntries = [...existingEntries].sort(
+        (a, b) => a.printBatch - b.printBatch
+      );
+
+      // Rebuilt in the original order afterwards: the payload is order-
+      // insensitive, but keeping it stable keeps the review panel from
+      // reshuffling under the cashier's finger mid-edit.
+      const trimmed = new Map<number, OrderItem>();
+
       sortedEntries.forEach((entry) => {
-        if (remainingToKeep <= 0) return;
-        if (entry.quantity <= remainingToKeep) {
-          selectedItems.push({ ...entry, note: entry.note });
-          remainingToKeep -= entry.quantity;
-        } else {
-          selectedItems.push({ ...entry, quantity: remainingToKeep, note: entry.note });
-          remainingToKeep = 0;
+        const keep = Math.min(entry.quantity, remainingToKeep);
+        remainingToKeep -= keep;
+        if (keep > 0) {
+          trimmed.set(entry.id as number, { ...entry, quantity: keep, note: entry.note });
         }
       });
+
+      existingEntries.forEach((entry) => {
+        const kept = trimmed.get(entry.id as number);
+        if (kept) selectedItems.push(kept);
+      });
     }
+  });
+
   });
 
   // Custom items, same batching rules as the menu items above: an untouched or
@@ -208,6 +276,9 @@ export default function EditOrderScreen() {
         isSent: false,
         isCancelled: false,
         printBatch: currentMaxBatch + 1,
+        // Stamped when the sheet added it, from whoever was selected then. An
+        // existing row keeps its own payer via the spread below.
+        customerNum: draft.customerNum ?? 1,
       });
       return;
     }
@@ -245,37 +316,61 @@ export default function EditOrderScreen() {
   const totalItems = selectedItems.reduce((sum, i) => sum + i.quantity, 0);
   const subtotal = selectedItems.reduce((sum, i) => sum + i.price * i.quantity, 0);
 
+  // try/finally so `saving` always clears. updateOrder does not wrap itself —
+  // splitBill wraps it at the call site for this reason — so a thrown request
+  // here left the Simpan button disabled with no error shown and no way back
+  // but force-closing the app.
+  //
+  // That matters more since corrections: the order being edited may be a paid
+  // one that has been reopened, so a stranded editor means real money is
+  // already recorded against an order now showing as unpaid, and the cashier
+  // cannot save the fix.
   const handleSave = async (force = false) => {
     if (selectedItems.length === 0) return;
     setSaving(true);
     setError(null);
 
-    const { error, stockWarning } = await updateOrder(
-      order.id,
-      { items: selectedItems },
-      force
-    );
+    try {
+      const { error, stockWarning } = await updateOrder(
+        order.id,
+        { items: selectedItems },
+        force
+      );
 
-    if (stockWarning) {
-      setStockWarning(stockWarning);
+      if (stockWarning) {
+        setStockWarning(stockWarning);
+        return;
+      }
+
+      if (error) {
+        setError(error);
+        return;
+      }
+
+      router.back();
+    } catch (e) {
+      console.error("Failed to save order items:", e);
+      // Not "the edit failed": save_order_items is one transaction, but the
+      // request may still have reached the database before the throw. Telling
+      // the cashier it failed is how the same items get added twice.
+      setError(
+        "Tidak yakin perubahan tersimpan — periksa koneksi, lalu muat ulang daftar pesanan sebelum menyimpan lagi."
+      );
+    } finally {
       setSaving(false);
-      return;
     }
-
-    if (error) {
-      setError(error);
-      setSaving(false);
-      return;
-    }
-
-    setSaving(false);
-    router.back();
   };
 
   const handleCancelConfirm = () => {
     setShowCancelDialog(false);
     setShowPinModal(true);
   };
+
+  // What this order has actually taken, net of any correction that already gave
+  // money back. Drives the cancellation warning: cancelling drops the order out
+  // of every revenue figure while these rows stay, so the books only agree if
+  // the cashier hands the money over.
+  const amountTaken = amountCollected(order);
 
   return (
     <SafeAreaView className="flex-1 bg-gray-100">
@@ -312,6 +407,48 @@ export default function EditOrderScreen() {
               </TouchableOpacity>
             </View>
           </View>
+
+          {/* Who the +/- buttons are acting on. Only on a split bill — on any
+              other order there is one payer and a selector would be a control
+              with a single option. */}
+          {isSplitOrder && (
+            <View className="mb-3">
+              <Text className="text-[10px] font-extrabold text-gray-500 uppercase tracking-widest mb-1.5">
+                Ubah pesanan untuk
+              </Text>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                <View className="flex-row gap-2">
+                  {editorPayers.map((p) => {
+                    const active = p === activePayer;
+                    const count = menu.reduce(
+                      (sum, m) => sum + (quantities[qKey(m.id, p)] ?? 0),
+                      0
+                    );
+                    return (
+                      <TouchableOpacity
+                        key={p}
+                        onPress={() => setActivePayer(p)}
+                        className={`border-2 rounded-xl px-3 py-1.5 ${
+                          active
+                            ? "border-blue-500 bg-blue-50"
+                            : "border-gray-200 bg-white"
+                        }`}
+                      >
+                        <Text
+                          className={`text-sm font-bold ${
+                            active ? "text-blue-600" : "text-gray-600"
+                          }`}
+                        >
+                          {payerLabel(p)}
+                          <Text className="text-xs font-extrabold"> · {count}</Text>
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              </ScrollView>
+            </View>
+          )}
 
           {/* Category selector */}
           <View className="flex-row items-center gap-2">
@@ -366,8 +503,12 @@ export default function EditOrderScreen() {
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
         >
+          {/* Scoped to the selected payer, like the menu cards below — a split
+              bill's custom lines belong to someone in particular too. */}
           <CustomItemList
-            items={customItems}
+            items={customItems.filter(
+              (c) => (c.customerNum ?? 1) === activePayer
+            )}
             onChangeQuantity={(uid, quantity) =>
               setCustomItems((prev) =>
                 prev.map((c) => (c.uid === uid ? { ...c, quantity } : c))
@@ -379,7 +520,13 @@ export default function EditOrderScreen() {
           />
 
           {categoryItems.map((item) => {
-            const qty = quantities[item.id] ?? 0;
+            const qty = quantities[qKey(item.id, activePayer)] ?? 0;
+            // What everyone else on the bill is holding of this dish. Shown so
+            // the cashier can see the whole order without losing track of whose
+            // number the +/- is about to change.
+            const othersQty = editorPayers
+              .filter((p) => p !== activePayer)
+              .reduce((sum, p) => sum + (quantities[qKey(item.id, p)] ?? 0), 0);
             return (
               <View
                 key={item.id}
@@ -390,13 +537,16 @@ export default function EditOrderScreen() {
                     <Text className="text-sm font-bold text-gray-900">{item.name}</Text>
                     <Text className="text-xs font-bold text-gray-400 mt-0.5">
                       {formatRupiah(item.price)}
+                      {othersQty > 0 ? ` · ${othersQty} di pelanggan lain` : ""}
                     </Text>
                   </View>
 
                   <View className="flex-row items-center gap-3">
                     {qty > 0 && (
                       <>
-                        <TouchableOpacity onPress={() => decrement(item.id)}>
+                        <TouchableOpacity
+                          onPress={() => decrement(item.id, activePayer)}
+                        >
                           <Minus size={18} color="#555" />
                         </TouchableOpacity>
                         <Text className="text-sm font-extrabold text-gray-900 w-5 text-center">
@@ -404,7 +554,9 @@ export default function EditOrderScreen() {
                         </Text>
                       </>
                     )}
-                    <TouchableOpacity onPress={() => increment(item.id)}>
+                    <TouchableOpacity
+                      onPress={() => increment(item.id, activePayer)}
+                    >
                       <Plus size={18} color="#555" />
                     </TouchableOpacity>
                   </View>
@@ -416,8 +568,10 @@ export default function EditOrderScreen() {
                       className="w-full bg-white/70 rounded-xl px-3 py-2 text-xs font-bold text-gray-800"
                       placeholder={`Catatan untuk ${item.name} (opsional)`}
                       placeholderTextColor="#9ca3af"
-                      value={notes[item.id] || ""}
-                      onChangeText={(text) => handleNoteChange(item.id, text)}
+                      value={notes[qKey(item.id, activePayer)] || ""}
+                      onChangeText={(text) =>
+                        handleNoteChange(item.id, activePayer, text)
+                      }
                     />
                   </View>
                 )}
@@ -443,26 +597,58 @@ export default function EditOrderScreen() {
               {summaryOpen && (
                 <View className="mb-3" style={{ maxHeight: summaryMaxHeight }}>
                   <ScrollView showsVerticalScrollIndicator={false}>
-                    {selectedItems.map((item, idx) => (
-                      <View
-                        key={`${item.menuId ?? "custom"}-${item.printBatch}-${idx}`}
-                        className="mb-2"
-                      >
-                        <View className="flex-row justify-between mb-0.5">
-                          <Text className="text-sm font-bold text-white flex-1 pr-2">
-                            {item.quantity}x {item.name}
-                          </Text>
-                          <Text className="text-sm font-bold text-white">
-                            {formatRupiah(item.price * item.quantity)}
-                          </Text>
+                    {/* Grouped by payer on a split bill, with each person's own
+                        subtotal. A flat list here gave no way to check the one
+                        thing that matters before saving — that the right person
+                        is being charged for the right thing. Ungrouped on a
+                        single-payer order, where a heading would be noise. */}
+                    {editorPayers.map((p) => {
+                      const mine = selectedItems.filter(
+                        (i) => (i.customerNum ?? 1) === p
+                      );
+                      if (mine.length === 0) return null;
+
+                      const mineSubtotal = mine.reduce(
+                        (sum, i) => sum + i.price * i.quantity,
+                        0
+                      );
+
+                      return (
+                        <View key={p} className={isSplitOrder ? "mb-3" : ""}>
+                          {isSplitOrder && (
+                            <View className="flex-row justify-between mb-1.5">
+                              <Text className="text-[10px] font-extrabold text-white/90 uppercase tracking-widest">
+                                {payerLabel(p)}
+                              </Text>
+                              <Text className="text-[10px] font-extrabold text-white/90">
+                                {formatRupiah(mineSubtotal)}
+                              </Text>
+                            </View>
+                          )}
+
+                          {mine.map((item, idx) => (
+                            <View
+                              key={`${item.menuId ?? "custom"}-${item.printBatch}-${idx}`}
+                              className="mb-2"
+                            >
+                              <View className="flex-row justify-between mb-0.5">
+                                <Text className="text-sm font-bold text-white flex-1 pr-2">
+                                  {item.quantity}x {item.name}
+                                </Text>
+                                <Text className="text-sm font-bold text-white">
+                                  {formatRupiah(item.price * item.quantity)}
+                                </Text>
+                              </View>
+                              {!!item.note && (
+                                <Text className="text-xs font-bold text-white/80 italic">
+                                  └ Catatan: {item.note}
+                                </Text>
+                              )}
+                            </View>
+                          ))}
                         </View>
-                        {!!item.note && (
-                          <Text className="text-xs font-bold text-white/80 italic">
-                            └ Catatan: {item.note}
-                          </Text>
-                        )}
-                      </View>
-                    ))}
+                      );
+                    })}
                   </ScrollView>
 
                   <View className="h-px bg-white/30 my-2" />
@@ -510,7 +696,12 @@ export default function EditOrderScreen() {
 
         <CustomItemSheet
           visible={customSheetOpen}
-          onAdd={(item) => setCustomItems((prev) => [...prev, item])}
+          onAdd={(item) =>
+            setCustomItems((prev) => [
+              ...prev,
+              { ...item, customerNum: activePayer },
+            ])
+          }
           onClose={() => setCustomSheetOpen(false)}
         />
 
@@ -547,11 +738,26 @@ export default function EditOrderScreen() {
           </View>
         )}
 
+        {/* Cancelling an order that has already taken money is allowed, but the
+            app cannot give it back — so the cashier has to. Nothing here is
+            automatic: the payment rows stay exactly as they are, the order drops
+            out of every revenue figure, and the two only agree if the money
+            really does go back to the customer.
+
+            Stock is not returned either, which is the standing rule everywhere
+            else in this app and is said out loud here because a cancellation is
+            where someone is most likely to assume otherwise. */}
         <ConfirmDialog
           visible={showCancelDialog}
           title="Batalkan Pesanan"
-          message="Apakah anda yakin untuk menghapus order ini? aksi ini tidak bisa dibatalkan"
-          confirmLabel="Iya, Batalkan"
+          message={
+            amountTaken > 0
+              ? `Pesanan ini sudah menerima pembayaran ${formatRupiah(amountTaken)}.\n\n` +
+                "Pembatalan bisa dilakukan, tetapi semua uang harus dikembalikan ke customer secara langsung — aplikasi tidak mengembalikannya otomatis.\n\n" +
+                "Stok bahan yang sudah terpakai tidak dikembalikan."
+              : "Apakah anda yakin untuk menghapus order ini? aksi ini tidak bisa dibatalkan"
+          }
+          confirmLabel={amountTaken > 0 ? "Batalkan & Kembalikan Uang" : "Iya, Batalkan"}
           cancelLabel="Tidak"
           destructive
           onConfirm={handleCancelConfirm}

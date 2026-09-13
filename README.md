@@ -18,9 +18,12 @@ in [`mobile/README.md`](mobile/README.md) and [`mobile/docs/`](mobile/docs/).
 - Add custom off-menu line items — a name and price typed by the cashier, for
   anything not in the menu; these carry no recipe and so never touch stock
 - Take payment (cash, transfer, QRIS, debit), apply a discount, close the order
+- Split one bill between several payers, each settling their own share
 - Print kitchen tickets and receipts to a paired Bluetooth ESC/POS printer
 - Cancel an order — gated behind a 6-digit manager PIN, enforced in the
   database rather than the app
+- Correct a settled bill — reopen it behind the same PIN, fix the lines, and
+  settle the difference in whichever direction it goes
 
 **Admin app (same binary, admin accounts)**
 - Menu, recipes and cost-of-goods (per-ingredient or a flat manual figure)
@@ -53,9 +56,12 @@ Details: [mobile/docs/architecture.md](mobile/docs/architecture.md).
   hash by a `SECURITY DEFINER` RPC; a database trigger rejects any direct
   attempt to set `status = 'cancelled'` that skips it
 - Once an order is paid or cancelled, a trigger locks what can still change
-  on its line items — what was sold, its price, and whether stock was
+  on its line items — what was sold, its price, and how much stock was
   deducted for it can't be altered, even by a client holding valid
-  credentials
+  credentials. The same lock applies per payer on a split bill
+- Correcting a paid order is append-only: the original payment row is never
+  rewritten, and money handed back is recorded as a negative amount, so the
+  card terminal's settlement and the cash drawer both still reconcile
 - PIN brute-force is rate-limited (5 attempts / 15 minutes) and logged
 
 Full writeup, including known accepted risks: [mobile/docs/security.md](mobile/docs/security.md).

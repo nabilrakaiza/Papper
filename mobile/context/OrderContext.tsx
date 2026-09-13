@@ -12,6 +12,7 @@ type OrderContextType = {
   addOrder: (order: Omit<Order, "id" | "createdAt" | "payments">, force?: boolean) => Promise<{ error: string | null; stockWarning?: string }>;
   updateOrder: (id: number, order: Partial<Order>, force?: boolean) => Promise<{ error: string | null; stockWarning?: string }>;
   cancelOrderWithPin: (orderId: number, pin: string) => Promise<{ success: boolean; error: string | null }>;
+  reopenOrderWithPin: (orderId: number, pin: string) => Promise<{ success: boolean; error: string | null }>;
   markItemsSent: (orderId: number, printBatch: number) => Promise<{ error: string | null }>;
   markPaid: (id: number, discount: number, methodOfPayment: string, paymentAmount: number) => Promise<{ error: string | null }>;
   splitBill: (orderId: number, items: OrderItem[]) => Promise<{ error: string | null }>;
@@ -26,6 +27,7 @@ type OrderContextType = {
     }
   ) => Promise<{ error: string | null; payment?: OrderPayment }>;
   completeSplitPayment: (orderId: number, discount: number) => Promise<{ error: string | null }>;
+  closeCorrectedOrder: (orderId: number, discount: number) => Promise<{ error: string | null }>;
   toggleMenuAvailability: (menuId: number) => Promise<{ error: string | null }>;
   refetch: () => Promise<void>;
 };
@@ -119,9 +121,15 @@ export function OrderProvider({ children }: { children: ReactNode }) {
           status: o.status,
           createdAt: new Date(o.created_at),
           isDineIn: o.is_dine_in,
+          // 0 for every order that has never been corrected, which is also the
+          // column's default — so a row written before the column existed, or
+          // by anything that does not know about it, reads as "never".
+          reopenSeq: o.reopen_seq ?? 0,
           // The whole payment record: one row for an ordinary order, one per
-          // payer for a split bill, none while it is still open. Sorted so the
-          // payer cards on the payment screen keep a stable order.
+          // payer for a split bill, one more per payer for each correction, and
+          // none at all while it is still open. Sorted so the payer cards on the
+          // payment screen keep a stable order, then by round so a payer's
+          // history reads oldest first.
           payments: (o.order_payments ?? [])
             .map((p: any) => ({
               id: p.id,
@@ -130,9 +138,14 @@ export function OrderProvider({ children }: { children: ReactNode }) {
               amount: p.amount,
               amountTendered: p.amount_tendered ?? null,
               methodOfPayment: p.method_of_payment,
+              reopenSeq: p.reopen_seq ?? 0,
+              approvedBy: p.approved_by ?? null,
               createdAt: new Date(p.created_at),
             }))
-            .sort((a: OrderPayment, b: OrderPayment) => a.customerNum - b.customerNum),
+            .sort(
+              (a: OrderPayment, b: OrderPayment) =>
+                a.customerNum - b.customerNum || a.reopenSeq - b.reopenSeq
+            ),
           // An order with no rows in order_items comes back as [], but a failed
           // embed comes back as null — don't map straight off it.
           items: (o.order_items ?? []).map((i: any) => ({
@@ -529,6 +542,72 @@ export function OrderProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  /**
+   * Reopen a settled order so its lines can be corrected.
+   *
+   * Same shape as cancelOrderWithPin because it is the same gate: a superadmin
+   * PIN, checked in the database, rate-limited against the same counter. A
+   * correction rewrites a recorded sale just as a cancellation does.
+   *
+   * The order returns to 'unpaid' and its round advances. Nothing that was paid
+   * is deleted — order_payments is append-only, and what releases the line items
+   * is the new round, not the removal of the old rows.
+   */
+  const reopenOrderWithPin = async (orderId: number, pin: string) => {
+    // Wrapped for the same reason cancelOrderWithPin is: PinOverrideModal turns
+    // its spinner off from this result, so a thrown request would leave the
+    // modal stuck mid-submit with the order neither reopened nor released.
+    try {
+      const { data, error } = await supabase.rpc("reopen_order_with_pin", {
+        p_order_id: orderId,
+        p_pin: pin,
+      });
+
+      if (error) {
+        if (isConnectionError(error)) {
+          return { success: false, error: `${NO_CONNECTION} Pesanan belum dibuka.` };
+        }
+        return { success: false, error: "Terjadi kesalahan" };
+      }
+
+      if (!data?.ok) {
+        if (data?.reason === "locked_out") {
+          const minutes = Math.ceil((data.retry_after_seconds ?? 0) / 60);
+          return {
+            success: false,
+            error: `Terlalu banyak percobaan. Coba lagi dalam ${minutes} menit.`,
+          };
+        }
+
+        // Someone else got there first — another tablet corrected or cancelled
+        // this order while the PIN was being typed. Saying "PIN salah" here
+        // would send the cashier hunting for a manager over nothing.
+        if (data?.reason === "not_paid") {
+          return {
+            success: false,
+            error: "Pesanan ini sudah tidak berstatus lunas. Muat ulang daftar pesanan.",
+          };
+        }
+
+        if (data?.reason === "not_found") {
+          return { success: false, error: "Pesanan tidak ditemukan." };
+        }
+
+        const left = data?.attempts_left ?? 0;
+        return {
+          success: false,
+          error: left > 0 ? `PIN salah. Sisa ${left} percobaan.` : "PIN salah.",
+        };
+      }
+
+      await fetchOrders();
+      return { success: true, error: null };
+    } catch (e) {
+      console.error("Failed to reopen order:", e);
+      return { success: false, error: "Terjadi kesalahan. Periksa koneksi Anda." };
+    }
+  };
+
   // Targeted update rather than going through updateOrder, which replaces the
   // whole item set with a delete + reinsert. That is blocked on paid orders, and
   // would also reset is_stock_deducted and discard the existing row ids just to
@@ -615,29 +694,52 @@ export function OrderProvider({ children }: { children: ReactNode }) {
       const subtotal = order.items.reduce((sum, i) => sum + i.price * i.quantity, 0);
       const bill = orderTotal(subtotal, discount);
 
-      const { error: paymentError } = await supabase.from("order_payments").insert({
-        order_id: id,
-        customer_num: 1,
-        customer_label: null,
-        amount: bill,
-        // Only cash is handed over in a different amount than the bill; every
-        // other method settles for exactly the bill, and claiming a tender for
-        // them would invent a cash-handling detail.
-        amount_tendered:
-          methodOfPayment === "Cash" ? Math.round(paymentAmount) : null,
-        method_of_payment: methodOfPayment,
-      });
+      // On a corrected order the bill has already been part-settled, so what
+      // moves now is the difference — positive if the customer owes more,
+      // negative if money goes back to them. Rows from earlier rounds are left
+      // exactly as they are: they record money that genuinely changed hands.
+      //
+      // Every row on an order that has never been corrected is round 0, so this
+      // sums to nothing and `delta` is simply the bill.
+      const collected = order.payments
+        .filter((p) => p.reopenSeq < order.reopenSeq)
+        .reduce((sum, p) => sum + p.amount, 0);
 
-      if (paymentError) {
-        if (isConnectionError(paymentError)) {
-          return { error: `${NO_CONNECTION} Pembayaran belum tercatat.` };
+      const delta = bill - collected;
+
+      // A correction that leaves the total untouched moves no money, and
+      // order_payments refuses a row that records nothing happening. Closing the
+      // order is still the right outcome — the lines were what changed.
+      if (!(order.reopenSeq > 0 && delta === 0)) {
+        const { error: paymentError } = await supabase.from("order_payments").insert({
+          order_id: id,
+          customer_num: 1,
+          customer_label: null,
+          amount: delta,
+          // Only cash is handed over in a different amount than the bill; every
+          // other method settles for exactly the bill, and claiming a tender for
+          // them would invent a cash-handling detail. Money going back out has
+          // no tender either — the cashier hands over the difference exactly.
+          amount_tendered:
+            methodOfPayment === "Cash" && delta > 0
+              ? Math.round(paymentAmount)
+              : null,
+          method_of_payment: methodOfPayment,
+          reopen_seq: order.reopenSeq,
+        });
+
+        if (paymentError) {
+          if (isConnectionError(paymentError)) {
+            return { error: `${NO_CONNECTION} Pembayaran belum tercatat.` };
+          }
+          // The unique constraint on (order_id, customer_num, reopen_seq): this
+          // order already has a payment for this round, from a double tap or a
+          // second tablet.
+          if (paymentError.code === "23505") {
+            return { error: "Pembayaran untuk pesanan ini sudah tercatat." };
+          }
+          return { error: "Gagal mencatat pembayaran. Silakan coba lagi." };
         }
-        // The unique constraint on (order_id, customer_num): this order already
-        // has a payment against it, from a double tap or a second tablet.
-        if (paymentError.code === "23505") {
-          return { error: "Pembayaran untuk pesanan ini sudah tercatat." };
-        }
-        return { error: "Gagal mencatat pembayaran. Silakan coba lagi." };
       }
 
       const { error } = await supabase
@@ -730,6 +832,15 @@ export function OrderProvider({ children }: { children: ReactNode }) {
       // cannot wait for the refetch below: `orders` in a component closure is
       // still the pre-refetch array until React re-renders, so looking the new
       // payment up there finds nothing and the receipt silently never prints.
+      // Refuse rather than guess: the round this row belongs to decides both
+      // whether the payer's lines lock and whether the unique key lets the row
+      // in at all, and defaulting it to 0 on a corrected order would collide
+      // with the original payment instead.
+      const order = orders.find((o) => o.id === orderId);
+      if (!order) {
+        return { error: "Pesanan tidak ditemukan. Muat ulang daftar pesanan." };
+      }
+
       const { data, error } = await supabase
         .from("order_payments")
         .insert({
@@ -740,6 +851,7 @@ export function OrderProvider({ children }: { children: ReactNode }) {
           amount_tendered:
             payment.amountTendered == null ? null : Math.round(payment.amountTendered),
           method_of_payment: payment.methodOfPayment,
+          reopen_seq: order.reopenSeq,
         })
         .select()
         .single();
@@ -768,6 +880,8 @@ export function OrderProvider({ children }: { children: ReactNode }) {
           amount: data.amount,
           amountTendered: data.amount_tendered ?? null,
           methodOfPayment: data.method_of_payment,
+          reopenSeq: data.reopen_seq ?? 0,
+          approvedBy: data.approved_by ?? null,
           createdAt: new Date(data.created_at),
         },
       };
@@ -815,6 +929,45 @@ export function OrderProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  /**
+   * Close a corrected order once the difference has been settled.
+   *
+   * Identical to completeSplitPayment in what it writes — the order row goes to
+   * 'paid' and the discount lands with it — and kept apart because the two mean
+   * different things at the call site and would otherwise read as the same
+   * thing happening for the same reason. A split closes when the last payer
+   * settles; a correction closes when the difference has moved.
+   */
+  const closeCorrectedOrder = async (
+    orderId: number,
+    discount: number
+  ): Promise<{ error: string | null }> => {
+    try {
+      const { error } = await supabase
+        .from("orders")
+        .update({ status: "paid", discount })
+        .eq("id", orderId);
+
+      if (error) {
+        if (isConnectionError(error)) {
+          return { error: `${NO_CONNECTION} Pesanan belum ditutup.` };
+        }
+        // The money is already recorded; only the order is still showing as
+        // open. Saying the correction failed here is how it gets done twice.
+        return {
+          error:
+            "Selisih sudah tercatat, tetapi pesanan gagal ditutup. Coba tutup lagi — jangan ulangi koreksinya.",
+        };
+      }
+
+      await fetchOrders();
+      return { error: null };
+    } catch (e) {
+      console.error("Failed to close corrected order:", e);
+      return { error: "Terjadi kesalahan. Periksa koneksi Anda." };
+    }
+  };
+
   // Returns the failure rather than swallowing it. The switch reverting on its
   // own with no explanation reads as the toggle being ignored, and the cashier
   // just taps it again.
@@ -850,11 +1003,13 @@ export function OrderProvider({ children }: { children: ReactNode }) {
         addOrder,
         updateOrder,
         cancelOrderWithPin,
+        reopenOrderWithPin,
         markItemsSent,
         markPaid,
         splitBill,
         recordPayment,
         completeSplitPayment,
+        closeCorrectedOrder,
         toggleMenuAvailability,
         refetch: fetchOrders,
       }}

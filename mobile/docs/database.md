@@ -61,6 +61,7 @@ ON DELETE CASCADE. `quantity` is stock units consumed per one menu item.
 | `status` | text | `'unpaid'` (default), `'paid'`, `'cancelled'` |
 | `is_dine_in` | boolean | false = takeaway |
 | `created_at` | timestamptz | |
+| `reopen_seq` | integer | NOT NULL, default 0 — how many times this order has been reopened to correct it. See [Corrections](#corrections) |
 
 `status` has no CHECK constraint — the allowed values are enforced by
 convention and by the `OrderStatus` type in `types/order.ts`.
@@ -184,9 +185,11 @@ payer for a split bill, none at all while the order is still open.
 | `order_id` | bigint | → `orders(id)` ON DELETE CASCADE |
 | `customer_num` | integer | matches `order_items.customer_num`; unique per order |
 | `customer_label` | text | the name the cashier typed for this payer, for the receipt |
-| `amount` | integer | this payer's share of the bill — the revenue figure. `>= 0`, because a 100% discount is a real bill of nothing |
+| `amount` | integer | this payer's share of the bill — the revenue figure. **Negative on a correction that handed money back.** `>= 0` on an original payment, because a 100% discount is a real bill of nothing; `<> 0` on a correction, because a row recording no movement is not written at all |
 | `amount_tendered` | integer | cash handed over, for change. NULL for every other method |
 | `method_of_payment` | text | one of the four real methods; never `'Split'` |
+| `reopen_seq` | integer | NOT NULL, default 0 — which correction round this row settles |
+| `approved_by` | uuid | → `profiles(id)`, nullable — the superadmin whose PIN authorised the correction. Stamped by the database, never by the client |
 | `created_at` | timestamptz | |
 
 `amount` and `amount_tendered` are deliberately separate, which is the whole
@@ -213,6 +216,60 @@ Splitting a bill never moves anything between orders: it is an `UPDATE` of
 kitchen ticket is disturbed. Sibling orders were considered and rejected —
 cashiers have no `DELETE` grant on `orders`, so carving an order into siblings
 could never be undone at the till.
+
+#### Corrections
+
+A customer pays and only then realises the bill is wrong. `reopen_order_with_pin`
+puts the order back to `'unpaid'` and increments `orders.reopen_seq`; the lines
+are corrected through the ordinary editor, and the difference is settled as one
+more row here.
+
+**There is no `'reopened'` status.** A fourth value would have to be taught to
+every screen, filter and report that switches on status, and an order in
+mid-correction would be neither paid nor unpaid in any of them. `'unpaid'`
+already means "open, owes money", which is exactly what a correction is.
+
+**`order_payments` is append-only.** A correction adds a row; it never rewrites
+or deletes the one already there. Money handed back is a negative `amount`.
+Rewriting the original instead would break reconciliation: paid Rp 100.000 by
+QRIS, corrected to Rp 80.000, Rp 20.000 back in cash — recorded as "QRIS 80.000"
+the provider's settlement says 100.000 and the drawer is 20.000 short with
+nothing explaining either. Two rows, QRIS +100.000 and Cash −20.000, describe
+what happened and net to the right revenue.
+
+The payoff is that **every report stays correct with no query change**. Anything
+summing `amount` — `admin/sales.tsx` per method, `cashier/sales.tsx` for what has
+been collected, `amountCollected()` — nets a correction out automatically. The
+headline figure comes from items × discount, which the edit already corrected, so
+headline and breakdown still agree. Note that a negative row still counts as one
+transaction in the per-method *count*, which is honest (it was a real drawer
+movement) but worth knowing when reading that column.
+
+**There is no `kind` column.** The sign of `amount` already says which way the
+money went, and within one round a payer either owes more or is owed — never
+both. So the unique key is `(order_id, customer_num, reopen_seq)`: one row per
+payer per round, which is also what preserves the double-tap and second-tablet
+guard the old `(order_id, customer_num)` key was doing.
+
+**The per-payer item lock is scoped to the round.** A payer's lines are frozen
+while they hold a payment row *at the order's current `reopen_seq`*. On an order
+that has never been corrected everything is round 0 and the behaviour is exactly
+what shipped with the split bill; after a reopen the old rows sit at round 0 while
+the order is at round 1, so nothing is locked and the correction can be made.
+
+**The editor is payer-aware.** It keys its quantities by `(menu_id, payer)`
+rather than by dish, so on a split bill the cashier picks whose line to change
+and each person's rows are diffed against their own numbers. Before that it saw
+one pooled figure per dish — "Kopi 4" for two people holding two each — so
+reducing to 3 had to guess whose row to trim, and an added item always landed on
+payer 1 with no way to charge anyone else. Re-dividing afterwards is also allowed
+during a correction (see `canResplit`), which is safe only because
+`payerNumbers` keeps anyone with payment history in the payer set.
+
+**Stock is not credited back** when a correction removes a line — the same rule
+as everywhere else in this table. The payment screen says so out loud, because
+"we never ordered this" is the one case where a cashier might reasonably expect
+otherwise.
 
 ### `expenses`
 Written by the `log_stock_expense` trigger; deleted only by `delete_expense_entry`
@@ -294,7 +351,7 @@ who could not read the record of them. It failed silently, as an empty screen.
 | `order_id` | bigint | nulled out if the order is hard-deleted, so the trail survives |
 | `cashier_id` | uuid | who attempted it (`auth.uid()`) |
 | `admin_id` | uuid | whose PIN matched; null on failure |
-| `action` | text | `cancel`, `delete`, `cancel_blocked`, `delete_blocked` |
+| `action` | text | `cancel`, `delete`, `reopen`, and the `_blocked` variant of each |
 | `success` | boolean | |
 | `created_at` | timestamptz | |
 
@@ -308,12 +365,14 @@ Failed attempts are recorded deliberately — the lockout counts them.
 | `check_stock_for_order(jsonb)` | jsonb | `{shortages: [...]}`, no writes |
 | `deduct_stock_for_order(int, bool)` | void | decrements stock; `p_force` skips the shortage check |
 | `log_stock_expense()` | trigger | logs an `expenses` row on insert, and on any quantity increase; skipped when `app.stock_correction` is set |
-| `prevent_direct_cancel()` | trigger | blocks `status → 'cancelled'` without the PIN flag |
-| `prevent_locked_order_item_change()` | trigger | freezes `order_items` on paid/cancelled orders |
+| `prevent_direct_cancel()` | trigger | blocks `status → 'cancelled'`, and `paid`/`cancelled` → `'unpaid'`, without the PIN flag |
+| `prevent_locked_order_item_change()` | trigger | freezes `order_items` on paid/cancelled orders, and per payer within the current correction round |
 | `derive_stock_deducted_flag()` | trigger | keeps the legacy `is_stock_deducted` boolean in step with `stock_deducted_qty` |
+| `stamp_correction_approver()` | trigger | copies the approving superadmin onto a correction's payment row from `order_override_log` |
 | `pin_attempts_exhausted(uuid)` | boolean | 5 failures in 15 minutes |
 | `cancel_order_with_pin(bigint, text)` | boolean | **legacy**, kept for older installs; superadmin PIN only |
 | `cancel_order_with_pin_v2(bigint, text)` | jsonb | current; returns a reason on failure; superadmin PIN only |
+| `reopen_order_with_pin(bigint, text)` | jsonb | puts a paid order back to `'unpaid'` and bumps `reopen_seq`, so its lines can be corrected; superadmin PIN only; shares the cancellation lockout |
 | `delete_order_with_pin(bigint, text)` | boolean | hard delete; not wired to any UI; superadmin PIN only |
 | `toggle_menu_availability(bigint)` | void | flips `menus.available`; callable by any authenticated staff account, since `cashier` has no general write access to `menus` |
 | `correct_stock(bigint, numeric, integer, text)` | void | sets a `stock` row's quantity/price directly (not additive); superadmin-only; sets `app.stock_correction` so the restock trigger doesn't log it as a purchase |
@@ -372,6 +431,7 @@ Retire v1 once every device is on a current build.
 | `enforce_items_locked_after_payment` | `order_items` | `prevent_locked_order_item_change` |
 | `enforce_payments_locked_after_payment` | `order_payments` | `prevent_locked_order_payment_change` |
 | `derive_stock_deducted_flag` | `order_items` | `derive_stock_deducted_flag` |
+| `stamp_correction_approver` | `order_payments` | `stamp_correction_approver` |
 
 ## Migrations
 

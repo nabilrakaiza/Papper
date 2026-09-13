@@ -19,9 +19,12 @@ import { unprintedLatestBatch } from "../../../lib/receiptLayout";
 import {
   amountCollected,
   canResplit,
+  collectedFromPayer,
   defaultPayerLabel,
+  isCorrected,
   isSplit,
   itemsForPayer,
+  outstandingForPayer,
   paymentFor,
   payerNumbers,
   payerTotal,
@@ -124,8 +127,16 @@ function PayerCard({
   onReprint: (customerNum: number) => void;
 }) {
   const paid = paymentFor(order, customerNum);
-  const total = payerTotal(order, customerNum, discountPct);
+  const share = payerTotal(order, customerNum, discountPct);
   const items = groupItems(itemsForPayer(order, customerNum));
+
+  // On a correction this payer has already handed something over, so what moves
+  // now is the difference: positive means they owe more, negative means it goes
+  // back to them. On an order that has never been corrected there is nothing in
+  // an earlier round, so `due` is simply their share.
+  const correcting = isCorrected(order);
+  const alreadyPaid = collectedFromPayer(order, customerNum);
+  const due = share - alreadyPaid;
 
   const [label, setLabel] = useState("");
   const [method, setMethod] = useState<PaymentMethod>("Cash");
@@ -133,7 +144,7 @@ function PayerCard({
   const [error, setError] = useState("");
 
   const cashGiven = parseInt(tendered, 10) || 0;
-  const changeDue = cashGiven - total;
+  const changeDue = cashGiven - due;
 
   if (paid) {
     return (
@@ -172,10 +183,29 @@ function PayerCard({
     );
   }
 
+  // A correction that left this payer's share exactly as it was moves no money,
+  // and order_payments refuses a row recording nothing happening. Say so rather
+  // than offering a payment form that cannot be submitted.
+  if (correcting && due === 0) {
+    return (
+      <View className="bg-gray-100 rounded-3xl px-5 py-4 mb-3">
+        <Text className="text-sm font-extrabold text-gray-500">
+          {defaultPayerLabel(customerNum)}
+        </Text>
+        <Text className="text-xs font-bold text-gray-400 mt-1">
+          Bagiannya tidak berubah — tidak ada selisih untuk pelanggan ini.
+        </Text>
+      </View>
+    );
+  }
+
   const handlePay = () => {
     setError("");
 
-    if (method === "Cash" && changeDue < 0) {
+    // Only money coming in is tendered. When the difference goes back to the
+    // customer the cashier hands over exactly that, so there is nothing to
+    // check and no change to work out.
+    if (method === "Cash" && due > 0 && changeDue < 0) {
       setError(`Pembayaran kurang dari total. Butuh ${formatRupiah(-changeDue)} lagi.`);
       return;
     }
@@ -184,7 +214,7 @@ function PayerCard({
       customerNum,
       label: label.trim() || defaultPayerLabel(customerNum),
       method,
-      amount: total,
+      amount: due,
       tendered: method === "Cash" ? cashGiven : null,
     });
   };
@@ -197,10 +227,28 @@ function PayerCard({
             {defaultPayerLabel(customerNum)}
           </Text>
         </View>
-        <Text className="text-base font-black text-gray-900">
-          {formatRupiah(total)}
+        <Text
+          className={`text-base font-black ${
+            due < 0 ? "text-red-600" : "text-gray-900"
+          }`}
+        >
+          {formatRupiah(Math.abs(due))}
         </Text>
       </View>
+
+      {correcting && (
+        <View className="bg-orange-50 rounded-xl px-3 py-2 mb-3">
+          <Text className="text-[11px] font-bold text-orange-800">
+            Sudah dibayar {formatRupiah(alreadyPaid)} · bagian baru{" "}
+            {formatRupiah(share)}
+          </Text>
+          <Text className="text-[11px] font-extrabold text-orange-900 mt-0.5">
+            {due > 0
+              ? `Kurang bayar ${formatRupiah(due)}`
+              : `Kembalikan ${formatRupiah(-due)}`}
+          </Text>
+        </View>
+      )}
 
       <TextInput
         className="bg-gray-50 border-2 border-gray-100 rounded-xl px-3 py-2 text-sm font-bold text-gray-900 mb-3"
@@ -211,22 +259,31 @@ function PayerCard({
         editable={!busy}
       />
 
-      {items.map((item) => (
-        <View key={item.key} className="flex-row justify-between mb-1.5">
-          <Text className="text-xs font-bold text-gray-500 flex-1 pr-2">
-            {item.quantity}x {item.name}
-          </Text>
-          <Text className="text-xs font-bold text-gray-500">
-            {formatRupiah(item.price * item.quantity)}
-          </Text>
-        </View>
-      ))}
+      {items.length === 0 ? (
+        // Every line of theirs was removed by the correction. They are still a
+        // payer because they have already paid, and what they are owed is all
+        // of it — see payerNumbers.
+        <Text className="text-xs font-bold text-red-600 mb-1.5">
+          Semua itemnya dihapus — seluruh pembayarannya harus dikembalikan.
+        </Text>
+      ) : (
+        items.map((item) => (
+          <View key={item.key} className="flex-row justify-between mb-1.5">
+            <Text className="text-xs font-bold text-gray-500 flex-1 pr-2">
+              {item.quantity}x {item.name}
+            </Text>
+            <Text className="text-xs font-bold text-gray-500">
+              {formatRupiah(item.price * item.quantity)}
+            </Text>
+          </View>
+        ))
+      )}
 
       <View className="h-px bg-gray-100 my-3" />
 
       <MethodPicker value={method} onChange={setMethod} disabled={busy} />
 
-      {method === "Cash" && (
+      {method === "Cash" && due > 0 && (
         <View className="mb-2">
           <Text className="text-sm font-bold text-gray-700 mb-2">
             Jumlah Pembayaran
@@ -268,7 +325,7 @@ function PayerCard({
         }`}
       >
         <Text className="text-sm font-extrabold text-white">
-          Bayar &amp; Cetak Struk
+          {due < 0 ? "Kembalikan & Cetak Struk" : "Bayar & Cetak Struk"}
         </Text>
       </TouchableOpacity>
     </View>
@@ -277,7 +334,14 @@ function PayerCard({
 
 export default function PaymentScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
-  const { orders, markPaid, recordPayment, completeSplitPayment, updateOrder } =
+  const {
+    orders,
+    markPaid,
+    recordPayment,
+    completeSplitPayment,
+    closeCorrectedOrder,
+    updateOrder,
+  } =
     useOrders();
   const order = orders.find((o) => o.id === Number(id));
 
@@ -314,28 +378,59 @@ export default function PaymentScreen() {
 
   const split = isSplit(order);
   const collected = amountCollected(order);
-  const stillOwed = unpaidPayers(order);
+  const correcting = isCorrected(order);
 
   // Once someone has paid, the discount they were charged against is fixed —
   // changing it now would mean earlier payers settled on a different basis than
   // the ones still to pay. From that point the saved figure is the only one
   // that counts, and the field is closed.
+  //
+  // A correction does not reopen it. The original payer settled against this
+  // discount and has their receipt; altering it now would rewrite the basis of
+  // a bill that has already been handed over.
   const discountLocked = order.payments.length > 0;
   const effectiveDiscount = discountLocked ? order.discount : safeDiscountPct;
+
+  // Whether the line items are actually frozen, which is a different question
+  // from whether the discount is. The database locks a payer's lines only while
+  // they have settled in the order's CURRENT round, so a corrected order has a
+  // locked discount and perfectly editable lines — which is the entire point of
+  // reopening it.
+  const linesLocked = order.payments.some((p) => p.reopenSeq === order.reopenSeq);
 
   // Shared with every report and the receipt, so what the cashier is shown here
   // is exactly what the books will say later.
   const total = orderTotal(subtotal, effectiveDiscount);
 
+  // The net already taken in earlier rounds. Zero unless this order is being
+  // corrected, so `dueNow` is the plain total for everything else.
+  const collectedBefore = order.payments
+    .filter((p) => p.reopenSeq < order.reopenSeq)
+    .reduce((sum, p) => sum + p.amount, 0);
+
+  // Signed: positive is owed to the cafe, negative goes back to the customer.
+  const dueNow = total - collectedBefore;
+
+  // A payer whose share came out unchanged has nothing to settle and will never
+  // get a row for this round, so waiting for one would leave the order stuck
+  // open. Only applied to corrections: on a first settlement a bill of nothing
+  // is still a bill somebody has to be recorded as having paid.
+  const stillOwed = unpaidPayers(order).filter(
+    (n) => !correcting || outstandingForPayer(order, n, effectiveDiscount) !== 0
+  );
+
   const cashGiven = parseInt(paymentAmount, 10) || 0;
-  const changeDue = cashGiven - total;
+  const changeDue = cashGiven - dueNow;
 
   const busy = saving || printing;
 
   const handleConfirm = async () => {
     setError("");
 
-    if (methodOfPayment === "Cash" && changeDue < 0) {
+    // Only money coming in is tendered. When the correction sends money back
+    // the cashier hands over exactly the difference, so there is nothing to
+    // check here and no change to give.
+    if (methodOfPayment === "Cash" && dueNow > 0 && changeDue < 0) {
       setError(
         `Pembayaran kurang dari total. Butuh ${formatRupiah(-changeDue)} lagi.`
       );
@@ -352,11 +447,14 @@ export default function PaymentScreen() {
       //
       // The non-cash branch also recorded orderTotal(order), which recomputes
       // from the *saved* discount and so ignored whatever was typed here.
+      // markPaid works the difference out for itself from the order's own
+      // payment rows — what is passed here is only the cash tendered, which it
+      // needs to record change and cannot derive.
       const { error: saveError } = await markPaid(
         order.id,
-        safeDiscountPct,
+        effectiveDiscount,
         methodOfPayment,
-        methodOfPayment === "Cash" ? cashGiven : total
+        methodOfPayment === "Cash" ? cashGiven : dueNow
       );
 
       if (saveError) {
@@ -464,10 +562,13 @@ export default function PaymentScreen() {
     setSaving(true);
 
     try {
-      const { error: closeError } = await completeSplitPayment(
-        order.id,
-        effectiveDiscount
-      );
+      // Same write either way; the two are kept apart because they mean
+      // different things and report different things when they fail. A split
+      // closes because the last payer settled, a correction because the
+      // difference has moved.
+      const close = correcting ? closeCorrectedOrder : completeSplitPayment;
+
+      const { error: closeError } = await close(order.id, effectiveDiscount);
 
       if (closeError) {
         setError(closeError);
@@ -567,17 +668,17 @@ export default function PaymentScreen() {
         <View className="flex-row gap-2 mb-4">
           <TouchableOpacity
             onPress={handleEdit}
-            disabled={busy || discountLocked}
+            disabled={busy || linesLocked}
             className={`flex-1 flex-row items-center justify-center gap-2 rounded-2xl py-3 border-2 ${
-              busy || discountLocked
+              busy || linesLocked
                 ? "border-gray-200 bg-gray-100"
                 : "border-yellow-400 bg-yellow-50"
             }`}
           >
-            <Pencil size={15} color={busy || discountLocked ? "#bbb" : "#eab308"} />
+            <Pencil size={15} color={busy || linesLocked ? "#bbb" : "#eab308"} />
             <Text
               className={`text-sm font-extrabold ${
-                busy || discountLocked ? "text-gray-400" : "text-yellow-600"
+                busy || linesLocked ? "text-gray-400" : "text-yellow-600"
               }`}
             >
               Edit Pesanan
@@ -666,13 +767,38 @@ export default function PaymentScreen() {
             </Text>
           </View>
 
-          {split && (
+          {split && !correcting && (
             <View className="mt-3 bg-white/60 rounded-xl px-3 py-2">
               <Text className="text-xs font-bold text-gray-600">
                 Terkumpul : {formatRupiah(collected)}
               </Text>
               <Text className="text-xs font-bold text-gray-600 mt-0.5">
                 Sisa{"      "}: {formatRupiah(Math.max(0, total - collected))}
+              </Text>
+            </View>
+          )}
+
+          {/* The correction, stated as the three figures the cashier actually
+              needs: what is already in the till, what the bill now comes to,
+              and which way the difference goes. */}
+          {correcting && (
+            <View className="mt-3 bg-orange-50 border border-orange-200 rounded-xl px-3 py-2.5">
+              <Text className="text-xs font-bold text-orange-900">
+                Sudah diterima : {formatRupiah(collectedBefore)}
+              </Text>
+              <Text className="text-xs font-bold text-orange-900 mt-0.5">
+                Total baru{"     "}: {formatRupiah(total)}
+              </Text>
+              <View className="h-px bg-orange-200 my-2" />
+              <Text className="text-sm font-black text-orange-900">
+                {dueNow > 0
+                  ? `Kurang bayar : ${formatRupiah(dueNow)}`
+                  : dueNow < 0
+                    ? `Kembalikan : ${formatRupiah(-dueNow)}`
+                    : "Tidak ada selisih"}
+              </Text>
+              <Text className="text-[10px] font-bold text-orange-700 mt-1.5">
+                Item yang dihapus tidak mengembalikan stok.
               </Text>
             </View>
           )}
@@ -694,21 +820,29 @@ export default function PaymentScreen() {
           </View>
         ) : (
           <>
-            {/* Payment Method UI */}
-            <View className="bg-white rounded-3xl px-5 py-5 shadow-sm mt-4">
-              <View className="border-2 border-gray-200 rounded-xl px-3 py-1.5 self-start mb-4 bg-gray-50">
-                <Text className="text-sm font-bold text-gray-700">Metode Pembayaran</Text>
+            {/* Payment Method UI. Hidden when a correction moves nothing —
+                there is no payment to name a method for, and the order simply
+                closes. */}
+            {!(correcting && dueNow === 0) && (
+              <View className="bg-white rounded-3xl px-5 py-5 shadow-sm mt-4">
+                <View className="border-2 border-gray-200 rounded-xl px-3 py-1.5 self-start mb-4 bg-gray-50">
+                  <Text className="text-sm font-bold text-gray-700">
+                    {dueNow < 0 ? "Metode Pengembalian" : "Metode Pembayaran"}
+                  </Text>
+                </View>
+
+                <MethodPicker
+                  value={methodOfPayment}
+                  onChange={setMethodOfPayment}
+                  disabled={busy}
+                />
               </View>
+            )}
 
-              <MethodPicker
-                value={methodOfPayment}
-                onChange={setMethodOfPayment}
-                disabled={busy}
-              />
-            </View>
-
-            {/* Handle cash payment */}
-            {methodOfPayment === "Cash" && (
+            {/* Handle cash payment. Only when money is coming in: a refund is
+                handed over as exactly the difference, with no tender and no
+                change to work out. */}
+            {methodOfPayment === "Cash" && dueNow > 0 && (
               <View className="mt-1">
                 <Text className="text-sm font-bold text-gray-700 mb-2">Jumlah Pembayaran</Text>
                 <TextInput
@@ -782,7 +916,15 @@ export default function PaymentScreen() {
             {busy ? (
               <ActivityIndicator size="small" color="white" />
             ) : (
-              <Text className="text-sm font-extrabold text-white">Konfirmasi Pembayaran</Text>
+              <Text className="text-sm font-extrabold text-white">
+                {!correcting
+                  ? "Konfirmasi Pembayaran"
+                  : dueNow > 0
+                    ? `Terima ${formatRupiah(dueNow)}`
+                    : dueNow < 0
+                      ? `Kembalikan ${formatRupiah(-dueNow)}`
+                      : "Tutup Pesanan"}
+              </Text>
             )}
           </TouchableOpacity>
         )}

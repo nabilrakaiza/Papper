@@ -116,6 +116,10 @@ export default function NewOrderScreen() {
           discount: 0,
           status: "unpaid",
           isDineIn: isDineIn,
+          // A brand-new order has never been corrected. addOrder does not write
+          // the column — it is the database default — but the type carries it
+          // because every order that has been read back has one.
+          reopenSeq: 0,
         },
         force
       );

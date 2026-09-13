@@ -189,27 +189,59 @@ export async function renderCustomerReceipt(
   await p.column(MONEY_COLS, MONEY_ALIGNS, ['TOTAL', formatRupiah(total)]);
 
   if (settled) {
+    // A corrected bill. The customer is holding an earlier receipt for a
+    // different figure, so the new one has to account for the gap rather than
+    // silently disagree with the paper in their hand: what was taken before,
+    // and which way the difference went.
+    //
+    // `payment.amount` is the difference itself, negative when money was handed
+    // back — order_payments is append-only, so the row records the movement and
+    // not the new total.
+    if (payment && payment.reopenSeq > 0) {
+      const previous = total - payment.amount;
+
+      await p.column(MONEY_COLS, MONEY_ALIGNS, [
+        'Dibayar Awal',
+        formatRupiah(previous),
+      ]);
+      await p.column(MONEY_COLS, MONEY_ALIGNS, [
+        payment.amount < 0 ? 'Dikembalikan' : 'Tambahan Bayar',
+        formatRupiah(Math.abs(payment.amount)),
+      ]);
+    }
+
     await p.column(MONEY_COLS, MONEY_ALIGNS, [
       'Metode Bayar',
       PAYMENT_METHOD_PRINT_LABELS[method ?? ''] ?? `${method}`,
     ]);
+
+    // What this payment was actually for. On an ordinary bill that is the
+    // total; on a correction it is the difference that changed hands, and
+    // working change out against the total instead would have the receipt
+    // promise back money that was never handed over.
+    const charged = payment && payment.reopenSeq > 0 ? payment.amount : total;
 
     if (method === 'Cash' && tendered != null) {
       await p.column(MONEY_COLS, MONEY_ALIGNS, [
         'Jumlah Bayar',
         formatRupiah(tendered),
       ]);
-      // Change is what the customer gets back — cash given minus the bill. This
-      // was the other way round, so every receipt printed negative change.
+      // Change is what the customer gets back — cash given minus what was
+      // charged. This was the other way round, so every receipt printed
+      // negative change.
       await p.column(MONEY_COLS, MONEY_ALIGNS, [
         'Kembalian',
-        formatRupiah(tendered - total),
+        formatRupiah(tendered - charged),
       ]);
-    } else {
-      // Non-cash settles for exactly the bill, so print the bill. Nothing else
-      // is recorded for it: order_payments only carries a tender for cash,
+    } else if (charged > 0) {
+      // Non-cash settles for exactly what was charged, so print that. Nothing
+      // else is recorded for it: order_payments only carries a tender for cash,
       // precisely because for every other method the tender IS the bill.
-      await p.column(MONEY_COLS, MONEY_ALIGNS, ['Jumlah Bayar', formatRupiah(total)]);
+      //
+      // Skipped entirely when the money went the other way: "Dikembalikan"
+      // above has already said the figure, and printing it again under a label
+      // that calls it a payment is two kinds of wrong on one receipt.
+      await p.column(MONEY_COLS, MONEY_ALIGNS, ['Jumlah Bayar', formatRupiah(charged)]);
     }
   }
 
