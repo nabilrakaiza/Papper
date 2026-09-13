@@ -39,14 +39,23 @@ const OrderContext = createContext<OrderContextType>({} as OrderContextType);
 //   * Custom off-menu items carry a null menu_id and have no recipe behind
 //     them, so they are dropped rather than sent as nulls the RPC would
 //     iterate over for nothing.
-//   * Items already flagged is_stock_deducted have had their ingredients taken
-//     out on a previous save. Including them made an edit ask "do we have
-//     enough for the whole order again?" instead of "enough for what was just
-//     added", producing shortage warnings for stock that was never needed.
+//   * Quantity that stock has already funded has had its ingredients taken out
+//     on a previous save. Including it made an edit ask "do we have enough for
+//     the whole order again?" instead of "enough for what was just added",
+//     producing shortage warnings for stock that was never needed.
+//
+// The second exclusion is a subtraction rather than a filter, because funding
+// is a quantity and not a yes/no: a line of 5 that stock has funded 2 of needs
+// checking for 3. A line already funded to or past its quantity — which is what
+// a reduced line looks like — contributes nothing and is dropped.
 const stockCheckedItems = (items: OrderItem[]) =>
   items
-    .filter((i) => i.menuId != null && !i.isStockDeducted)
-    .map((i) => ({ menu_id: i.menuId, quantity: i.quantity }));
+    .filter((i) => i.menuId != null)
+    .map((i) => ({
+      menu_id: i.menuId,
+      quantity: i.quantity - (i.stockDeductedQty ?? 0),
+    }))
+    .filter((i) => i.quantity > 0);
 
 export function OrderProvider({ children }: { children: ReactNode }) {
   const [orders, setOrders] = useState<Order[]>([]);
@@ -140,7 +149,12 @@ export function OrderProvider({ children }: { children: ReactNode }) {
             isCancelled: i.is_cancelled ?? false,
             printBatch: i.print_batch ?? 1,
             note: i.notes ?? undefined,
-            isStockDeducted: i.is_stock_deducted,
+            // How much of this line stock has already funded. Falls back to the
+            // old boolean so a row written by a build that predates the column
+            // still reads as fully funded rather than as never deducted, which
+            // would take its ingredients out a second time.
+            stockDeductedQty:
+              i.stock_deducted_qty ?? (i.is_stock_deducted ? i.quantity : 0),
             customerNum: i.customer_num ?? 1,
           })),
         }))
@@ -263,7 +277,9 @@ export function OrderProvider({ children }: { children: ReactNode }) {
         is_cancelled: item.isCancelled ?? false,
         print_batch: item.printBatch ?? 1,
         notes: item.note ?? null,
-        is_stock_deducted: false,
+        // Nothing on a brand-new order has been funded yet, so the deduction
+        // below picks up every line in full.
+        stock_deducted_qty: 0,
       }))
     );
 
@@ -433,9 +449,9 @@ export function OrderProvider({ children }: { children: ReactNode }) {
           print_batch: item.printBatch ?? 1,
           notes: item.note ?? null,
           // Still sent explicitly rather than left to the RPC's default: the
-          // screens carry it on lines they keep and leave it unset on lines
-          // they add, so only genuinely new quantity is deducted.
-          is_stock_deducted: item.isStockDeducted ?? false,
+          // screens carry it on lines they keep and leave it at 0 on lines they
+          // add, so only genuinely unfunded quantity is deducted.
+          stock_deducted_qty: item.stockDeductedQty ?? 0,
           customer_num: item.customerNum ?? 1,
         })),
       });

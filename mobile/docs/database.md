@@ -90,18 +90,42 @@ payment against this schema.
 | `is_cancelled` | boolean | |
 | `print_batch` | integer | groups items across repeated kitchen tickets |
 | `notes` | text | |
-| `is_stock_deducted` | boolean | NOT NULL, default `false`; guards against double-deducting |
+| `stock_deducted_qty` | integer | NOT NULL, default 0 — how many units of this line stock has already funded |
+| `is_stock_deducted` | boolean | NOT NULL, default `false`; **derived** from `stock_deducted_qty > 0`, kept for older builds |
 | `customer_num` | integer | NOT NULL, default 1 — which payer settles this line on a split bill |
 
-`is_stock_deducted` has to survive an edit. The screens keep it on lines they
-carry over and leave it unset on lines they add, so `deduct_stock_for_order`
-only ever sees genuinely new quantity. Resetting it made each re-save deduct the
+`stock_deducted_qty` has to survive an edit. The screens keep it on lines they
+carry over and leave it at 0 on lines they add, so `deduct_stock_for_order` only
+ever sees genuinely unfunded quantity. Resetting it made each re-save deduct the
 entire order's ingredients again.
 
-It is NOT NULL as of `20260906091500`. It was previously nullable with no
-default, and `deduct_stock_for_order` selects `where is_stock_deducted = false`
-— NULL is not false, so a row written without the column would silently never
-consume stock and never be marked.
+**It is a quantity and not a boolean because stock is never returned.** It was
+`is_stock_deducted`, a flag meaning "this row's whole quantity has been taken",
+and `deduct_stock_for_order` took the row's whole quantity whenever it read
+false. That holds until a line is reduced: after cutting a line from 5 to 2 the
+flag still says "deducted", but 5 units left the store and only 2 are recorded.
+Raise it back to 5 and the editor appended the extra 3 as a new row with the flag
+unset — 8 deducted for an order of 5, a shortfall indistinguishable from
+ingredients going missing. Fixed in `20260912090000`.
+
+The quantity says what actually happened. Deduction is the difference,
+`quantity - stock_deducted_qty`; a reduction leaves the column alone, so the row
+carries a funded quantity *larger* than its own quantity, and raising the line
+back costs nothing because the difference is no longer positive. That headroom is
+the right answer for the kitchen too, which is why the editor refills an existing
+row before opening a new print batch: that quantity was already made once.
+
+One residual case is knowingly unfixed: reducing a line far enough to delete a
+whole row throws that row's headroom away with it, so raising the quantity
+afterwards deducts again. Recorded stock only ever ends up lower than reality,
+which is the safe direction and the one this project accepts everywhere else.
+
+`is_stock_deducted` is still there and is now **derived** — `derive_stock_deducted_flag`,
+a BEFORE trigger, sets it from the quantity on every write, so the two cannot
+disagree. It was kept rather than dropped because `20260906100100` already
+stranded older builds once and doing it again to a till that takes money all day
+is not worth the tidiness. Clients read and write `stock_deducted_qty`; anything
+still writing the boolean has its value discarded and replaced, not rejected.
 
 Line items are edited through `save_order_items`, **not** by replacing the whole
 set. See [Editing line items](#editing-line-items).
@@ -286,6 +310,7 @@ Failed attempts are recorded deliberately — the lockout counts them.
 | `log_stock_expense()` | trigger | logs an `expenses` row on insert, and on any quantity increase; skipped when `app.stock_correction` is set |
 | `prevent_direct_cancel()` | trigger | blocks `status → 'cancelled'` without the PIN flag |
 | `prevent_locked_order_item_change()` | trigger | freezes `order_items` on paid/cancelled orders |
+| `derive_stock_deducted_flag()` | trigger | keeps the legacy `is_stock_deducted` boolean in step with `stock_deducted_qty` |
 | `pin_attempts_exhausted(uuid)` | boolean | 5 failures in 15 minutes |
 | `cancel_order_with_pin(bigint, text)` | boolean | **legacy**, kept for older installs; superadmin PIN only |
 | `cancel_order_with_pin_v2(bigint, text)` | jsonb | current; returns a reason on failure; superadmin PIN only |
@@ -346,6 +371,7 @@ Retire v1 once every device is on a current build.
 | `enforce_cancel_via_rpc` | `orders` | `prevent_direct_cancel` |
 | `enforce_items_locked_after_payment` | `order_items` | `prevent_locked_order_item_change` |
 | `enforce_payments_locked_after_payment` | `order_payments` | `prevent_locked_order_payment_change` |
+| `derive_stock_deducted_flag` | `order_items` | `derive_stock_deducted_flag` |
 
 ## Migrations
 

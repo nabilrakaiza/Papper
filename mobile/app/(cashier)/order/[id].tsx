@@ -132,20 +132,44 @@ export default function EditOrderScreen() {
         selectedItems.push({ ...entry, note: entry.note });
       });
     } else if (finalQty > oldTotalQty) {
+      // Refill before adding. A line that was reduced still carries the stock
+      // its larger quantity consumed — stock is never returned — so putting
+      // that quantity back costs nothing and must not be deducted again.
+      // Appending it as a new row instead is what made reduce-then-raise take
+      // the difference out of stock twice.
+      //
+      // It is also the right answer for the kitchen: that quantity has already
+      // been made once, so restoring it needs no new ticket, and leaving it on
+      // the original row leaves its print batch alone.
+      let toAdd = finalQty - oldTotalQty;
+
       existingEntries.forEach((entry) => {
-        selectedItems.push({ ...entry, note: entry.note });
+        const funded = entry.stockDeductedQty ?? 0;
+        const headroom = Math.max(0, funded - entry.quantity);
+        const refill = Math.min(headroom, toAdd);
+        toAdd -= refill;
+        selectedItems.push({
+          ...entry,
+          quantity: entry.quantity + refill,
+          note: entry.note,
+        });
       });
-      selectedItems.push({
-        menuId: m.id,
-        name: m.name,
-        price: m.price,
-        quantity: finalQty - oldTotalQty,
-        category: m.category,
-        note: currentNote,
-        isSent: false,
-        isCancelled: false,
-        printBatch: currentMaxBatch + 1,
-      });
+
+      // Whatever is left is genuinely new: it has never been made and has never
+      // been paid for out of stock, so it opens a batch of its own.
+      if (toAdd > 0) {
+        selectedItems.push({
+          menuId: m.id,
+          name: m.name,
+          price: m.price,
+          quantity: toAdd,
+          category: m.category,
+          note: currentNote,
+          isSent: false,
+          isCancelled: false,
+          printBatch: currentMaxBatch + 1,
+        });
+      }
     } else {
       let remainingToKeep = finalQty;
       const sortedEntries = [...existingEntries].sort((a, b) => a.printBatch - b.printBatch);
@@ -191,18 +215,30 @@ export default function EditOrderScreen() {
     if (draft.quantity <= origin.quantity) {
       selectedItems.push({ ...origin, quantity: draft.quantity });
     } else {
-      selectedItems.push({ ...origin });
-      selectedItems.push({
-        ...origin,
-        // The spread copies the row id, and this is a *new* line — the added
-        // quantity in its own batch, not a change to the existing row. Leaving
-        // the id on would name the same row twice in one save.
-        id: undefined,
-        quantity: draft.quantity - origin.quantity,
-        isSent: false,
-        isStockDeducted: false,
-        printBatch: currentMaxBatch + 1,
-      });
+      // Same refill-before-adding rule as the menu items above, and for the same
+      // reason: quantity this line already paid for out of stock goes back onto
+      // the original row rather than into a new one.
+      const funded = origin.stockDeductedQty ?? 0;
+      const headroom = Math.max(0, funded - origin.quantity);
+      const refill = Math.min(headroom, draft.quantity - origin.quantity);
+
+      selectedItems.push({ ...origin, quantity: origin.quantity + refill });
+
+      const remaining = draft.quantity - origin.quantity - refill;
+
+      if (remaining > 0) {
+        selectedItems.push({
+          ...origin,
+          // The spread copies the row id, and this is a *new* line — the added
+          // quantity in its own batch, not a change to the existing row. Leaving
+          // the id on would name the same row twice in one save.
+          id: undefined,
+          quantity: remaining,
+          isSent: false,
+          stockDeductedQty: 0,
+          printBatch: currentMaxBatch + 1,
+        });
+      }
     }
   });
 

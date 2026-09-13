@@ -99,16 +99,19 @@ to `is_cancelled` or deleting the lines outright — no PIN, no audit record.
 - `INSERT` and `DELETE` are refused outright — adding or removing lines is the
   attack itself
 - `UPDATE` is refused if it changes `order_id`, `menu_id`, `name`, `price`,
-  `quantity`, `is_cancelled` or `is_stock_deducted` — what was sold, what it
-  cost, and what stock it consumed
+  `quantity`, `customer_num`, `is_cancelled`, `stock_deducted_qty` or
+  `is_stock_deducted` — what was sold, what it cost, who paid for it, and what
+  stock it consumed
 - `UPDATE` is allowed if it only touches fulfilment bookkeeping: `is_sent`,
   `print_batch`, `notes`
 
-`is_stock_deducted` is locked because resetting it to `false` on a closed order
-and re-running `deduct_stock_for_order` would decrement stock twice. The
-resulting shortfall is indistinguishable from ordinary consumption, so it could
-hide ingredients going missing. Nothing legitimately writes that column after
-payment — both `deduct_stock_for_order` call sites run while the order is open.
+`stock_deducted_qty` is locked because lowering it on a closed order and
+re-running `deduct_stock_for_order` would decrement stock twice. The resulting
+shortfall is indistinguishable from ordinary consumption, so it could hide
+ingredients going missing. Nothing legitimately writes that column after payment
+— both `deduct_stock_for_order` call sites run while the order is open.
+`is_stock_deducted` is derived from it and listed alongside rather than left out
+of a rule that is easier to keep whole.
 
 The PIN RPCs are exempt via the same `app.pin_verified` flag.
 
@@ -119,7 +122,7 @@ outside the threat this guards against.
 
 Verified against the existing flows before it shipped:
 
-- `deduct_stock_for_order` writes `order_items.is_stock_deducted`, but both call
+- `deduct_stock_for_order` writes `order_items.stock_deducted_qty`, but both call
   sites run while the order is unpaid — stock is deducted at creation/edit, not
   at payment
 - `markPaid` touches only the `orders` row
@@ -228,6 +231,7 @@ Recorded here because the reasoning is easy to lose:
 | `toggle_menu_availability` callable by `anon` (unauthenticated) | this project grants new `public` functions EXECUTE for `anon` by default, so `revoke ... from public` alone doesn't touch it — needs `revoke ... from anon` by name, same as the row above |
 | `anon` and `authenticated` held `TRUNCATE` on every table but `expenses` | revoked. **RLS does not apply to `TRUNCATE`** — it is gated by table privilege alone, so no policy here was ever consulted. The anon key ships in the published app, which made wiping sales history or either audit log a single call. `anon` now has nothing in `public`; `alter default privileges` keeps new tables from reopening it |
 | `order_override_log` readable by `admin` only | widened to `admin, superadmin`, matching the `expenses` fix — see [database.md](database.md#order_override_log) |
+| Reducing a line then raising it deducted the difference from stock twice, a shortfall indistinguishable from ingredients going missing | `is_stock_deducted` replaced by `stock_deducted_qty`; deduction is now the difference, and the editor refills a reduced row before opening a new batch — see [database.md](database.md#order_items) |
 
 Re-check any time with:
 
@@ -253,3 +257,5 @@ get_advisors(type: "security")
   transaction around them. The cashier cannot delete an order, so a failure
   part-way through cannot be rolled back and leaves a real order behind. A
   single `create_order_with_items` RPC would make it atomic
+- Drop the derived `is_stock_deducted` column once every device runs a build that
+  reads `stock_deducted_qty`. It is kept only so an older APK still works

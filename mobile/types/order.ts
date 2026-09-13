@@ -22,7 +22,16 @@ export type OrderItem = {
   isSent: boolean;
   isCancelled: boolean;
   printBatch: number;
-  isStockDeducted?: boolean;
+  /**
+   * How many units of this line stock has already funded.
+   *
+   * Not a boolean, because stock is never returned: reduce a line from 5 to 2
+   * and 5 units have still left the store. The column keeps saying 5, so
+   * raising the line back to 5 costs nothing — only quantity beyond this figure
+   * is ever deducted. It is also why the editor refills an existing row before
+   * opening a new print batch: that quantity was already made once.
+   */
+  stockDeductedQty?: number;
   note?: string;
   /**
    * Which payer settles this line once the bill is split. 1 for every line on

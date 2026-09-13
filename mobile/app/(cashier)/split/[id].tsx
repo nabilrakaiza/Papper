@@ -158,9 +158,18 @@ export default function SplitBillScreen() {
    *
    * The first payer taking a share of a row keeps that row — its id, its print
    * batch, its sent flag — and the others get new rows carrying the same
-   * details. is_stock_deducted comes across as it stands: these are the same
-   * portions of food, already taken out of the store, so a split must never
-   * present them to the stock RPC as new.
+   * details.
+   *
+   * The funded quantity is divided between the parts rather than copied onto
+   * each of them. These are the same portions of food, already taken out of the
+   * store, so a split must never present them to the stock RPC as new — but
+   * copying the whole figure onto every part would claim stock had funded more
+   * than it did, and the next edit would read that as headroom it does not have.
+   *
+   * The division hands each part as much as its own quantity and no more, then
+   * puts any remainder on the first part. A remainder is what a reduced line
+   * looks like: funded 5, quantity 2. Dropping it would quietly forget stock
+   * that genuinely left the store.
    */
   const buildItems = (): OrderItem[] => {
     const next: OrderItem[] = [];
@@ -168,13 +177,24 @@ export default function SplitBillScreen() {
     for (const item of rows) {
       const slots = slotsFor(item);
       let reusedOriginal = false;
+      let fundedLeft = item.stockDeductedQty ?? 0;
+      let firstIndex = -1;
 
       slots.forEach((qty, payerIndex) => {
         if (qty <= 0) return;
 
+        const funded = Math.min(qty, fundedLeft);
+        fundedLeft -= funded;
+
         if (!reusedOriginal) {
           reusedOriginal = true;
-          next.push({ ...item, quantity: qty, customerNum: payerIndex + 1 });
+          firstIndex = next.length;
+          next.push({
+            ...item,
+            quantity: qty,
+            stockDeductedQty: funded,
+            customerNum: payerIndex + 1,
+          });
           return;
         }
 
@@ -182,9 +202,17 @@ export default function SplitBillScreen() {
           ...item,
           id: undefined,
           quantity: qty,
+          stockDeductedQty: funded,
           customerNum: payerIndex + 1,
         });
       });
+
+      if (fundedLeft > 0 && firstIndex >= 0) {
+        next[firstIndex] = {
+          ...next[firstIndex],
+          stockDeductedQty: (next[firstIndex].stockDeductedQty ?? 0) + fundedLeft,
+        };
+      }
     }
 
     return next;
@@ -200,9 +228,13 @@ export default function SplitBillScreen() {
    * for two.
    *
    * Only rows that agree on everything a merged row can carry are combined:
-   * the print batch, whether it was sent, the note, and crucially
-   * is_stock_deducted, since one row cannot hold two different answers to
-   * "have these ingredients already left the store".
+   * the print batch, whether it was sent, and the note.
+   *
+   * The funded quantity is no longer part of that agreement, because it is a
+   * quantity and adds up — a row funded 3 and a row funded 0 merge into one
+   * funded 3, which is exactly true. It used to be a boolean, and a boolean
+   * cannot hold two different answers to "have these ingredients already left
+   * the store", so rows that disagreed could not be merged at all.
    *
    * The row that absorbs the others keeps its id; the others are simply absent
    * from the payload, which is how save_order_items is told to delete them.
@@ -215,7 +247,6 @@ export default function SplitBillScreen() {
         itemKey(item),
         item.printBatch,
         item.isSent,
-        item.isStockDeducted ?? false,
         item.note ?? "",
       ].join("|");
 
@@ -223,6 +254,8 @@ export default function SplitBillScreen() {
 
       if (existing) {
         existing.quantity += item.quantity;
+        existing.stockDeductedQty =
+          (existing.stockDeductedQty ?? 0) + (item.stockDeductedQty ?? 0);
       } else {
         merged.set(key, { ...item, customerNum: 1 });
       }
