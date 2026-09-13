@@ -211,7 +211,7 @@ RLS is enabled on every table in `public`.
 | `orders` | authenticated read/insert/update; **no DELETE policy** |
 | `order_items` | authenticated full access, narrowed by the trigger above |
 | `expenses` | admins read only; writes come from the trigger; deletes come only from `delete_expense_entry` |
-| `order_override_log` | admins read only; writes come from the definer functions |
+| `order_override_log` | admins read only; writes come from the definer functions. Read through `override_log_report` for names, since `profiles` is own-row-only |
 | `admin_correction_log` | `superadmin` read only; writes come from `correct_stock` / `delete_expense_entry` |
 
 `toggle_menu_availability(p_menu_id)` is a `SECURITY DEFINER` RPC any

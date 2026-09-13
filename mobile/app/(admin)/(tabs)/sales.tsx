@@ -590,6 +590,25 @@ export default function AdminSalesScreen() {
             <ChevronRight size={20} color="#9ca3af" />
           </TouchableOpacity>
 
+          {/* The PIN override trail. Sits here rather than in the tab bar
+              because it is something you go looking for while reading the day's
+              takings — a total that moved is the reason to ask who approved it. */}
+          <TouchableOpacity
+            onPress={() => router.push("/(admin)/(tabs)/overrides")}
+            activeOpacity={0.8}
+            className="bg-white rounded-3xl px-5 py-4 mb-4 flex-row items-center justify-between"
+          >
+            <View>
+              <Text className="text-sm font-extrabold text-gray-900">
+                Otorisasi Manager
+              </Text>
+              <Text className="text-xs font-bold text-gray-400 mt-0.5">
+                Pembatalan dan koreksi pesanan, beserta yang menyetujui
+              </Text>
+            </View>
+            <ChevronRight size={20} color="#9ca3af" />
+          </TouchableOpacity>
+
           {/* Top Selling Menu Card */}
           <View className="bg-yellow-100 rounded-3xl px-4 pt-4 pb-5 shadow-sm shadow-yellow-300/30">
             <View className="flex-row items-center justify-between mb-4">

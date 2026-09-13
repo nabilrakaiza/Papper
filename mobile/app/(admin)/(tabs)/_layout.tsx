@@ -72,6 +72,11 @@ export default function AdminTabLayout() {
 
       {/* Per-order drill-down, reached from Penjualan. Admin and superadmin. */}
       <Tabs.Screen name="orders" options={{ href: null }} />
+
+      {/* The PIN override trail, reached from Penjualan alongside the order
+          drill-down — cancellations and corrections are both things you go
+          looking for while reading the day's takings. */}
+      <Tabs.Screen name="overrides" options={{ href: null }} />
     </Tabs>
   );
 }

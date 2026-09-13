@@ -373,6 +373,7 @@ Failed attempts are recorded deliberately — the lockout counts them.
 | `cancel_order_with_pin(bigint, text)` | boolean | **legacy**, kept for older installs; superadmin PIN only |
 | `cancel_order_with_pin_v2(bigint, text)` | jsonb | current; returns a reason on failure; superadmin PIN only |
 | `reopen_order_with_pin(bigint, text)` | jsonb | puts a paid order back to `'unpaid'` and bumps `reopen_seq`, so its lines can be corrected; superadmin PIN only; shares the cancellation lockout |
+| `override_log_report(timestamptz, timestamptz)` | jsonb | `order_override_log` over a period with cashier and approver names resolved; `admin` and `superadmin`. Exists because `profiles` is own-row-only, so a client reading the log directly gets UUIDs |
 | `delete_order_with_pin(bigint, text)` | boolean | hard delete; not wired to any UI; superadmin PIN only |
 | `toggle_menu_availability(bigint)` | void | flips `menus.available`; callable by any authenticated staff account, since `cashier` has no general write access to `menus` |
 | `correct_stock(bigint, numeric, integer, text)` | void | sets a `stock` row's quantity/price directly (not additive); superadmin-only; sets `app.stock_correction` so the restock trigger doesn't log it as a purchase |

@@ -29,6 +29,8 @@ in [`mobile/README.md`](mobile/README.md) and [`mobile/docs/`](mobile/docs/).
 - Menu, recipes and cost-of-goods (per-ingredient or a flat manual figure)
 - Stock levels and restocking — every restock automatically logs an expense
 - Sales and expense reporting over time
+- The manager-override trail: every cancellation and correction, with the
+  superadmin who authorised it
 - A restricted **web build** of the same app for browser-based admin work;
   cashier accounts cannot sign in on web at all
 
@@ -62,6 +64,8 @@ Details: [mobile/docs/architecture.md](mobile/docs/architecture.md).
 - Correcting a paid order is append-only: the original payment row is never
   rewritten, and money handed back is recorded as a negative amount, so the
   card terminal's settlement and the cash drawer both still reconcile
+- Every PIN-gated action is logged with who asked and who approved, readable
+  from an admin screen
 - PIN brute-force is rate-limited (5 attempts / 15 minutes) and logged
 
 Full writeup, including known accepted risks: [mobile/docs/security.md](mobile/docs/security.md).
