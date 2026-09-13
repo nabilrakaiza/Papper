@@ -4,6 +4,7 @@ import {
   Text,
   ScrollView,
   ActivityIndicator,
+  TouchableOpacity,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { supabase } from "../../../lib/supabase";
@@ -15,6 +16,8 @@ type OrderRow = {
   seat: string;
   total: number;
   status: "paid" | "unpaid";
+  /** Already handed over on a split bill; 0 on an ordinary order. */
+  collected: number;
 };
 
 type TopMenuItem = { name: string; quantity: number };
@@ -30,89 +33,126 @@ export default function CashierSalesScreen() {
   const [topItems, setTopItems] = useState<TopMenuItem[]>([]);
   const [orders, setOrders] = useState<OrderRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   const fetchTodaySales = async () => {
     setLoading(true);
+    setError(null);
 
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const tomorrow = new Date(today);
-    tomorrow.setDate(tomorrow.getDate() + 1);
+    try {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const tomorrow = new Date(today);
+      tomorrow.setDate(tomorrow.getDate() + 1);
 
-    // Fetch all of today's orders (both paid and unpaid)
-    const { data: ordersData } = await supabase
-      .from("orders")
-      .select("id, customer_name, seat, discount, status")
-      .gte("created_at", today.toISOString())
-      .lt("created_at", tomorrow.toISOString())
-      .order("created_at", { ascending: false });
+      // Fetch all of today's orders (both paid and unpaid)
+      const { data: ordersData, error: ordersError } = await supabase
+        .from("orders")
+        .select("id, customer_name, seat, discount, status")
+        .gte("created_at", today.toISOString())
+        .lt("created_at", tomorrow.toISOString())
+        .order("created_at", { ascending: false });
 
-    if (!ordersData || ordersData.length === 0) {
-      setTotalSales(0);
-      setTotalPaid(0);
-      setTotalUnpaid(0);
-      setTopItems([]);
-      setOrders([]);
-      setLoading(false);
-      return;
-    }
+      // A failed request used to be indistinguishable from a quiet day: the
+      // error was never destructured, so everything reset to zero and the cashier
+      // was shown "Rp 0" for today's sales as though that were the real figure.
+      if (ordersError) {
+        console.error("Failed to fetch today's sales:", ordersError.message);
+        setError("Gagal memuat penjualan hari ini. Periksa koneksi Anda.");
+        return;
+      }
 
-    // Fetch order items
-    const orderIds = ordersData.map((o) => o.id);
-    const { data: items } = await supabase
-      .from("order_items")
-      .select("order_id, name, price, quantity")
-      .in("order_id", orderIds);
+      if (!ordersData || ordersData.length === 0) {
+        setTotalSales(0);
+        setTotalPaid(0);
+        setTotalUnpaid(0);
+        setTopItems([]);
+        setOrders([]);
+        return;
+      }
 
-    // Build order rows with totals
-    let paidTotal = 0;
-    let unpaidTotal = 0;
+      // Fetch order items
+      const orderIds = ordersData.map((o) => o.id);
+      const { data: items } = await supabase
+        .from("order_items")
+        .select("order_id, name, price, quantity")
+        .in("order_id", orderIds);
 
-    const orderRows: OrderRow[] = ordersData.map((order) => {
-      const orderItems = (items ?? []).filter((i) => i.order_id === order.id);
-      const subtotal = orderItems.reduce((sum, i) => sum + i.price * i.quantity, 0);
-      const total = orderTotal(subtotal, order.discount);
-      
+      // What each order has already taken from a split bill. An order stays
+      // 'unpaid' until the last payer settles, so without this a table that has
+      // paid two shares of three counts as wholly unpaid — the "Belum Dibayar"
+      // figure would claim money that is already in the till.
+      const { data: payments } = await supabase
+        .from("order_payments")
+        .select("order_id, amount")
+        .in("order_id", orderIds);
 
-      if (order.status === "paid") paidTotal += total;
-      else if (order.status === "unpaid") unpaidTotal += total;
+      const collectedByOrder = new Map<number, number>();
+      for (const p of payments ?? []) {
+        collectedByOrder.set(p.order_id, (collectedByOrder.get(p.order_id) ?? 0) + p.amount);
+      }
 
-      return {
-        id: order.id,
-        customerName: order.customer_name,
-        seat: order.seat,
-        total,
-        status: order.status,
-      };
-    });
+      // Build order rows with totals
+      let paidTotal = 0;
+      let unpaidTotal = 0;
 
-    setOrders(orderRows);
-    setTotalSales(paidTotal + unpaidTotal);
-    setTotalPaid(paidTotal);
-    setTotalUnpaid(unpaidTotal);
+      const orderRows: OrderRow[] = ordersData.map((order) => {
+        const orderItems = (items ?? []).filter((i) => i.order_id === order.id);
+        const subtotal = orderItems.reduce((sum, i) => sum + i.price * i.quantity, 0);
+        const total = orderTotal(subtotal, order.discount);
+        const collected = collectedByOrder.get(order.id) ?? 0;
 
-    // Top menu items (from paid orders only)
-    const paidOrderIds = ordersData
-      .filter((o) => o.status === "paid")
-      .map((o) => o.id);
-
-    const itemCount: Record<string, { name: string; qty: number }> = {};
-    (items ?? [])
-      .filter((i) => paidOrderIds.includes(i.order_id))
-      .forEach((item) => {
-        if (!itemCount[item.name]) {
-          itemCount[item.name] = { name: item.name, qty: 0 };
+        if (order.status === "paid") {
+          paidTotal += total;
+        } else if (order.status === "unpaid") {
+          // A part-settled order lands on both sides: what has been handed over
+          // is takings, what is left is still owed.
+          paidTotal += Math.min(collected, total);
+          unpaidTotal += Math.max(0, total - collected);
         }
-        itemCount[item.name].qty += item.quantity;
+
+        return {
+          id: order.id,
+          customerName: order.customer_name,
+          seat: order.seat,
+          total,
+          status: order.status,
+          collected,
+        };
       });
 
-    const top = Object.values(itemCount)
-      .sort((a, b) => b.qty - a.qty)
-      .slice(0, 5)
-      .map((i) => ({ name: i.name, quantity: i.qty }));
+      setOrders(orderRows);
+      setTotalSales(paidTotal + unpaidTotal);
+      setTotalPaid(paidTotal);
+      setTotalUnpaid(unpaidTotal);
 
-    setTopItems(top);
-    setLoading(false);
+      // Top menu items (from paid orders only)
+      const paidOrderIds = ordersData
+        .filter((o) => o.status === "paid")
+        .map((o) => o.id);
+
+      const itemCount: Record<string, { name: string; qty: number }> = {};
+      (items ?? [])
+        .filter((i) => paidOrderIds.includes(i.order_id))
+        .forEach((item) => {
+          if (!itemCount[item.name]) {
+            itemCount[item.name] = { name: item.name, qty: 0 };
+          }
+          itemCount[item.name].qty += item.quantity;
+        });
+
+      const top = Object.values(itemCount)
+        .sort((a, b) => b.qty - a.qty)
+        .slice(0, 5)
+        .map((i) => ({ name: i.name, quantity: i.qty }));
+      setTopItems(top);
+      setError(null);
+    } catch (e) {
+      console.error("Failed to fetch today's sales:", e);
+      setError("Gagal memuat penjualan hari ini. Periksa koneksi Anda.");
+    } finally {
+      setLoading(false);
+    }
   };
 
     useEffect(() => {
@@ -148,6 +188,15 @@ export default function CashierSalesScreen() {
       <View className="px-5 pt-4 pb-3">
         <Text className="text-2xl font-black text-gray-900">Penjualan Harian</Text>
       </View>
+
+      {!!error && (
+        <TouchableOpacity
+          onPress={() => setError(null)}
+          className="mx-4 mb-2 bg-red-50 border border-red-200 rounded-2xl px-4 py-3"
+        >
+          <Text className="text-xs font-bold text-red-600">{error}</Text>
+        </TouchableOpacity>
+      )}
 
       <ScrollView
         contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 24 }}
@@ -226,9 +275,16 @@ export default function CashierSalesScreen() {
                 <View>
                   <Text className="text-sm font-bold text-gray-800">{order.customerName}</Text>
                   <Text className="text-xs font-bold text-gray-400">Tempat Duduk {order.seat}</Text>
+                  {order.collected > 0 && (
+                    <Text className="text-[10px] font-extrabold text-blue-600 mt-0.5">
+                      Sudah dibayar sebagian · {formatRupiah(order.collected)}
+                    </Text>
+                  )}
                 </View>
+                {/* What is still owed, not the whole bill — part of this one may
+                    already be in the till. */}
                 <Text className="text-sm font-extrabold text-yellow-600">
-                  {formatRupiah(order.total)}
+                  {formatRupiah(Math.max(0, order.total - order.collected))}
                 </Text>
               </View>
             ))}

@@ -26,6 +26,10 @@ const METHOD_LABELS: Record<string, string> = {
   "Bank Transfer": "Transfer Bank",
   QRIS: "QRIS",
   Debit: "Debit",
+  // Only ever reached by an order marked 'Split' that has no per-payer rows to
+  // break down — which should not happen, but "Tidak dicatat" would be a lie
+  // about an order that was very much recorded.
+  Split: "Terpisah",
 };
 
 // Fixed order so the card doesn't reshuffle between periods.
@@ -160,7 +164,7 @@ export default function AdminSalesScreen() {
 
     const { data: orders } = await supabase
       .from("orders")
-      .select("id, created_at, discount, method_of_payment")
+      .select("id, created_at, discount")
       .eq("status", "paid")
       .gte("created_at", from)
       .lte("created_at", to);
@@ -183,27 +187,71 @@ export default function AdminSalesScreen() {
       const orderItems = (items ?? []).filter((i) => i.order_id === order.id);
       const subtotal = orderItems.reduce((sum, i) => sum + i.price * i.quantity, 0);
       return {
+        id: order.id,
         created_at: order.created_at,
-        method: order.method_of_payment,
         total: orderTotal(subtotal, order.discount),
       };
     });
 
     const total = ordersWithTotal.reduce((sum, o) => sum + o.total, 0);
 
+    // How every order was paid — the only record of it, for every order. One row
+    // for an ordinary payment, one per payer for a split bill.
+    const { data: payments } = await supabase
+      .from("order_payments")
+      .select("order_id, amount, method_of_payment")
+      .in("order_id", orderIds);
+
+    const paymentsByOrder = new Map<number, { amount: number; method: string }[]>();
+    for (const p of payments ?? []) {
+      const list = paymentsByOrder.get(p.order_id) ?? [];
+      list.push({ amount: p.amount, method: p.method_of_payment });
+      paymentsByOrder.set(p.order_id, list);
+    }
+
     // Split by payment method off the same rows — the breakdown always agrees
     // with the headline total because it is the same arithmetic.
     //
-    // Deliberately NOT summing orders.payment_amount: for cash that column
-    // holds the amount tendered, not the bill, so it overstates takings by
-    // whatever change was handed back.
+    // order_payments keeps the bill and the tender in separate columns, so
+    // `amount` is directly summable. The old orders.payment_amount was not:
+    // for cash it held the tender, so summing it overstated takings by whatever
+    // change was handed back.
     const methodTotals = new Map<string, { count: number; total: number }>();
-    for (const o of ordersWithTotal) {
-      const key = o.method ?? "—";
+
+    const addToMethod = (method: string | null, amount: number) => {
+      const key = method ?? "—";
       const entry = methodTotals.get(key) ?? { count: 0, total: 0 };
       entry.count += 1;
-      entry.total += o.total;
+      entry.total += amount;
       methodTotals.set(key, entry);
+    };
+
+    for (const o of ordersWithTotal) {
+      const shares = paymentsByOrder.get(o.id);
+
+      // A paid order with no payment row should not exist. Attributing it to a
+      // method would be inventing one, so it lands under "Tidak dicatat" where
+      // it is visible rather than quietly folded into a real method's takings.
+      if (!shares || shares.length === 0) {
+        addToMethod(null, o.total);
+        continue;
+      }
+
+      // Each share was rounded on its own when it was charged, so the shares
+      // can sum to a rupiah or two either side of the order's recomputed total.
+      // The residual goes on the largest share, which keeps this breakdown
+      // adding up to the headline figure exactly — the invariant this map has
+      // always had — without inventing a method that took no money.
+      const charged = shares.reduce((sum, s) => sum + s.amount, 0);
+      const residual = o.total - charged;
+      const largest = shares.reduce(
+        (best, s, idx) => (s.amount > shares[best].amount ? idx : best),
+        0
+      );
+
+      shares.forEach((share, idx) => {
+        addToMethod(share.method, share.amount + (idx === largest ? residual : 0));
+      });
     }
 
     setByMethod(
@@ -239,16 +287,33 @@ export default function AdminSalesScreen() {
       return;
     }
 
+    const orderIds = orders.map((o) => o.id);
+
     const { data: items } = await supabase
       .from("order_items")
       .select("order_id, price, quantity")
-      .in("order_id", orders.map((o) => o.id));
+      .in("order_id", orderIds);
+
+    // A split bill stays 'unpaid' until the last payer settles, so part of what
+    // these orders are worth may already be in the till. Counting the whole
+    // figure as outstanding would overstate what is still owed.
+    const { data: payments } = await supabase
+      .from("order_payments")
+      .select("order_id, amount")
+      .in("order_id", orderIds);
+
+    const collectedByOrder = new Map<number, number>();
+    for (const p of payments ?? []) {
+      collectedByOrder.set(p.order_id, (collectedByOrder.get(p.order_id) ?? 0) + p.amount);
+    }
 
     const total = orders.reduce((sum, order) => {
       const subtotal = (items ?? [])
         .filter((i) => i.order_id === order.id)
         .reduce((s, i) => s + i.price * i.quantity, 0);
-      return sum + orderTotal(subtotal, order.discount);
+      const owed =
+        orderTotal(subtotal, order.discount) - (collectedByOrder.get(order.id) ?? 0);
+      return sum + Math.max(0, owed);
     }, 0);
 
     setOutstanding({ count: orders.length, total });
@@ -520,6 +585,25 @@ export default function AdminSalesScreen() {
               </Text>
               <Text className="text-xs font-bold text-gray-400 mt-0.5">
                 Telusuri tiap pesanan beserta itemnya
+              </Text>
+            </View>
+            <ChevronRight size={20} color="#9ca3af" />
+          </TouchableOpacity>
+
+          {/* The PIN override trail. Sits here rather than in the tab bar
+              because it is something you go looking for while reading the day's
+              takings — a total that moved is the reason to ask who approved it. */}
+          <TouchableOpacity
+            onPress={() => router.push("/(admin)/(tabs)/overrides")}
+            activeOpacity={0.8}
+            className="bg-white rounded-3xl px-5 py-4 mb-4 flex-row items-center justify-between"
+          >
+            <View>
+              <Text className="text-sm font-extrabold text-gray-900">
+                Otorisasi Manager
+              </Text>
+              <Text className="text-xs font-bold text-gray-400 mt-0.5">
+                Pembatalan dan koreksi pesanan, beserta yang menyetujui
               </Text>
             </View>
             <ChevronRight size={20} color="#9ca3af" />

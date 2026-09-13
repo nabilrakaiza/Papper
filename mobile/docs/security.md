@@ -34,7 +34,7 @@ separates them is RLS policies testing `profiles.role`.
 
 | Role | Can do |
 | --- | --- |
-| `cashier` | Add/edit/pay orders; cancel with manager PIN (same as everyone); toggle menu availability (via `toggle_menu_availability`, not a direct table write) |
+| `cashier` | Add/edit/pay orders; cancel or correct with manager PIN (same as everyone); toggle menu availability (via `toggle_menu_availability`, not a direct table write) |
 | `admin` | Everything `cashier` can do, plus: restock existing items (`stock` update), edit menu recipes (`menu_ingredients`), read sales/expense reports |
 | `superadmin` | Everything `admin` can do, plus: create new stock item types, create/soft-delete/restore menu items, edit a menu's cost mode (`cogs_mode` / `manual_cogs`), correct a stock item's quantity/price directly (`correct_stock`), delete a bad `expenses` row (`delete_expense_entry`) |
 
@@ -70,19 +70,27 @@ transaction, same mechanism as `app.pin_verified`). Both `correct_stock` and
 what changed, without it reading as a real purchase in sales/expense
 reporting.
 
-## PIN-gated cancellation
+## PIN-gated cancellation and correction
 
-Cancelling an order voids a sale, so it needs manager approval. Enforcement is
-in two parts:
+Cancelling an order voids a sale and correcting one rewrites it, so both need
+manager approval. Enforcement is in two parts:
 
 1. `enforce_cancel_via_rpc`, a BEFORE UPDATE trigger on `orders`, rejects any
-   transition into `status = 'cancelled'` unless the transaction-local setting
+   transition into `status = 'cancelled'`, **and any transition out of `'paid'`
+   or `'cancelled'` back into `'unpaid'`**, unless the transaction-local setting
    `app.pin_verified` is `'true'`.
-2. Only `cancel_order_with_pin_v2` (and the legacy v1, and
-   `delete_order_with_pin`) set that flag, and only after matching the submitted
-   PIN against an admin's bcrypt hash.
+2. Only `cancel_order_with_pin_v2` (and the legacy v1, `delete_order_with_pin`,
+   and `reopen_order_with_pin`) set that flag, and only after matching the
+   submitted PIN against a superadmin's bcrypt hash.
 
 A cashier calling `UPDATE orders SET status='cancelled'` directly gets `42501`.
+
+**The reopen half closed a real hole.** Until `20260912091000` the trigger only
+guarded transitions *into* `'cancelled'`, so `UPDATE orders SET status='unpaid'`
+on a paid order was accepted from any authenticated client — which unlocks every
+line item on it, with no PIN and no audit row. Reviving a cancelled order was
+equally open. That predated the correction feature; the feature is what made
+anyone look.
 
 The flag is set with `set_config(..., is_local => true)`, so it is scoped to the
 transaction, and it is cleared immediately after the update so no later
@@ -99,16 +107,29 @@ to `is_cancelled` or deleting the lines outright — no PIN, no audit record.
 - `INSERT` and `DELETE` are refused outright — adding or removing lines is the
   attack itself
 - `UPDATE` is refused if it changes `order_id`, `menu_id`, `name`, `price`,
-  `quantity`, `is_cancelled` or `is_stock_deducted` — what was sold, what it
-  cost, and what stock it consumed
+  `quantity`, `customer_num`, `is_cancelled`, `stock_deducted_qty` or
+  `is_stock_deducted` — what was sold, what it cost, who paid for it, and what
+  stock it consumed
 - `UPDATE` is allowed if it only touches fulfilment bookkeeping: `is_sent`,
   `print_batch`, `notes`
 
-`is_stock_deducted` is locked because resetting it to `false` on a closed order
-and re-running `deduct_stock_for_order` would decrement stock twice. The
-resulting shortfall is indistinguishable from ordinary consumption, so it could
-hide ingredients going missing. Nothing legitimately writes that column after
-payment — both `deduct_stock_for_order` call sites run while the order is open.
+`stock_deducted_qty` is locked because lowering it on a closed order and
+re-running `deduct_stock_for_order` would decrement stock twice. The resulting
+shortfall is indistinguishable from ordinary consumption, so it could hide
+ingredients going missing. Nothing legitimately writes that column after payment
+— both `deduct_stock_for_order` call sites run while the order is open.
+`is_stock_deducted` is derived from it and listed alongside rather than left out
+of a rule that is easier to keep whole.
+
+**The same lock applies per payer, scoped to the correction round.** A payer
+holding a row in `order_payments` at the order's current `reopen_seq` has their
+lines frozen even while the order as a whole is `unpaid` — that is what stops the
+first payer on a split bill having their items edited after they have paid and
+left. Scoping it to the round is what lets a correction release them again: after
+a reopen the old payment rows sit at round 0 while the order is at round 1, so
+nothing is locked, and the original record of what was paid survives untouched.
+On an order that has never been corrected everything is round 0 and the rule is
+exactly what shipped with the split bill.
 
 The PIN RPCs are exempt via the same `app.pin_verified` flag.
 
@@ -119,7 +140,7 @@ outside the threat this guards against.
 
 Verified against the existing flows before it shipped:
 
-- `deduct_stock_for_order` writes `order_items.is_stock_deducted`, but both call
+- `deduct_stock_for_order` writes `order_items.stock_deducted_qty`, but both call
   sites run while the order is unpaid — stock is deducted at creation/edit, not
   at payment
 - `markPaid` touches only the `orders` row
@@ -149,9 +170,11 @@ column revokes cannot subtract from a table-level grant. Any column added to
 
 ### Lockout
 
-`pin_attempts_exhausted()` counts failed `cancel`/`delete` attempts by the
-current user in the last 15 minutes; at 5 the RPCs refuse and log a
-`cancel_blocked` / `delete_blocked` row. Those blocked rows are excluded from the
+`pin_attempts_exhausted()` counts failed `cancel`/`delete`/`reopen` attempts by
+the current user in the last 15 minutes; at 5 the RPCs refuse and log a
+`cancel_blocked` / `delete_blocked` / `reopen_blocked` row. All three share one
+counter because all three check the same six digits — a separate counter per
+action would hand an attacker five fresh guesses per button. Those blocked rows are excluded from the
 count, so a locked-out user cannot extend their own lockout indefinitely.
 
 Failures **return** rather than `RAISE`. Raising would roll back the audit insert
@@ -162,7 +185,7 @@ years.
 
 ### PIN rules
 
-0. **Only a superadmin PIN approves.** All three PIN RPCs match
+0. **Only a superadmin PIN approves.** All four PIN RPCs match
    `role = 'superadmin'`. A PIN on an `admin` account is inert — it hashes and
    stores without complaint but never matches, so the failure looks like a
    mistyped PIN rather than a misconfiguration. At least one superadmin PIN must
@@ -188,7 +211,7 @@ RLS is enabled on every table in `public`.
 | `orders` | authenticated read/insert/update; **no DELETE policy** |
 | `order_items` | authenticated full access, narrowed by the trigger above |
 | `expenses` | admins read only; writes come from the trigger; deletes come only from `delete_expense_entry` |
-| `order_override_log` | admins read only; writes come from the definer functions |
+| `order_override_log` | admins read only; writes come from the definer functions. Read through `override_log_report` for names, since `profiles` is own-row-only |
 | `admin_correction_log` | `superadmin` read only; writes come from `correct_stock` / `delete_expense_entry` |
 
 `toggle_menu_availability(p_menu_id)` is a `SECURITY DEFINER` RPC any
@@ -228,6 +251,8 @@ Recorded here because the reasoning is easy to lose:
 | `toggle_menu_availability` callable by `anon` (unauthenticated) | this project grants new `public` functions EXECUTE for `anon` by default, so `revoke ... from public` alone doesn't touch it — needs `revoke ... from anon` by name, same as the row above |
 | `anon` and `authenticated` held `TRUNCATE` on every table but `expenses` | revoked. **RLS does not apply to `TRUNCATE`** — it is gated by table privilege alone, so no policy here was ever consulted. The anon key ships in the published app, which made wiping sales history or either audit log a single call. `anon` now has nothing in `public`; `alter default privileges` keeps new tables from reopening it |
 | `order_override_log` readable by `admin` only | widened to `admin, superadmin`, matching the `expenses` fix — see [database.md](database.md#order_override_log) |
+| `paid → unpaid` was ungated: any authenticated client could reopen a paid order and unlock every line item on it, with no PIN and no audit row | `prevent_direct_cancel` now also refuses `'paid'`/`'cancelled'` → `'unpaid'` without `app.pin_verified`, which only the PIN RPCs set |
+| Reducing a line then raising it deducted the difference from stock twice, a shortfall indistinguishable from ingredients going missing | `is_stock_deducted` replaced by `stock_deducted_qty`; deduction is now the difference, and the editor refills a reduced row before opening a new batch — see [database.md](database.md#order_items) |
 
 Re-check any time with:
 
@@ -253,3 +278,8 @@ get_advisors(type: "security")
   transaction around them. The cashier cannot delete an order, so a failure
   part-way through cannot be rolled back and leaves a real order behind. A
   single `create_order_with_items` RPC would make it atomic
+- Drop the derived `is_stock_deducted` column once every device runs a build that
+  reads `stock_deducted_qty`. It is kept only so an older APK still works
+- A correction reducing a line far enough to delete its row loses that row's
+  funded quantity, so raising the quantity afterwards deducts again. Recorded
+  stock ends lower than reality, which is the safe direction, but it is a gap

@@ -6,10 +6,11 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   Modal,
+  Share,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { router } from "expo-router";
-import { Printer, Check, RefreshCw, ChefHat, Receipt, Utensils, Pencil} from "lucide-react-native";
+import { Printer, Check, RefreshCw, ChefHat, Receipt, Utensils, Pencil, UtensilsCrossed, ShoppingBag, Undo2 } from "lucide-react-native";
 import { useOrders } from "../../../context/OrderContext";
 import { usePrinter, PrinterRole } from "../../../context/PrinterContext";
 import { Order, OrderItem } from "../../../types/order";
@@ -21,7 +22,10 @@ import {
   unprintedLatestBatch,
 } from "../../../lib/receiptLayout";
 import { useUser } from "@/hooks/useUser";
+import { unfinishedPrint, previousTrailText, whenTrailReady } from "../../../lib/printerTrail";
 import { orderTotal as orderTotalOf } from "../../../lib/constants";
+import { amountCollected, isCorrected, isSplit, unpaidPayers } from "../../../lib/splitBill";
+import PinOverrideModal from "@/components/PinOverrideModal";
 
 function formatRupiah(amount: number): string {
   return "Rp " + Math.round(amount).toLocaleString("id-ID");
@@ -37,6 +41,7 @@ type OrderCardProps = {
   onPrintKitchenPress: (order: Order) => void;
   onPrintBillPress: (order: Order) => void;
   onEditPress: (order: Order) => void;
+  onCorrectPress: (order: Order) => void;
 };
 
 function useOrderTimer(createdAt: Date) {
@@ -119,8 +124,75 @@ function BatchWarningDialog({
   );
 }
 
-function OrderCard({ order, onPrintKitchenPress, onPrintBillPress, onEditPress }: OrderCardProps) {
+/**
+ * The previous session's print trail, on screen. The trail is written for a
+ * tablet at the till with no console attached, so a console.warn is not a way
+ * to read it -- this and the share sheet are.
+ */
+function PrintTrailDialog({
+  visible, step, text, onClose,
+}: {
+  visible: boolean;
+  step: string | null;
+  text: string;
+  onClose: () => void;
+}) {
+  return (
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+      <View className="flex-1 bg-black/40 items-center justify-center px-8">
+        <View className="w-full bg-white rounded-3xl px-6 py-5">
+          <Text className="text-base font-extrabold text-gray-700">Rincian cetak terakhir</Text>
+          <Text className="text-xs font-bold text-gray-400 mt-2">
+            Aplikasi berhenti di langkah &quot;{step}&quot;.
+          </Text>
+
+          <ScrollView className="bg-gray-50 border border-gray-100 rounded-2xl px-4 py-3 mt-3 max-h-64">
+            <Text className="text-[10px] font-bold text-gray-500">{text || "(kosong)"}</Text>
+          </ScrollView>
+
+          <View className="flex-row gap-3 mt-5">
+            <TouchableOpacity onPress={onClose} className="flex-1 bg-gray-100 rounded-2xl py-3 items-center">
+              <Text className="text-sm font-extrabold text-gray-500">Tutup</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => {
+                // Nothing to do if the sheet is dismissed, and a rejection here
+                // must not take down the screen reporting the crash.
+                Share.share({ message: text }).catch(() => {});
+              }}
+              className="flex-1 bg-orange-400 rounded-2xl py-3 items-center"
+            >
+              <Text className="text-sm font-extrabold text-white">Kirim</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+function OrderCard({
+  order,
+  onPrintKitchenPress,
+  onPrintBillPress,
+  onEditPress,
+  onCorrectPress,
+}: OrderCardProps) {
   const isPaid = order.status === "paid";
+
+  // A split bill stays 'unpaid' until the last payer settles, so an order that
+  // is two-thirds paid looks identical to one nobody has touched. The card is
+  // where a cashier decides what still needs chasing, so it has to say.
+  const split = isSplit(order);
+  const settled = order.payments.filter((p) => p.reopenSeq === order.reopenSeq).length;
+  const outstanding = split ? unpaidPayers(order).length : 0;
+
+  // A reopened order is back in the unpaid list looking exactly like a fresh
+  // one, which it very much is not: money has already changed hands on it and
+  // the cashier is part-way through fixing it. Say so, and say how much is
+  // already in the till, because that is what the difference is worked out from.
+  const correcting = isCorrected(order) && !isPaid;
+  const alreadyTaken = amountCollected(order);
 
   return (
     <View
@@ -138,6 +210,20 @@ function OrderCard({ order, onPrintKitchenPress, onPrintBillPress, onEditPress }
           {!isPaid && <TimerDot createdAt={order.createdAt} />}
         </View>
 
+        {correcting && (
+          <View className="bg-orange-100 rounded-lg px-2 py-0.5">
+            <Text className="text-[10px] font-extrabold text-orange-700">Koreksi</Text>
+          </View>
+        )}
+
+        {!isPaid && !correcting && split && (
+          <View className="bg-blue-100 rounded-lg px-2 py-0.5">
+            <Text className="text-[10px] font-extrabold text-blue-700">
+              {settled}/{settled + outstanding} bayar
+            </Text>
+          </View>
+        )}
+
         <View className="flex-row items-center gap-5">
           <TouchableOpacity onPress={() => onPrintKitchenPress(order)}>
             <Utensils size={20} color="#FF6B6B" />
@@ -146,6 +232,12 @@ function OrderCard({ order, onPrintKitchenPress, onPrintBillPress, onEditPress }
           <TouchableOpacity onPress={() => onPrintBillPress(order)}>
             <Receipt size={20} color={isPaid ? "green" : "#555"} />
           </TouchableOpacity>
+
+          {isPaid && (
+            <TouchableOpacity onPress={() => onCorrectPress(order)}>
+              <Undo2 size={19} color="#ffffff" />
+            </TouchableOpacity>
+          )}
 
           {!isPaid && (
             <>
@@ -161,10 +253,48 @@ function OrderCard({ order, onPrintKitchenPress, onPrintBillPress, onEditPress }
         </View>
       </View>
 
-      <View className="flex-row justify-between mt-2 px-1">
-        <Text className={`text-xs font-bold ${isPaid ? "text-white/70" : "text-gray-400"}`}>
-          Tempat Duduk: {order.seat}
-        </Text>
+      {correcting && (
+        <View className="mt-2 bg-orange-50 rounded-xl px-3 py-2">
+          <Text className="text-[11px] font-bold text-orange-800">
+            Sudah diterima {formatRupiah(alreadyTaken)} — perbaiki pesanan, lalu
+            selesaikan selisihnya.
+          </Text>
+        </View>
+      )}
+
+      <View className="flex-row items-center justify-between mt-2 px-1 gap-2">
+        <View className="flex-row items-center gap-2 flex-1">
+          {/* Dine-in vs takeaway drives how the order is handed over, and the
+              card gave no sign of it — the two looked identical right up to
+              carrying the plates out. Tinted like the name chip so it reads on
+              both the paid and unpaid card. */}
+          <View
+            className={`flex-row items-center gap-1 rounded-lg px-2 py-0.5 ${
+              isPaid ? "bg-white/20" : "bg-white/80"
+            }`}
+          >
+            {order.isDineIn ? (
+              <UtensilsCrossed size={11} color={isPaid ? "#ffffff" : "#3a7bd5"} />
+            ) : (
+              <ShoppingBag size={11} color={isPaid ? "#ffffff" : "#f97316"} />
+            )}
+            <Text
+              className={`text-[10px] font-extrabold ${
+                isPaid ? "text-white" : order.isDineIn ? "text-blue-600" : "text-orange-600"
+              }`}
+            >
+              {order.isDineIn ? "Di Tempat" : "Bawa Pulang"}
+            </Text>
+          </View>
+
+          <Text
+            numberOfLines={1}
+            className={`text-xs font-bold flex-1 ${isPaid ? "text-white/70" : "text-gray-400"}`}
+          >
+            Tempat Duduk: {order.seat}
+          </Text>
+        </View>
+
         <Text className={`text-xs font-bold ${isPaid ? "text-white/70" : "text-gray-400"}`}>
           {formatRupiah(orderTotal(order))}
         </Text>
@@ -174,7 +304,7 @@ function OrderCard({ order, onPrintKitchenPress, onPrintBillPress, onEditPress }
 }
 
 export default function CashierHomeScreen() {
-  const { orders, loading, error, refetch, markItemsSent } = useOrders();
+  const { orders, loading, error, refetch, markItemsSent, reopenOrderWithPin } = useOrders();
   const { cashierPrinter, kitchenPrinter, setPrinter } = usePrinter();
 
   const [printerSelectorVisible, setPrinterSelectorVisible] = useState(false);
@@ -186,6 +316,13 @@ export default function CashierHomeScreen() {
   
   const [printing, setPrinting] = useState(false);
   const [printError, setPrintError] = useState<string | null>(null);
+
+  // The previous session's unfinished print: the step it stopped on, and the
+  // whole trail behind it.
+  const [trailStep, setTrailStep] = useState<string | null>(null);
+  const [trailText, setTrailText] = useState("");
+  const [trailOpen, setTrailOpen] = useState(false);
+  const [trailSeen, setTrailSeen] = useState(false);
 
   // Set when a kitchen print would silently leave an earlier batch unprinted.
   const [skippedBatchOrder, setSkippedBatchOrder] = useState<Order | null>(null);
@@ -200,13 +337,39 @@ export default function CashierHomeScreen() {
   // Set when opening an order to edit would strand the newest batch.
   const [unprintedEditOrder, setUnprintedEditOrder] = useState<Order | null>(null);
 
+  // Set when an order has a payer who has already settled, so its lines are no
+  // longer freely editable.
+  const [partiallyPaidEditOrder, setPartiallyPaidEditOrder] = useState<Order | null>(null);
+
+  // The paid order a cashier is asking to reopen, held while the manager PIN is
+  // entered. Null closes the modal.
+  const [correctingOrder, setCorrectingOrder] = useState<Order | null>(null);
+
   const openOrderEditor = (order: Order) => router.push(`/(cashier)/order/${order.id}`);
+
+  // Reopening is gated in the database, not here — the PIN modal is where the
+  // superadmin's approval is actually collected and checked.
+  const handleCorrect = (order: Order) => setCorrectingOrder(order);
 
   // Adding items creates a batch above the current one, and a kitchen ticket
   // only ever covers the newest batch — so anything still unprinted here would
   // be stranded the moment the cashier saves. This is the point where the
   // mistake can still be prevented rather than merely reported.
   const handleEdit = (order: Order) => {
+    // Someone on this order has already paid, which freezes their lines in the
+    // database. An edit could still succeed against the payers who haven't —
+    // but a line added here lands on payer 1 by default, and if payer 1 is one
+    // of the settled ones the save is refused halfway through the editor, after
+    // the cashier has done the work. Say it here instead.
+    //
+    // Only the current round counts. A corrected order still carries the rows
+    // recording what was originally paid, and matching on those would refuse to
+    // open the editor for the correction the cashier was just given a PIN for.
+    if (order.payments.some((p) => p.reopenSeq === order.reopenSeq)) {
+      setPartiallyPaidEditOrder(order);
+      return;
+    }
+
     if (unprintedLatestBatch(order).length > 0) {
       setUnprintedEditOrder(order);
       return;
@@ -219,8 +382,39 @@ export default function CashierHomeScreen() {
   
   const { user, loading: userLoading } = useUser();
 
+  // A print that never reached an end state means the previous session stopped
+  // in the middle of one — the app was killed while printing. Say so on the
+  // next start, because otherwise the only witness is whoever was standing at
+  // the till, and "it closed by itself" is all we ever get back.
+  useEffect(() => {
+    let active = true;
+
+    whenTrailReady().then(() => {
+      if (!active) return;
+
+      const step = unfinishedPrint();
+      if (!step) return;
+
+      // Still to the console, which is the easier copy on the rare occasion
+      // metro is attached.
+      console.warn("Previous print trail:\n" + previousTrailText());
+      setTrailText(previousTrailText());
+      setTrailStep(step);
+    });
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
   // Unified handler to route to the correct printer logic
   const handlePrint = async (order: Order, type: "kitchen" | "bill") => {
+    // The "Sedang mencetak" indicator is an inline banner, not a blocking
+    // overlay, so nothing stopped a second tap from opening a second connection
+    // to the same device mid-print — two tickets out of the printer, and
+    // markItemsSent running twice.
+    if (printing) return;
+
     setPrintError(null);
 
     // A kitchen ticket only ever covers the newest batch, so items added in a
@@ -260,39 +454,62 @@ export default function CashierHomeScreen() {
   };
 
   const doPrint = async (order: Order, type: "kitchen" | "bill", specificPrinter?: { name: string; address: string }) => {
+    // A receipt carries the cashier's name, so there is nothing to print
+    // without one. This used to be expressed as `if (type === "kitchen" && user)
+    // ... else if (user)`, which meant a null user matched neither branch and
+    // fell out of the function having done nothing: no receipt, no error, just
+    // the "Sedang mencetak" flash. Say what happened instead.
+    if (!user) {
+      setPrintError(
+        userLoading
+          ? "Memuat data pengguna, coba lagi sebentar lagi."
+          : "Tidak bisa mencetak: data pengguna tidak tersedia. Coba masuk ulang."
+      );
+      return;
+    }
+
     setPrinting(true);
     setPrintError(null);
 
     let printErr = null;
 
-    if (type === "kitchen" && user) {
-      const targetPrinter = specificPrinter || kitchenPrinter;
-      const { error } = await printReceipt(order, null, targetPrinter, user); // Passing null to cashier to prevent dual-printing
-      printErr = error;
+    // Every exit from here has to clear `printing`, including the ones nobody
+    // planned for: handlePrint refuses to start while it is set, so a single
+    // throw on the way out left the print buttons dead for the rest of the
+    // session — no spinner, no error, nothing happening on any tap. The only
+    // way back was force-closing the app.
+    try {
+      if (type === "kitchen") {
+        const targetPrinter = specificPrinter || kitchenPrinter;
+        const { error } = await printReceipt(order, null, targetPrinter, user); // Passing null to cashier to prevent dual-printing
+        printErr = error;
 
-      // Mark the lines as sent once the ticket is physically printed.
-      if (!error) {
-        const { error: updateError } = await markItemsSent(order.id, latestPrintBatch(order));
+        // Mark the lines as sent once the ticket is physically printed.
+        if (!error) {
+          const { error: updateError } = await markItemsSent(order.id, latestPrintBatch(order));
 
-        if (updateError) {
-          // The ticket is already out of the printer, so surface the mismatch
-          // rather than letting the two states diverge silently.
-          printErr = "Berhasil dicetak, tetapi gagal memperbarui status 'terkirim' di sistem.";
+          if (updateError) {
+            // The ticket is already out of the printer, so surface the mismatch
+            // rather than letting the two states diverge silently.
+            printErr = "Berhasil dicetak, tetapi gagal memperbarui status 'terkirim' di sistem.";
+          }
         }
-      }
 
-    } else if (user) {
-      const targetPrinter = specificPrinter || cashierPrinter;
-      const { error } = await printReceipt(order, targetPrinter, null, user); // Passing null to kitchen to prevent dual-printing
-      printErr = error;
+      } else {
+        const targetPrinter = specificPrinter || cashierPrinter;
+        const { error } = await printReceipt(order, targetPrinter, null, user); // Passing null to kitchen to prevent dual-printing
+        printErr = error;
+      }
+    } catch (e) {
+      printErr = `Gagal mencetak: ${e instanceof Error && e.message ? e.message : "kesalahan tidak diketahui"}.`;
+    } finally {
+      setPrinting(false);
     }
 
     if (printErr) {
       // If it's our custom string error, show that. Otherwise show the default connection error.
       setPrintError(typeof printErr === "string" ? printErr : `Gagal mencetak ${type === "kitchen" ? "dapur" : "bon"}. Pastikan printer menyala dan terhubung.`);
     }
-    
-    setPrinting(false);
   };
 
   const handlePrinterConnected = async (role: PrinterRole, device: { name: string; address: string }) => {
@@ -321,29 +538,51 @@ export default function CashierHomeScreen() {
           <Text className="text-2xl font-black text-gray-900">Pesanan</Text>
         </View>
 
-        {/* Printer status indicators */}
+        {/* Saved printers — NOT a connection status.
+            
+            These come from AsyncStorage and only record which printer each role
+            should print to. Nothing here is connected: the Bluetooth link is
+            opened at print time, in printReceipt. Styling them as a lit-up
+            accent with a bare device name read as "connected to TP-806", so a
+            pairing from days earlier looked live even with the printer switched
+            off. Naming the role and keeping the chip neutral makes it a setting
+            again, which is all it ever was.
+            
+            The module cannot honestly do better: isDeviceConnected() never
+            settles its Promise when mService is null (the state on every cold
+            start), and getConnectedDeviceAddress() returns the last address
+            connected rather than a live one.
+
+            Closed while a print is running: the picker opens its own connection,
+            and doing that on top of an in-flight print is exactly the overlap
+            the native module mishandles. It is also what a cashier reaches for
+            when a print seems stuck, which is the worst possible moment. */}
         <View className="flex-row gap-2">
           <TouchableOpacity
             onPress={() => { setPrinterSelectorRole("cashier"); setPrinterSelectorVisible(true); }}
-            className={`flex-row items-center gap-1.5 px-2.5 py-1.5 rounded-xl ${
-              cashierPrinter ? "bg-blue-50" : "bg-gray-100"
-            }`}
+            disabled={printing}
+            className={`flex-row items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-gray-100 ${printing ? "opacity-40" : ""}`}
           >
-            <Printer size={13} color={cashierPrinter ? "#3a7bd5" : "#aaa"} />
-            <Text className={`text-xs font-extrabold ${cashierPrinter ? "text-blue-500" : "text-gray-400"}`}>
-              {cashierPrinter ? cashierPrinter.name : "Kasir"}
+            <Printer size={13} color={cashierPrinter ? "#555" : "#bbb"} />
+            <Text numberOfLines={1} className="text-xs font-extrabold text-gray-400 max-w-[104px]">
+              Kasir ·{" "}
+              <Text className={cashierPrinter ? "text-gray-700" : "text-gray-400"}>
+                {cashierPrinter ? cashierPrinter.name : "—"}
+              </Text>
             </Text>
           </TouchableOpacity>
 
           <TouchableOpacity
             onPress={() => { setPrinterSelectorRole("kitchen"); setPrinterSelectorVisible(true); }}
-            className={`flex-row items-center gap-1.5 px-2.5 py-1.5 rounded-xl ${
-              kitchenPrinter ? "bg-orange-50" : "bg-gray-100"
-            }`}
+            disabled={printing}
+            className={`flex-row items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-gray-100 ${printing ? "opacity-40" : ""}`}
           >
-            <ChefHat size={13} color={kitchenPrinter ? "#f97316" : "#aaa"} />
-            <Text className={`text-xs font-extrabold ${kitchenPrinter ? "text-orange-500" : "text-gray-400"}`}>
-              {kitchenPrinter ? kitchenPrinter.name : "Dapur"}
+            <ChefHat size={13} color={kitchenPrinter ? "#555" : "#bbb"} />
+            <Text numberOfLines={1} className="text-xs font-extrabold text-gray-400 max-w-[104px]">
+              Dapur ·{" "}
+              <Text className={kitchenPrinter ? "text-gray-700" : "text-gray-400"}>
+                {kitchenPrinter ? kitchenPrinter.name : "—"}
+              </Text>
             </Text>
           </TouchableOpacity>
         </View>
@@ -359,6 +598,26 @@ export default function CashierHomeScreen() {
             <RefreshCw size={16} color="#ef4444" />
           </TouchableOpacity>
         </View>
+      )}
+
+      {/* An unfinished print from the previous session. Tappable, because the
+          trail is the only witness we get and it has to be readable from the
+          device itself. */}
+      {trailStep && !trailSeen && (
+        <TouchableOpacity
+          onPress={() => setTrailOpen(true)}
+          className="mx-4 mb-2 bg-amber-50 border border-amber-100 rounded-2xl px-4 py-3 flex-row items-center justify-between gap-3"
+        >
+          <View className="flex-1">
+            <Text className="text-xs font-bold text-amber-700">
+              Cetak sebelumnya tidak selesai. Aplikasi mungkin tertutup saat mencetak.
+            </Text>
+            <Text className="text-[10px] font-bold text-amber-500 mt-1">
+              Ketuk untuk lihat dan kirim rinciannya
+            </Text>
+          </View>
+          <Text className="text-xs font-extrabold text-amber-400">Lihat</Text>
+        </TouchableOpacity>
       )}
 
       {/* Printing indicator */}
@@ -392,6 +651,7 @@ export default function CashierHomeScreen() {
               onPrintKitchenPress={(order) => handlePrint(order, "kitchen")}
               onPrintBillPress={(order) => handlePrint(order, "bill")}
               onEditPress={handleEdit}
+              onCorrectPress={handleCorrect}
             />
           ))}
           {paid.map((o) => (
@@ -401,6 +661,7 @@ export default function CashierHomeScreen() {
               onPrintKitchenPress={(order) => handlePrint(order, "kitchen")}
               onPrintBillPress={(order) => handlePrint(order, "bill")}
               onEditPress={handleEdit}
+              onCorrectPress={handleCorrect}
             />
           ))}
         </ScrollView>
@@ -433,6 +694,38 @@ export default function CashierHomeScreen() {
         }}
       />
 
+      {/* Part of this bill is already settled, so its lines are no longer ours
+          to rearrange. Unlike the batch warnings there is no "carry on anyway"
+          — the database refuses it, so offering the choice would be a lie. */}
+      <Modal
+        visible={partiallyPaidEditOrder !== null}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setPartiallyPaidEditOrder(null)}
+      >
+        <View className="flex-1 bg-black/40 items-center justify-center px-8">
+          <View className="w-full bg-white rounded-3xl px-6 py-5">
+            <Text className="text-base font-extrabold text-gray-700">
+              Sebagian tagihan sudah dibayar
+            </Text>
+            <Text className="text-xs font-bold text-gray-400 mt-2">
+              {partiallyPaidEditOrder?.payments.filter(
+                (p) => p.reopenSeq === partiallyPaidEditOrder.reopenSeq
+              ).length ?? 0}{" "}
+              pelanggan sudah
+              membayar bagiannya, jadi pesanan ini tidak bisa diubah lagi.
+              Selesaikan pembayaran yang tersisa dulu.
+            </Text>
+            <TouchableOpacity
+              onPress={() => setPartiallyPaidEditOrder(null)}
+              className="bg-gray-100 rounded-2xl py-3 items-center mt-5"
+            >
+              <Text className="text-sm font-extrabold text-gray-500">Mengerti</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
       {/* An earlier batch was already stranded — report it before printing. */}
       <BatchWarningDialog
         order={skippedBatchOrder}
@@ -451,6 +744,18 @@ export default function CashierHomeScreen() {
         }}
       />
 
+      <PrintTrailDialog
+        visible={trailOpen}
+        step={trailStep}
+        text={trailText}
+        onClose={() => {
+          setTrailOpen(false);
+          // Dismisses the banner without discarding the trail, which would
+          // otherwise blank the step name through the modal's fade-out.
+          setTrailSeen(true);
+        }}
+      />
+
       {/* Printer selector */}
       <PrinterSelector
         visible={printerSelectorVisible}
@@ -462,6 +767,31 @@ export default function CashierHomeScreen() {
         }}
         onConnected={handlePrinterConnected}
       />
+
+      {/* Reopening a settled bill. The PIN is checked in the database by
+          reopen_order_with_pin, which is also what writes the audit row naming
+          the superadmin who approved it — nothing here is trusted. */}
+      {correctingOrder && (
+        <PinOverrideModal
+          visible
+          orderId={correctingOrder.id}
+          title="Koreksi Pesanan"
+          message="Masukkan PIN manager untuk membuka pesanan ini"
+          onSubmit={async (pin) => {
+            const { success, error } = await reopenOrderWithPin(correctingOrder.id, pin);
+            if (!success) return { success: false, error: error ?? undefined };
+
+            // Straight into the editor: reopening on its own achieves nothing,
+            // and an order sitting open with money already taken against it is
+            // the one state nobody should be left holding by accident.
+            const id = correctingOrder.id;
+            setCorrectingOrder(null);
+            router.push(`/(cashier)/order/${id}`);
+            return { success: true };
+          }}
+          onClose={() => setCorrectingOrder(null)}
+        />
+      )}
     </SafeAreaView>
   );
 }

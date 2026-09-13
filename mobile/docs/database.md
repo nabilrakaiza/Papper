@@ -59,13 +59,26 @@ ON DELETE CASCADE. `quantity` is stock units consumed per one menu item.
 | `customer_name`, `seat` | text | |
 | `discount` | integer | percentage, 0–100 |
 | `status` | text | `'unpaid'` (default), `'paid'`, `'cancelled'` |
-| `method_of_payment` | text | `'QRIS'`, `'Bank Transfer'`, `'Cash'` or `'Debit'` |
 | `is_dine_in` | boolean | false = takeaway |
-| `payment_amount` | integer | cash tendered; for every other method, the order total |
 | `created_at` | timestamptz | |
+| `reopen_seq` | integer | NOT NULL, default 0 — how many times this order has been reopened to correct it. See [Corrections](#corrections) |
 
 `status` has no CHECK constraint — the allowed values are enforced by
 convention and by the `OrderStatus` type in `types/order.ts`.
+
+**There are no payment columns on `orders`.** How an order was paid lives in
+[`order_payments`](#order_payments) and nowhere else. `orders` carried
+`method_of_payment` and `payment_amount` until `20260906100100`; the latter is
+why they went, because it held the cash *tendered* for `Cash` and the *bill* for
+every other method, so it could not be summed into a revenue figure and the
+receipt printed a recomputed total rather than trusting it. Neither column could
+describe a split bill at all.
+
+History was moved across by `20260906100000_backfill_order_payments.sql` before
+the columns were dropped. **`20260906100100` is the one migration in this project
+that is not backwards compatible**: builds predating the split-bill release write
+both columns in `markPaid`, so any tablet still on such a build cannot take
+payment against this schema.
 
 ### `order_items`
 | Column | Type | Notes |
@@ -78,14 +91,45 @@ convention and by the `OrderStatus` type in `types/order.ts`.
 | `is_cancelled` | boolean | |
 | `print_batch` | integer | groups items across repeated kitchen tickets |
 | `notes` | text | |
-| `is_stock_deducted` | boolean | guards against double-deducting |
+| `stock_deducted_qty` | integer | NOT NULL, default 0 — how many units of this line stock has already funded |
+| `is_stock_deducted` | boolean | NOT NULL, default `false`; **derived** from `stock_deducted_qty > 0`, kept for older builds |
+| `customer_num` | integer | NOT NULL, default 1 — which payer settles this line on a split bill |
 
-`is_stock_deducted` has to survive an edit. `updateOrder` replaces an order's
-items by deleting and reinserting them all, so the flag is copied from the row
-being replaced rather than reset — the screens keep it on lines they carry over
-and leave it unset on lines they add, so `deduct_stock_for_order` only ever sees
-genuinely new quantity. Resetting it made each re-save deduct the entire order's
-ingredients again.
+`stock_deducted_qty` has to survive an edit. The screens keep it on lines they
+carry over and leave it at 0 on lines they add, so `deduct_stock_for_order` only
+ever sees genuinely unfunded quantity. Resetting it made each re-save deduct the
+entire order's ingredients again.
+
+**It is a quantity and not a boolean because stock is never returned.** It was
+`is_stock_deducted`, a flag meaning "this row's whole quantity has been taken",
+and `deduct_stock_for_order` took the row's whole quantity whenever it read
+false. That holds until a line is reduced: after cutting a line from 5 to 2 the
+flag still says "deducted", but 5 units left the store and only 2 are recorded.
+Raise it back to 5 and the editor appended the extra 3 as a new row with the flag
+unset — 8 deducted for an order of 5, a shortfall indistinguishable from
+ingredients going missing. Fixed in `20260912090000`.
+
+The quantity says what actually happened. Deduction is the difference,
+`quantity - stock_deducted_qty`; a reduction leaves the column alone, so the row
+carries a funded quantity *larger* than its own quantity, and raising the line
+back costs nothing because the difference is no longer positive. That headroom is
+the right answer for the kitchen too, which is why the editor refills an existing
+row before opening a new print batch: that quantity was already made once.
+
+One residual case is knowingly unfixed: reducing a line far enough to delete a
+whole row throws that row's headroom away with it, so raising the quantity
+afterwards deducts again. Recorded stock only ever ends up lower than reality,
+which is the safe direction and the one this project accepts everywhere else.
+
+`is_stock_deducted` is still there and is now **derived** — `derive_stock_deducted_flag`,
+a BEFORE trigger, sets it from the quantity on every write, so the two cannot
+disagree. It was kept rather than dropped because `20260906100100` already
+stranded older builds once and doing it again to a till that takes money all day
+is not worth the tidiness. Clients read and write `stock_deducted_qty`; anything
+still writing the boolean has its value discarded and replaced, not rejected.
+
+Line items are edited through `save_order_items`, **not** by replacing the whole
+set. See [Editing line items](#editing-line-items).
 
 **Stock is never returned.** Reducing a line's quantity does not credit stock
 back, and neither does cancelling an order — `cancel_order_with_pin_v2` flips
@@ -107,6 +151,125 @@ deducts stock or blocks an order for a shortage. It is otherwise an ordinary
 line — it counts toward the subtotal, discount and tax, prints on kitchen
 tickets and receipts, and appears in the sales reports, all of which read the
 denormalised `name`/`price`/`quantity` rather than joining `menus`.
+
+#### Editing line items
+
+`save_order_items(p_order_id, p_items jsonb, p_force boolean)` is the only path
+that edits an order's lines. A payload entry carrying an `id` updates that row,
+one without an `id` is inserted, and any row absent from the payload is deleted.
+**Columns the payload does not mention are left untouched.**
+
+That last property is the point. It replaced a delete-everything-and-reinsert,
+which had to restate every column and therefore destroyed any column it forgot.
+That produced both of the bugs described above and below — `is_stock_deducted`
+reset on every save, and a revert path that carried a `category` key
+`order_items` has no column for. A wholesale rewrite re-arms that trap every
+time a column is added, and `customer_num` is a column that was added.
+
+The RPC calls `deduct_stock_for_order` as its final act, inside the same
+transaction, so a shortage aborts the whole edit. This retired a hand-rolled
+revert that issued its own compensating writes and could itself fail, logging
+`CRITICAL: Failed to revert order items` and leaving the order in neither state.
+
+It is `SECURITY INVOKER` — cashiers already hold every grant it needs, so RLS
+and both `order_items` triggers apply to its writes exactly as to a direct one.
+It is not a way around the paid-order lock or the per-payer lock.
+
+### `order_payments`
+**The record of how an order was paid.** One row for an ordinary order, one per
+payer for a split bill, none at all while the order is still open.
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `id` | bigint PK | identity |
+| `order_id` | bigint | → `orders(id)` ON DELETE CASCADE |
+| `customer_num` | integer | matches `order_items.customer_num`; unique per order |
+| `customer_label` | text | the name the cashier typed for this payer, for the receipt |
+| `amount` | integer | this payer's share of the bill — the revenue figure. **Negative on a correction that handed money back.** `>= 0` on an original payment, because a 100% discount is a real bill of nothing; `<> 0` on a correction, because a row recording no movement is not written at all |
+| `amount_tendered` | integer | cash handed over, for change. NULL for every other method |
+| `method_of_payment` | text | one of the four real methods; never `'Split'` |
+| `reopen_seq` | integer | NOT NULL, default 0 — which correction round this row settles |
+| `approved_by` | uuid | → `profiles(id)`, nullable — the superadmin whose PIN authorised the correction. Stamped by the database, never by the client |
+| `created_at` | timestamptz | |
+
+`amount` and `amount_tendered` are deliberately separate, which is the whole
+point of the table. The `orders.payment_amount` it replaced conflated them: for
+cash it held the tender, so it overstated takings by whatever change was given
+and could not be summed. `order_payments.amount` is always the bill and is
+directly summable; `amount_tendered` is only ever cash actually handed over.
+
+Writing order for an ordinary payment is **payment row first, then close the
+order**. `prevent_locked_order_payment_change` refuses any write against an
+order that is already `paid`, so closing first would lock the order against the
+very row that records how it was paid.
+
+**A payment row locks that payer's line items**, even while the order as a whole
+is still `unpaid`. Payment used to lock everything at once, but a split order
+stays open until the last payer settles — without this, the first payer's items
+would still be editable after they had paid and left, free to disagree with the
+receipt in their hand. Fulfilment bookkeeping (`is_sent`, `print_batch`,
+`notes`) stays open, exactly as on a fully paid order, because kitchen reprints
+need it.
+
+Splitting a bill never moves anything between orders: it is an `UPDATE` of
+`order_items.customer_num`, so it reverses cleanly, stock is untouched and no
+kitchen ticket is disturbed. Sibling orders were considered and rejected —
+cashiers have no `DELETE` grant on `orders`, so carving an order into siblings
+could never be undone at the till.
+
+#### Corrections
+
+A customer pays and only then realises the bill is wrong. `reopen_order_with_pin`
+puts the order back to `'unpaid'` and increments `orders.reopen_seq`; the lines
+are corrected through the ordinary editor, and the difference is settled as one
+more row here.
+
+**There is no `'reopened'` status.** A fourth value would have to be taught to
+every screen, filter and report that switches on status, and an order in
+mid-correction would be neither paid nor unpaid in any of them. `'unpaid'`
+already means "open, owes money", which is exactly what a correction is.
+
+**`order_payments` is append-only.** A correction adds a row; it never rewrites
+or deletes the one already there. Money handed back is a negative `amount`.
+Rewriting the original instead would break reconciliation: paid Rp 100.000 by
+QRIS, corrected to Rp 80.000, Rp 20.000 back in cash — recorded as "QRIS 80.000"
+the provider's settlement says 100.000 and the drawer is 20.000 short with
+nothing explaining either. Two rows, QRIS +100.000 and Cash −20.000, describe
+what happened and net to the right revenue.
+
+The payoff is that **every report stays correct with no query change**. Anything
+summing `amount` — `admin/sales.tsx` per method, `cashier/sales.tsx` for what has
+been collected, `amountCollected()` — nets a correction out automatically. The
+headline figure comes from items × discount, which the edit already corrected, so
+headline and breakdown still agree. Note that a negative row still counts as one
+transaction in the per-method *count*, which is honest (it was a real drawer
+movement) but worth knowing when reading that column.
+
+**There is no `kind` column.** The sign of `amount` already says which way the
+money went, and within one round a payer either owes more or is owed — never
+both. So the unique key is `(order_id, customer_num, reopen_seq)`: one row per
+payer per round, which is also what preserves the double-tap and second-tablet
+guard the old `(order_id, customer_num)` key was doing.
+
+**The per-payer item lock is scoped to the round.** A payer's lines are frozen
+while they hold a payment row *at the order's current `reopen_seq`*. On an order
+that has never been corrected everything is round 0 and the behaviour is exactly
+what shipped with the split bill; after a reopen the old rows sit at round 0 while
+the order is at round 1, so nothing is locked and the correction can be made.
+
+**The editor is payer-aware.** It keys its quantities by `(menu_id, payer)`
+rather than by dish, so on a split bill the cashier picks whose line to change
+and each person's rows are diffed against their own numbers. Before that it saw
+one pooled figure per dish — "Kopi 4" for two people holding two each — so
+reducing to 3 had to guess whose row to trim, and an added item always landed on
+payer 1 with no way to charge anyone else. Re-dividing afterwards is also allowed
+during a correction (see `canResplit`), which is safe only because
+`payerNumbers` keeps anyone with payment history in the payer set.
+
+**Stock is not credited back** when a correction removes a line — the same rule
+as everywhere else in this table. The payment screen says so out loud, because
+"we never ordered this" is the one case where a cashier might reasonably expect
+otherwise.
 
 ### `expenses`
 Written by the `log_stock_expense` trigger; deleted only by `delete_expense_entry`
@@ -188,7 +351,7 @@ who could not read the record of them. It failed silently, as an empty screen.
 | `order_id` | bigint | nulled out if the order is hard-deleted, so the trail survives |
 | `cashier_id` | uuid | who attempted it (`auth.uid()`) |
 | `admin_id` | uuid | whose PIN matched; null on failure |
-| `action` | text | `cancel`, `delete`, `cancel_blocked`, `delete_blocked` |
+| `action` | text | `cancel`, `delete`, `reopen`, and the `_blocked` variant of each |
 | `success` | boolean | |
 | `created_at` | timestamptz | |
 
@@ -202,11 +365,15 @@ Failed attempts are recorded deliberately — the lockout counts them.
 | `check_stock_for_order(jsonb)` | jsonb | `{shortages: [...]}`, no writes |
 | `deduct_stock_for_order(int, bool)` | void | decrements stock; `p_force` skips the shortage check |
 | `log_stock_expense()` | trigger | logs an `expenses` row on insert, and on any quantity increase; skipped when `app.stock_correction` is set |
-| `prevent_direct_cancel()` | trigger | blocks `status → 'cancelled'` without the PIN flag |
-| `prevent_locked_order_item_change()` | trigger | freezes `order_items` on paid/cancelled orders |
+| `prevent_direct_cancel()` | trigger | blocks `status → 'cancelled'`, and `paid`/`cancelled` → `'unpaid'`, without the PIN flag |
+| `prevent_locked_order_item_change()` | trigger | freezes `order_items` on paid/cancelled orders, and per payer within the current correction round |
+| `derive_stock_deducted_flag()` | trigger | keeps the legacy `is_stock_deducted` boolean in step with `stock_deducted_qty` |
+| `stamp_correction_approver()` | trigger | copies the approving superadmin onto a correction's payment row from `order_override_log` |
 | `pin_attempts_exhausted(uuid)` | boolean | 5 failures in 15 minutes |
 | `cancel_order_with_pin(bigint, text)` | boolean | **legacy**, kept for older installs; superadmin PIN only |
 | `cancel_order_with_pin_v2(bigint, text)` | jsonb | current; returns a reason on failure; superadmin PIN only |
+| `reopen_order_with_pin(bigint, text)` | jsonb | puts a paid order back to `'unpaid'` and bumps `reopen_seq`, so its lines can be corrected; superadmin PIN only; shares the cancellation lockout |
+| `override_log_report(timestamptz, timestamptz)` | jsonb | `order_override_log` over a period with cashier and approver names resolved; `admin` and `superadmin`. Exists because `profiles` is own-row-only, so a client reading the log directly gets UUIDs |
 | `delete_order_with_pin(bigint, text)` | boolean | hard delete; not wired to any UI; superadmin PIN only |
 | `toggle_menu_availability(bigint)` | void | flips `menus.available`; callable by any authenticated staff account, since `cashier` has no general write access to `menus` |
 | `correct_stock(bigint, numeric, integer, text)` | void | sets a `stock` row's quantity/price directly (not additive); superadmin-only; sets `app.stock_correction` so the restock trigger doesn't log it as a purchase |
@@ -263,6 +430,9 @@ Retire v1 once every device is on a current build.
 | `after_stock_change` | `stock` | `log_stock_expense` |
 | `enforce_cancel_via_rpc` | `orders` | `prevent_direct_cancel` |
 | `enforce_items_locked_after_payment` | `order_items` | `prevent_locked_order_item_change` |
+| `enforce_payments_locked_after_payment` | `order_payments` | `prevent_locked_order_payment_change` |
+| `derive_stock_deducted_flag` | `order_items` | `derive_stock_deducted_flag` |
+| `stamp_correction_approver` | `order_payments` | `stamp_correction_approver` |
 
 ## Migrations
 
@@ -280,6 +450,13 @@ Migrations are written to be idempotent (`if not exists`, `create or replace`,
 The one exception is `CREATE POLICY`, which has no `IF NOT EXISTS` in Postgres —
 the baseline deliberately omits policies that later migrations create.
 
-The baseline has **not** been verified by replaying it onto an empty database.
-It covers `public` only: Auth settings, Storage config and anything outside that
-schema must be recreated by hand.
+The full chain has been replayed onto an empty Postgres 17 once, in
+`20260906091500`'s development, and applies cleanly in filename order. That run
+had to be given the prerequisites Supabase normally provides: the `anon`,
+`authenticated` and `service_role` roles, an `extensions` schema holding
+`pgcrypto` and `uuid-ossp`, and an `auth` schema with a `users` table and stub
+`auth.uid()` / `auth.role()`. So the migrations are known to be self-consistent,
+but standing up a real project still needs a real Supabase.
+
+The baseline covers `public` only: Auth settings, Storage config and anything
+outside that schema must be recreated by hand.

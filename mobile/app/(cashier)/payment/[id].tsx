@@ -11,10 +11,29 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { router, useLocalSearchParams } from "expo-router";
-import { ChevronLeft } from "lucide-react-native";
+import { ChevronLeft, Users, Pencil, Check, Printer } from "lucide-react-native";
 import { useOrders } from "../../../context/OrderContext";
 import { TAX_RATE, orderTotal } from "../../../lib/constants";
 import { groupItems } from "../../../lib/orderItems";
+import { unprintedLatestBatch } from "../../../lib/receiptLayout";
+import {
+  amountCollected,
+  canResplit,
+  collectedFromPayer,
+  defaultPayerLabel,
+  isCorrected,
+  isSplit,
+  itemsForPayer,
+  outstandingForPayer,
+  paymentFor,
+  payerNumbers,
+  payerTotal,
+  unpaidPayers,
+} from "../../../lib/splitBill";
+import { useReceiptPrinter } from "../../../hooks/useReceiptPrinter";
+import PrinterSelector from "../../../components/PrinterSelector";
+import ConfirmDialog from "@/components/ConfirmDialog";
+import { Order } from "../../../types/order";
 
 type PaymentMethod = "QRIS" | "Bank Transfer" | "Cash" | "Debit";
 
@@ -27,6 +46,8 @@ const PAYMENT_METHOD_LABELS: Record<PaymentMethod, string> = {
   Debit: "Debit",
 };
 
+const PAYMENT_OPTIONS: PaymentMethod[] = ["QRIS", "Bank Transfer", "Debit", "Cash"];
+
 const formatRupiahInput = (digits: string) => {
   if (!digits) return "";
   return digits.replace(/\B(?=(\d{3})+(?!\d))/g, ".");
@@ -36,17 +57,310 @@ function formatRupiah(amount: number): string {
   return "Rp " + Math.round(amount).toLocaleString("id-ID");
 }
 
+function MethodPicker({
+  value,
+  onChange,
+  disabled,
+}: {
+  value: PaymentMethod;
+  onChange: (m: PaymentMethod) => void;
+  disabled?: boolean;
+}) {
+  return (
+    <>
+      {PAYMENT_OPTIONS.map((method) => {
+        const isSelected = value === method;
+        return (
+          <TouchableOpacity
+            key={method}
+            className="flex-row items-center mb-3"
+            onPress={() => onChange(method)}
+            disabled={disabled}
+            activeOpacity={0.7}
+          >
+            <View
+              className={`h-6 w-6 rounded-full border-2 items-center justify-center mr-3 ${
+                isSelected ? "border-green-400" : "border-gray-300"
+              }`}
+            >
+              {isSelected && <View className="h-3 w-3 rounded-full bg-green-400" />}
+            </View>
+            <Text
+              className={`text-sm font-bold ${
+                isSelected ? "text-gray-900" : "text-gray-500"
+              }`}
+            >
+              {PAYMENT_METHOD_LABELS[method]}
+            </Text>
+          </TouchableOpacity>
+        );
+      })}
+    </>
+  );
+}
+
+/**
+ * One payer's share, on a split bill.
+ *
+ * Collapses to a summary once they have paid — their line items are frozen in
+ * the database at that point, so there is nothing left here to change.
+ */
+function PayerCard({
+  order,
+  customerNum,
+  discountPct,
+  busy,
+  onPay,
+  onReprint,
+}: {
+  order: Order;
+  customerNum: number;
+  discountPct: number;
+  busy: boolean;
+  onPay: (args: {
+    customerNum: number;
+    label: string;
+    method: PaymentMethod;
+    amount: number;
+    tendered: number | null;
+  }) => void;
+  onReprint: (customerNum: number) => void;
+}) {
+  const paid = paymentFor(order, customerNum);
+  const share = payerTotal(order, customerNum, discountPct);
+  const items = groupItems(itemsForPayer(order, customerNum));
+
+  // On a correction this payer has already handed something over, so what moves
+  // now is the difference: positive means they owe more, negative means it goes
+  // back to them. On an order that has never been corrected there is nothing in
+  // an earlier round, so `due` is simply their share.
+  const correcting = isCorrected(order);
+  const alreadyPaid = collectedFromPayer(order, customerNum);
+  const due = share - alreadyPaid;
+
+  const [label, setLabel] = useState("");
+  const [method, setMethod] = useState<PaymentMethod>("Cash");
+  const [tendered, setTendered] = useState("");
+  const [error, setError] = useState("");
+
+  const cashGiven = parseInt(tendered, 10) || 0;
+  const changeDue = cashGiven - due;
+
+  if (paid) {
+    return (
+      <View className="bg-green-500 rounded-3xl px-5 py-4 mb-3 shadow shadow-green-600/30">
+        <View className="flex-row items-center justify-between">
+          <View className="flex-row items-center gap-2">
+            <Check size={16} color="white" />
+            <Text className="text-sm font-extrabold text-white">
+              {paid.customerLabel || defaultPayerLabel(customerNum)}
+            </Text>
+          </View>
+          <Text className="text-sm font-extrabold text-white">
+            {formatRupiah(paid.amount)}
+          </Text>
+        </View>
+
+        <Text className="text-xs font-bold text-white/70 mt-1">
+          {PAYMENT_METHOD_LABELS[paid.methodOfPayment as PaymentMethod] ??
+            paid.methodOfPayment}
+          {paid.methodOfPayment === "Cash" && paid.amountTendered != null
+            ? ` · bayar ${formatRupiah(paid.amountTendered)} · kembali ${formatRupiah(
+                paid.amountTendered - paid.amount
+              )}`
+            : ""}
+        </Text>
+
+        <TouchableOpacity
+          onPress={() => onReprint(customerNum)}
+          disabled={busy}
+          className="flex-row items-center gap-1.5 self-start mt-3 bg-white/20 rounded-xl px-3 py-1.5"
+        >
+          <Printer size={13} color="white" />
+          <Text className="text-xs font-extrabold text-white">Cetak Ulang</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
+  // A correction that left this payer's share exactly as it was moves no money,
+  // and order_payments refuses a row recording nothing happening. Say so rather
+  // than offering a payment form that cannot be submitted.
+  if (correcting && due === 0) {
+    return (
+      <View className="bg-gray-100 rounded-3xl px-5 py-4 mb-3">
+        <Text className="text-sm font-extrabold text-gray-500">
+          {defaultPayerLabel(customerNum)}
+        </Text>
+        <Text className="text-xs font-bold text-gray-400 mt-1">
+          Bagiannya tidak berubah — tidak ada selisih untuk pelanggan ini.
+        </Text>
+      </View>
+    );
+  }
+
+  const handlePay = () => {
+    setError("");
+
+    // Only money coming in is tendered. When the difference goes back to the
+    // customer the cashier hands over exactly that, so there is nothing to
+    // check and no change to work out.
+    if (method === "Cash" && due > 0 && changeDue < 0) {
+      setError(`Pembayaran kurang dari total. Butuh ${formatRupiah(-changeDue)} lagi.`);
+      return;
+    }
+
+    onPay({
+      customerNum,
+      label: label.trim() || defaultPayerLabel(customerNum),
+      method,
+      amount: due,
+      tendered: method === "Cash" ? cashGiven : null,
+    });
+  };
+
+  return (
+    <View className="bg-white rounded-3xl px-5 py-5 mb-3 shadow-sm">
+      <View className="flex-row items-center justify-between mb-3">
+        <View className="border-2 border-gray-200 rounded-xl px-3 py-1.5 bg-gray-50">
+          <Text className="text-sm font-bold text-gray-700">
+            {defaultPayerLabel(customerNum)}
+          </Text>
+        </View>
+        <Text
+          className={`text-base font-black ${
+            due < 0 ? "text-red-600" : "text-gray-900"
+          }`}
+        >
+          {formatRupiah(Math.abs(due))}
+        </Text>
+      </View>
+
+      {correcting && (
+        <View className="bg-orange-50 rounded-xl px-3 py-2 mb-3">
+          <Text className="text-[11px] font-bold text-orange-800">
+            Sudah dibayar {formatRupiah(alreadyPaid)} · bagian baru{" "}
+            {formatRupiah(share)}
+          </Text>
+          <Text className="text-[11px] font-extrabold text-orange-900 mt-0.5">
+            {due > 0
+              ? `Kurang bayar ${formatRupiah(due)}`
+              : `Kembalikan ${formatRupiah(-due)}`}
+          </Text>
+        </View>
+      )}
+
+      <TextInput
+        className="bg-gray-50 border-2 border-gray-100 rounded-xl px-3 py-2 text-sm font-bold text-gray-900 mb-3"
+        placeholder="Nama (opsional, untuk struk)"
+        placeholderTextColor="#9ca3af"
+        value={label}
+        onChangeText={setLabel}
+        editable={!busy}
+      />
+
+      {items.length === 0 ? (
+        // Every line of theirs was removed by the correction. They are still a
+        // payer because they have already paid, and what they are owed is all
+        // of it — see payerNumbers.
+        <Text className="text-xs font-bold text-red-600 mb-1.5">
+          Semua itemnya dihapus — seluruh pembayarannya harus dikembalikan.
+        </Text>
+      ) : (
+        items.map((item) => (
+          <View key={item.key} className="flex-row justify-between mb-1.5">
+            <Text className="text-xs font-bold text-gray-500 flex-1 pr-2">
+              {item.quantity}x {item.name}
+            </Text>
+            <Text className="text-xs font-bold text-gray-500">
+              {formatRupiah(item.price * item.quantity)}
+            </Text>
+          </View>
+        ))
+      )}
+
+      <View className="h-px bg-gray-100 my-3" />
+
+      <MethodPicker value={method} onChange={setMethod} disabled={busy} />
+
+      {method === "Cash" && due > 0 && (
+        <View className="mb-2">
+          <Text className="text-sm font-bold text-gray-700 mb-2">
+            Jumlah Pembayaran
+          </Text>
+          <TextInput
+            className="border-2 border-gray-200 rounded-xl px-4 py-2.5 text-sm font-semibold text-gray-900 bg-gray-50"
+            placeholder="0"
+            placeholderTextColor="#9ca3af"
+            keyboardType="numeric"
+            value={tendered ? `Rp ${formatRupiahInput(tendered)}` : ""}
+            onChangeText={(text) => setTendered(text.replace(/[^0-9]/g, ""))}
+            editable={!busy}
+          />
+          {!!tendered && (
+            <Text
+              className={`text-xs font-bold mt-2 ${
+                changeDue < 0 ? "text-red-500" : "text-gray-500"
+              }`}
+            >
+              {changeDue < 0
+                ? `Kurang ${formatRupiah(-changeDue)}`
+                : `Kembalian ${formatRupiah(changeDue)}`}
+            </Text>
+          )}
+        </View>
+      )}
+
+      {!!error && (
+        <View className="mb-2 bg-red-50 border border-red-100 rounded-2xl px-4 py-2.5">
+          <Text className="text-xs font-bold text-red-500 text-center">{error}</Text>
+        </View>
+      )}
+
+      <TouchableOpacity
+        onPress={handlePay}
+        disabled={busy}
+        className={`rounded-2xl py-3 items-center ${
+          busy ? "bg-gray-300" : "bg-green-400"
+        }`}
+      >
+        <Text className="text-sm font-extrabold text-white">
+          {due < 0 ? "Kembalikan & Cetak Struk" : "Bayar & Cetak Struk"}
+        </Text>
+      </TouchableOpacity>
+    </View>
+  );
+}
+
 export default function PaymentScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
-  const { orders, markPaid } = useOrders();
+  const {
+    orders,
+    markPaid,
+    recordPayment,
+    completeSplitPayment,
+    closeCorrectedOrder,
+    updateOrder,
+  } =
+    useOrders();
   const order = orders.find((o) => o.id === Number(id));
 
   const [discount, setDiscount] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [methodOfPayment, setMethodOfPayment] = useState<PaymentMethod>("Cash");
-  const paymentOptions: PaymentMethod[] = ["QRIS", "Bank Transfer", "Debit", "Cash"];
   const [paymentAmount, setPaymentAmount] = useState("");
+  const [editWarning, setEditWarning] = useState(false);
+
+  const {
+    printing,
+    printError,
+    setPrintError,
+    selectorVisible,
+    setSelectorVisible,
+    printCustomerReceipt,
+    handlePrinterConnected,
+  } = useReceiptPrinter();
 
   if (!order) {
     return (
@@ -62,17 +376,61 @@ export default function PaymentScreen() {
   // Prevent discount from exceeding 100% or dropping below 0%
   const safeDiscountPct = Math.min(Math.max(0, discountPct), 100);
 
+  const split = isSplit(order);
+  const collected = amountCollected(order);
+  const correcting = isCorrected(order);
+
+  // Once someone has paid, the discount they were charged against is fixed —
+  // changing it now would mean earlier payers settled on a different basis than
+  // the ones still to pay. From that point the saved figure is the only one
+  // that counts, and the field is closed.
+  //
+  // A correction does not reopen it. The original payer settled against this
+  // discount and has their receipt; altering it now would rewrite the basis of
+  // a bill that has already been handed over.
+  const discountLocked = order.payments.length > 0;
+  const effectiveDiscount = discountLocked ? order.discount : safeDiscountPct;
+
+  // Whether the line items are actually frozen, which is a different question
+  // from whether the discount is. The database locks a payer's lines only while
+  // they have settled in the order's CURRENT round, so a corrected order has a
+  // locked discount and perfectly editable lines — which is the entire point of
+  // reopening it.
+  const linesLocked = order.payments.some((p) => p.reopenSeq === order.reopenSeq);
+
   // Shared with every report and the receipt, so what the cashier is shown here
   // is exactly what the books will say later.
-  const total = orderTotal(subtotal, safeDiscountPct);
+  const total = orderTotal(subtotal, effectiveDiscount);
+
+  // The net already taken in earlier rounds. Zero unless this order is being
+  // corrected, so `dueNow` is the plain total for everything else.
+  const collectedBefore = order.payments
+    .filter((p) => p.reopenSeq < order.reopenSeq)
+    .reduce((sum, p) => sum + p.amount, 0);
+
+  // Signed: positive is owed to the cafe, negative goes back to the customer.
+  const dueNow = total - collectedBefore;
+
+  // A payer whose share came out unchanged has nothing to settle and will never
+  // get a row for this round, so waiting for one would leave the order stuck
+  // open. Only applied to corrections: on a first settlement a bill of nothing
+  // is still a bill somebody has to be recorded as having paid.
+  const stillOwed = unpaidPayers(order).filter(
+    (n) => !correcting || outstandingForPayer(order, n, effectiveDiscount) !== 0
+  );
 
   const cashGiven = parseInt(paymentAmount, 10) || 0;
-  const changeDue = cashGiven - total;
+  const changeDue = cashGiven - dueNow;
+
+  const busy = saving || printing;
 
   const handleConfirm = async () => {
     setError("");
 
-    if (methodOfPayment === "Cash" && changeDue < 0) {
+    // Only money coming in is tendered. When the correction sends money back
+    // the cashier hands over exactly the difference, so there is nothing to
+    // check here and no change to give.
+    if (methodOfPayment === "Cash" && dueNow > 0 && changeDue < 0) {
       setError(
         `Pembayaran kurang dari total. Butuh ${formatRupiah(-changeDue)} lagi.`
       );
@@ -81,27 +439,164 @@ export default function PaymentScreen() {
 
     setSaving(true);
 
-    // Both branches used to declare their own block-scoped `error`, so the
-    // check below silently read the `error` state instead of the result of
-    // markPaid. A second attempt after a "kurang" error therefore paid the
-    // order, then re-showed the stale message and never navigated back.
-    //
-    // The non-cash branch also recorded orderTotal(order), which recomputes
-    // from the *saved* discount and so ignored whatever was typed here.
-    const { error: saveError } = await markPaid(
-      order.id,
-      safeDiscountPct,
-      methodOfPayment,
-      methodOfPayment === "Cash" ? cashGiven : total
-    );
+    try {
+      // Both branches used to declare their own block-scoped `error`, so the
+      // check below silently read the `error` state instead of the result of
+      // markPaid. A second attempt after a "kurang" error therefore paid the
+      // order, then re-showed the stale message and never navigated back.
+      //
+      // The non-cash branch also recorded orderTotal(order), which recomputes
+      // from the *saved* discount and so ignored whatever was typed here.
+      // markPaid works the difference out for itself from the order's own
+      // payment rows — what is passed here is only the cash tendered, which it
+      // needs to record change and cannot derive.
+      const { error: saveError } = await markPaid(
+        order.id,
+        effectiveDiscount,
+        methodOfPayment,
+        methodOfPayment === "Cash" ? cashGiven : dueNow
+      );
 
-    if (saveError) {
-      setError(saveError);
+      if (saveError) {
+        setError(saveError);
+        return;
+      }
+
+      router.back();
+    } catch (e) {
+      console.error("Failed to confirm payment:", e);
+      setError(
+        "Tidak yakin pembayaran tercatat — periksa koneksi, lalu muat ulang daftar pesanan sebelum menagih lagi."
+      );
+    } finally {
+      // Cleared on the success path too. It used to be left set and carried out
+      // by the navigation, which works right up until the screen is still
+      // mounted when something throws.
       setSaving(false);
+    }
+  };
+
+  /**
+   * Record one payer's share, then print it.
+   *
+   * The discount is persisted before the first payment lands, because from that
+   * moment it is frozen and every remaining share is computed from the saved
+   * figure rather than from whatever is still typed on this screen.
+   */
+  const handlePayerPaid = async (args: {
+    customerNum: number;
+    label: string;
+    method: PaymentMethod;
+    amount: number;
+    tendered: number | null;
+  }) => {
+    setError("");
+    setSaving(true);
+
+    // try/finally so `saving` always clears: every button on this screen is
+    // disabled while it is set, so one throw on the way out strands the whole
+    // payment screen mid-transaction with no error and no way back but force-
+    // closing the app.
+    let payment;
+
+    try {
+      if (!discountLocked && safeDiscountPct !== order.discount) {
+        const { error: discountError } = await updateOrder(
+          order.id,
+          { discount: safeDiscountPct },
+          true
+        );
+
+        if (discountError) {
+          setError(discountError);
+          return;
+        }
+      }
+
+      const { error: payError, payment: recorded } = await recordPayment(order.id, {
+        customerNum: args.customerNum,
+        customerLabel: args.label,
+        amount: args.amount,
+        amountTendered: args.tendered,
+        methodOfPayment: args.method,
+      });
+
+      if (payError) {
+        setError(payError);
+        return;
+      }
+
+      payment = recorded;
+    } catch (e) {
+      console.error("Failed to take payment:", e);
+      // Same care as recordPayment's own catch: not "it failed", because the
+      // write may have landed before the throw. A cashier told the payment
+      // failed takes the money again.
+      setError(
+        "Tidak yakin pembayaran tercatat — periksa koneksi, lalu muat ulang daftar pesanan sebelum menagih lagi."
+      );
       return;
+    } finally {
+      setSaving(false);
     }
 
-    router.back();
+    // Printed from the row that was just written, not from `orders` — that is
+    // still the pre-refetch array inside this closure, so looking the payment
+    // up there would find nothing and the receipt would silently never print.
+    // The order's own items are unaffected by a payment, so the copy in hand is
+    // the right one to filter.
+    //
+    // A print failure is surfaced on its own: the money is recorded either way,
+    // and reporting the payment as failed would have the cashier take it twice.
+    if (payment) await printCustomerReceipt(order, payment);
+  };
+
+  const printShare = async (customerNum: number) => {
+    const payment = paymentFor(order, customerNum);
+    if (!payment) return;
+    await printCustomerReceipt(order, payment);
+  };
+
+  const handleComplete = async () => {
+    setError("");
+    setSaving(true);
+
+    try {
+      // Same write either way; the two are kept apart because they mean
+      // different things and report different things when they fail. A split
+      // closes because the last payer settled, a correction because the
+      // difference has moved.
+      const close = correcting ? closeCorrectedOrder : completeSplitPayment;
+
+      const { error: closeError } = await close(order.id, effectiveDiscount);
+
+      if (closeError) {
+        setError(closeError);
+        return;
+      }
+
+      router.back();
+    } catch (e) {
+      console.error("Failed to close split order:", e);
+      setError("Terjadi kesalahan. Periksa koneksi Anda.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const openEditor = () => router.push(`/(cashier)/order/${order.id}`);
+
+  // Adding items creates a batch above the current one, and a kitchen ticket
+  // only ever covers the newest batch — so anything still unprinted would be
+  // stranded the moment the cashier saves. The order list guards its own edit
+  // button the same way; a second door into the editor without this check would
+  // quietly reopen the hole that guard was added to close.
+  const handleEdit = () => {
+    if (unprintedLatestBatch(order).length > 0) {
+      setEditWarning(true);
+      return;
+    }
+    openEditor();
   };
 
   const handleDiscountChange = (text: string) => {
@@ -167,6 +662,49 @@ export default function PaymentScreen() {
           </Text>
         </View>
 
+        {/* Shortcuts out of this screen. Both were reachable only by going back
+            to the order list first, which is two taps and a scroll away from
+            the order already on screen. */}
+        <View className="flex-row gap-2 mb-4">
+          <TouchableOpacity
+            onPress={handleEdit}
+            disabled={busy || linesLocked}
+            className={`flex-1 flex-row items-center justify-center gap-2 rounded-2xl py-3 border-2 ${
+              busy || linesLocked
+                ? "border-gray-200 bg-gray-100"
+                : "border-yellow-400 bg-yellow-50"
+            }`}
+          >
+            <Pencil size={15} color={busy || linesLocked ? "#bbb" : "#eab308"} />
+            <Text
+              className={`text-sm font-extrabold ${
+                busy || linesLocked ? "text-gray-400" : "text-yellow-600"
+              }`}
+            >
+              Edit Pesanan
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            onPress={() => router.push(`/(cashier)/split/${order.id}`)}
+            disabled={busy || !canResplit(order)}
+            className={`flex-1 flex-row items-center justify-center gap-2 rounded-2xl py-3 border-2 ${
+              busy || !canResplit(order)
+                ? "border-gray-200 bg-gray-100"
+                : "border-blue-400 bg-blue-50"
+            }`}
+          >
+            <Users size={15} color={busy || !canResplit(order) ? "#bbb" : "#3b82f6"} />
+            <Text
+              className={`text-sm font-extrabold ${
+                busy || !canResplit(order) ? "text-gray-400" : "text-blue-600"
+              }`}
+            >
+              {split ? "Ubah Pembagian" : "Split Bill"}
+            </Text>
+          </TouchableOpacity>
+        </View>
+
         {/* Order summary */}
         <View className="bg-yellow-100 rounded-3xl px-5 py-5 shadow-sm">
           <View className="border-2 border-gray-200 rounded-xl px-3 py-1.5 self-start mb-4 bg-white/60">
@@ -193,16 +731,24 @@ export default function PaymentScreen() {
               <Text className="text-sm font-bold text-gray-600">Diskon</Text>
             </View>
             <TextInput
-              className="bg-white border-2 border-gray-100 rounded-xl px-3 py-1.5 font-bold text-sm text-gray-900 w-20 text-center"
-              value={discount}
+              className={`border-2 border-gray-100 rounded-xl px-3 py-1.5 font-bold text-sm w-20 text-center ${
+                discountLocked ? "bg-gray-100 text-gray-400" : "bg-white text-gray-900"
+              }`}
+              value={discountLocked ? String(order.discount) : discount}
               onChangeText={handleDiscountChange}
               keyboardType="numeric"
               placeholder="0"
               placeholderTextColor="#ccc"
-              editable={!saving}
+              editable={!busy && !discountLocked}
             />
             <Text className="text-sm font-bold text-gray-500">%</Text>
           </View>
+
+          {discountLocked && (
+            <Text className="text-[10px] font-bold text-gray-400 mb-3 -mt-1">
+              Terkunci — sudah ada pelanggan yang membayar dengan diskon ini.
+            </Text>
+          )}
 
           {/* Tax */}
           <View className="flex-row items-center gap-3 mb-3">
@@ -220,99 +766,195 @@ export default function PaymentScreen() {
               Total : {formatRupiah(total)}
             </Text>
           </View>
-        </View>
 
-        {/* Payment Method UI */}
-        <View className="bg-white rounded-3xl px-5 py-5 shadow-sm mt-4">
-          <View className="border-2 border-gray-200 rounded-xl px-3 py-1.5 self-start mb-4 bg-gray-50">
-            <Text className="text-sm font-bold text-gray-700">Metode Pembayaran</Text>
-          </View>
-
-          {paymentOptions.map((method) => {
-            const isSelected = methodOfPayment === method;
-
-            return (
-              <TouchableOpacity
-                key={method}
-                className="flex-row items-center mb-3"
-                onPress={() => setMethodOfPayment(method)}
-                activeOpacity={0.7}
-              >
-                {/* Custom Radio Circle */}
-                <View 
-                  className={`h-6 w-6 rounded-full border-2 items-center justify-center mr-3 ${
-                    isSelected ? 'border-green-400' : 'border-gray-300'
-                  }`}
-                >
-                  {isSelected && <View className="h-3 w-3 rounded-full bg-green-400" />}
-                </View>
-                
-                {/* Radio Text */}
-                <Text 
-                  className={`text-sm font-bold ${
-                    isSelected ? 'text-gray-900' : 'text-gray-500'
-                  }`}
-                >
-                  {PAYMENT_METHOD_LABELS[method]}
-                </Text>
-              </TouchableOpacity>
-            );
-          })}
-        </View>
-          
-        {/* Handle cash payment */}
-        {methodOfPayment === "Cash" && (
-          <View className="mt-1">
-            <Text className="text-sm font-bold text-gray-700 mb-2">Jumlah Pembayaran</Text>
-            <TextInput
-              className="border-2 border-gray-200 rounded-xl px-4 py-2.5 text-sm font-semibold text-gray-900 bg-gray-50"
-              placeholder="0"
-              placeholderTextColor="#9ca3af"
-              keyboardType="numeric"
-              value={paymentAmount ? `Rp ${formatRupiahInput(paymentAmount)}` : ""}
-              onChangeText={(text) => setPaymentAmount(text.replace(/[^0-9]/g, ""))}
-              editable={!saving}
-            />
-
-            {!!paymentAmount && (
-              <Text
-                className={`text-xs font-bold mt-2 ${
-                  changeDue < 0 ? "text-red-500" : "text-gray-500"
-                }`}
-              >
-                {changeDue < 0
-                  ? `Kurang ${formatRupiah(-changeDue)}`
-                  : `Kembalian ${formatRupiah(changeDue)}`}
+          {split && !correcting && (
+            <View className="mt-3 bg-white/60 rounded-xl px-3 py-2">
+              <Text className="text-xs font-bold text-gray-600">
+                Terkumpul : {formatRupiah(collected)}
               </Text>
-            )}
+              <Text className="text-xs font-bold text-gray-600 mt-0.5">
+                Sisa{"      "}: {formatRupiah(Math.max(0, total - collected))}
+              </Text>
+            </View>
+          )}
+
+          {/* The correction, stated as the three figures the cashier actually
+              needs: what is already in the till, what the bill now comes to,
+              and which way the difference goes. */}
+          {correcting && (
+            <View className="mt-3 bg-orange-50 border border-orange-200 rounded-xl px-3 py-2.5">
+              <Text className="text-xs font-bold text-orange-900">
+                Sudah diterima : {formatRupiah(collectedBefore)}
+              </Text>
+              <Text className="text-xs font-bold text-orange-900 mt-0.5">
+                Total baru{"     "}: {formatRupiah(total)}
+              </Text>
+              <View className="h-px bg-orange-200 my-2" />
+              <Text className="text-sm font-black text-orange-900">
+                {dueNow > 0
+                  ? `Kurang bayar : ${formatRupiah(dueNow)}`
+                  : dueNow < 0
+                    ? `Kembalikan : ${formatRupiah(-dueNow)}`
+                    : "Tidak ada selisih"}
+              </Text>
+              <Text className="text-[10px] font-bold text-orange-700 mt-1.5">
+                Item yang dihapus tidak mengembalikan stok.
+              </Text>
+            </View>
+          )}
+        </View>
+
+        {split ? (
+          <View className="mt-4">
+            {payerNumbers(order).map((num) => (
+              <PayerCard
+                key={num}
+                order={order}
+                customerNum={num}
+                discountPct={effectiveDiscount}
+                busy={busy}
+                onPay={handlePayerPaid}
+                onReprint={printShare}
+              />
+            ))}
           </View>
+        ) : (
+          <>
+            {/* Payment Method UI. Hidden when a correction moves nothing —
+                there is no payment to name a method for, and the order simply
+                closes. */}
+            {!(correcting && dueNow === 0) && (
+              <View className="bg-white rounded-3xl px-5 py-5 shadow-sm mt-4">
+                <View className="border-2 border-gray-200 rounded-xl px-3 py-1.5 self-start mb-4 bg-gray-50">
+                  <Text className="text-sm font-bold text-gray-700">
+                    {dueNow < 0 ? "Metode Pengembalian" : "Metode Pembayaran"}
+                  </Text>
+                </View>
+
+                <MethodPicker
+                  value={methodOfPayment}
+                  onChange={setMethodOfPayment}
+                  disabled={busy}
+                />
+              </View>
+            )}
+
+            {/* Handle cash payment. Only when money is coming in: a refund is
+                handed over as exactly the difference, with no tender and no
+                change to work out. */}
+            {methodOfPayment === "Cash" && dueNow > 0 && (
+              <View className="mt-1">
+                <Text className="text-sm font-bold text-gray-700 mb-2">Jumlah Pembayaran</Text>
+                <TextInput
+                  className="border-2 border-gray-200 rounded-xl px-4 py-2.5 text-sm font-semibold text-gray-900 bg-gray-50"
+                  placeholder="0"
+                  placeholderTextColor="#9ca3af"
+                  keyboardType="numeric"
+                  value={paymentAmount ? `Rp ${formatRupiahInput(paymentAmount)}` : ""}
+                  onChangeText={(text) => setPaymentAmount(text.replace(/[^0-9]/g, ""))}
+                  editable={!busy}
+                />
+
+                {!!paymentAmount && (
+                  <Text
+                    className={`text-xs font-bold mt-2 ${
+                      changeDue < 0 ? "text-red-500" : "text-gray-500"
+                    }`}
+                  >
+                    {changeDue < 0
+                      ? `Kurang ${formatRupiah(-changeDue)}`
+                      : `Kembalian ${formatRupiah(changeDue)}`}
+                  </Text>
+                )}
+              </View>
+            )}
+          </>
         )}
 
         {/* Error */}
-        {!!error && (
+        {(!!error || !!printError) && (
           <View className="mt-3 bg-red-50 border border-red-100 rounded-2xl px-4 py-3">
-            <Text className="text-xs font-bold text-red-500 text-center">{error}</Text>
+            <Text className="text-xs font-bold text-red-500 text-center">
+              {error || printError}
+            </Text>
           </View>
         )}
       </ScrollView>
 
       {/* Confirm payment */}
       <View className="absolute bottom-0 left-0 right-0 px-4 pb-6 items-center">
-        <TouchableOpacity
-          onPress={handleConfirm}
-          disabled={saving || !methodOfPayment} // Added disabled check if no payment method selected
-          style={{ width: "100%", maxWidth: 640 }}
-          className={`rounded-2xl py-4 items-center shadow ${
-            saving || !methodOfPayment ? 'bg-gray-400 shadow-gray-400/30' : 'bg-green-400 shadow-green-600/30'
-          }`}
-        >
-          {saving ? (
-            <ActivityIndicator size="small" color="white" />
-          ) : (
-            <Text className="text-sm font-extrabold text-white">Konfirmasi Pembayaran</Text>
-          )}
-        </TouchableOpacity>
+        {split ? (
+          <TouchableOpacity
+            onPress={handleComplete}
+            disabled={busy || stillOwed.length > 0}
+            style={{ width: "100%", maxWidth: 640 }}
+            className={`rounded-2xl py-4 items-center shadow ${
+              busy || stillOwed.length > 0
+                ? "bg-gray-400 shadow-gray-400/30"
+                : "bg-green-400 shadow-green-600/30"
+            }`}
+          >
+            {busy ? (
+              <ActivityIndicator size="small" color="white" />
+            ) : (
+              <Text className="text-sm font-extrabold text-white">
+                {stillOwed.length > 0
+                  ? `Menunggu ${stillOwed.length} pembayar`
+                  : "Selesaikan Pembayaran"}
+              </Text>
+            )}
+          </TouchableOpacity>
+        ) : (
+          <TouchableOpacity
+            onPress={handleConfirm}
+            disabled={busy || !methodOfPayment}
+            style={{ width: "100%", maxWidth: 640 }}
+            className={`rounded-2xl py-4 items-center shadow ${
+              busy || !methodOfPayment ? 'bg-gray-400 shadow-gray-400/30' : 'bg-green-400 shadow-green-600/30'
+            }`}
+          >
+            {busy ? (
+              <ActivityIndicator size="small" color="white" />
+            ) : (
+              <Text className="text-sm font-extrabold text-white">
+                {!correcting
+                  ? "Konfirmasi Pembayaran"
+                  : dueNow > 0
+                    ? `Terima ${formatRupiah(dueNow)}`
+                    : dueNow < 0
+                      ? `Kembalikan ${formatRupiah(-dueNow)}`
+                      : "Tutup Pesanan"}
+              </Text>
+            )}
+          </TouchableOpacity>
+        )}
       </View>
+
+      <ConfirmDialog
+        visible={editWarning}
+        title="Ada item belum dicetak"
+        message={`${
+          unprintedLatestBatch(order).length
+        } item di pesanan ini belum dicetak ke dapur. Kalau ditambah sekarang, item itu tidak akan ikut tercetak. Cetak dulu, atau lanjutkan kalau memang tidak perlu.`}
+        confirmLabel="Lanjut Edit"
+        cancelLabel="Batal"
+        onConfirm={() => {
+          setEditWarning(false);
+          openEditor();
+        }}
+        onCancel={() => setEditWarning(false)}
+      />
+
+      <PrinterSelector
+        visible={selectorVisible}
+        initialRole="cashier"
+        onClose={() => setSelectorVisible(false)}
+        onConnected={async (role, device) => {
+          setSelectorVisible(false);
+          setPrintError(null);
+          await handlePrinterConnected(role, device);
+        }}
+      />
       </KeyboardAvoidingView>
     </SafeAreaView>
   );

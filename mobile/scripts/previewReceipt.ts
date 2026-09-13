@@ -55,9 +55,24 @@ const order: Order = {
   discount: 10,
   status: 'paid',
   createdAt: NOW,
-  methodOfPayment: 'Cash',
   isDineIn: true,
-  paymentAmount: 200000,
+  reopenSeq: 0,
+  // Settled by one person: exactly one payment row, which is where the method
+  // and the cash tendered now live.
+  payments: [
+    {
+      id: 1,
+      customerNum: 1,
+      customerLabel: null,
+      // 128.000 less 10%, plus tax.
+      amount: 126720,
+      amountTendered: 200000,
+      methodOfPayment: 'Cash',
+      reopenSeq: 0,
+      approvedBy: null,
+      createdAt: NOW,
+    },
+  ],
   items: [
     { menuId: 12, name: 'Es Kopi Susu Gula Aren', price: 25000, quantity: 2, isSent: true, isCancelled: false, printBatch: 1 },
     { menuId: 3, name: 'Nasi Goreng', price: 35000, quantity: 1, isSent: true, isCancelled: false, printBatch: 1, note: 'pedas' },
@@ -65,6 +80,90 @@ const order: Order = {
     { menuId: 21, name: 'Croissant', price: 28000, quantity: 1, isSent: false, isCancelled: false, printBatch: 2 },
   ],
 };
+
+/**
+ * The same order, split two ways: the drinks, sambal and pastry on one side,
+ * the food on the other.
+ *
+ * Both payers have settled, deliberately by different means — payer 1 by QRIS,
+ * which settles for exactly the bill, and payer 2 in cash with change due.
+ * Between them they cover both branches of the payment block, which is the part
+ * of the layout a split bill actually changes.
+ *
+ * Status stays 'unpaid' because a share prints the moment that person pays,
+ * which is before the order as a whole is closed.
+ */
+const splitOrder: Order = {
+  ...order,
+  status: 'unpaid',
+  items: order.items.map((item, idx) => ({ ...item, customerNum: idx === 1 ? 2 : 1 })),
+  payments: [
+    {
+      id: 1,
+      customerNum: 1,
+      customerLabel: 'Alex',
+      // 2x Es Kopi Susu + 3x Sambal + Croissant = 93.000, less 10%, plus tax.
+      amount: 92070,
+      amountTendered: null,
+      methodOfPayment: 'QRIS',
+      reopenSeq: 0,
+      approvedBy: null,
+      createdAt: NOW,
+    },
+    {
+      id: 2,
+      customerNum: 2,
+      customerLabel: 'Hina',
+      // 1x Nasi Goreng = 35.000, less 10%, plus tax.
+      amount: 34650,
+      amountTendered: 50000,
+      methodOfPayment: 'Cash',
+      reopenSeq: 0,
+      approvedBy: null,
+      createdAt: NOW,
+    },
+  ],
+};
+
+/**
+ * The same order after a correction, with one line taken off.
+ *
+ * The customer is holding a receipt for the original 126.720 and has had the
+ * difference handed back in cash, so the reprint has to account for the gap
+ * rather than just print a smaller total and leave the two pieces of paper
+ * silently disagreeing.
+ *
+ * The payment row carries the movement, not the new total — order_payments is
+ * append-only, and a negative amount is money going back out.
+ */
+const correctedOrder: Order = (() => {
+  // Drop the Nasi Goreng: 128.000 - 35.000 = 93.000, less 10%, plus tax.
+  const items = order.items.filter((i) => i.name !== 'Nasi Goreng');
+  const newTotal = 92070;
+  const originalTotal = 126720;
+
+  return {
+    ...order,
+    items,
+    reopenSeq: 1,
+    payments: [
+      { ...order.payments[0], amount: originalTotal },
+      {
+        id: 2,
+        customerNum: 1,
+        customerLabel: null,
+        amount: newTotal - originalTotal,
+        // Nothing is tendered when money goes the other way — the cashier hands
+        // over exactly the difference.
+        amountTendered: null,
+        methodOfPayment: 'Cash',
+        reopenSeq: 1,
+        approvedBy: null,
+        createdAt: NOW,
+      },
+    ],
+  };
+})();
 
 async function capture(
   name: string,
@@ -88,7 +187,33 @@ async function main(): Promise<void> {
     renderCustomerReceipt(printer, {
       order,
       cashierName: 'Nabil',
-      moneyGiven: order.paymentAmount,
+      payment: order.payments[0],
+      now: NOW,
+    })
+  );
+
+  // Both shares of the same split bill: each covers only that payer's lines and
+  // settles with their own method. Rendered as a pair because the useful check
+  // is that the two together account for the whole order and nothing is on both.
+  for (const payment of splitOrder.payments) {
+    await capture(`customer-receipt-split-payer${payment.customerNum}`, (printer) =>
+      renderCustomerReceipt(printer, {
+        order: splitOrder,
+        cashierName: 'Nabil',
+        payment,
+        now: NOW,
+      })
+    );
+  }
+
+  // The corrected bill. The check worth looking at is the payment block: what
+  // was taken originally, what went back, and a change line that is worked out
+  // against the difference rather than the new total.
+  await capture('customer-receipt-corrected', (printer) =>
+    renderCustomerReceipt(printer, {
+      order: correctedOrder,
+      cashierName: 'Nabil',
+      payment: correctedOrder.payments[1],
       now: NOW,
     })
   );

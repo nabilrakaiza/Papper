@@ -52,12 +52,28 @@ export default function AddStockSheet({ onAdd, sheetRef, canCreateNew = false }:
 
   useEffect(() => {
     const fetchDefinitions = async () => {
-      const { data } = await supabase
-        .from("stock")
-        .select("id, name, unit")
-        .order("name", { ascending: true });
-      if (data) setDefinitions(data);
-      setLoadingDefs(false);
+      try {
+        const { data, error: fetchError } = await supabase
+          .from("stock")
+          .select("id, name, unit")
+          .order("name", { ascending: true });
+
+        // Without this an empty picker reads as "no stock items exist", and the
+        // obvious response is to create a new definition — leaving a second
+        // "Gula" beside the one already there instead of restocking it.
+        if (fetchError) {
+          console.error("Failed to load stock definitions:", fetchError.message);
+          setError("Gagal memuat daftar stok. Periksa koneksi Anda sebelum membuat item baru.");
+          return;
+        }
+
+        if (data) setDefinitions(data);
+      } catch (e) {
+        console.error("Failed to load stock definitions:", e);
+        setError("Gagal memuat daftar stok. Periksa koneksi Anda sebelum membuat item baru.");
+      } finally {
+        setLoadingDefs(false);
+      }
     };
     fetchDefinitions();
   }, []);

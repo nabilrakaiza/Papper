@@ -7,11 +7,12 @@
  * to do with connecting, retrying or reporting printer errors stays in
  * printer.ts — nothing here knows Bluetooth exists.
  */
-import type { Order, OrderItem } from '../types/order';
+import type { Order, OrderItem, OrderPayment } from '../types/order';
 import { ALIGN, type ReceiptPrinter } from './escpos';
 import { RECEIPT_LOGO_BASE64, RECEIPT_LOGO_WIDTH_DOTS } from './printerLogo';
 import { TAX_RATE, orderTotal } from './constants';
 import { groupItems } from './orderItems';
+import { isSplit } from './splitBill';
 
 /** 58mm paper at 203dpi, as 12-dot font A characters. */
 const LINE_WIDTH = 32;
@@ -41,7 +42,13 @@ export type CustomerReceiptArgs = {
   order: Order;
   /** Just the name — the layout has no business with the rest of the user. */
   cashierName: string;
-  moneyGiven: number | null;
+  /**
+   * What was paid. For an ordinary order that is its single payment row; for a
+   * split bill, the one payer whose share this receipt covers — the items are
+   * then filtered to their lines. Omitted for a bill printed before payment,
+   * which prints the order with no payment block.
+   */
+  payment?: OrderPayment;
   /**
    * Injected so the preview can pin it and produce a stable image; the app
    * leaves it out and gets the current time.
@@ -51,10 +58,30 @@ export type CustomerReceiptArgs = {
 
 export async function renderCustomerReceipt(
   p: ReceiptPrinter,
-  { order, cashierName, moneyGiven, now = new Date() }: CustomerReceiptArgs
+  { order, cashierName, payment, now = new Date() }: CustomerReceiptArgs
 ): Promise<void> {
+  // A share prints only what that person is paying for. Everything below —
+  // subtotal, discount, tax, total — then follows from this one line, so the
+  // figures on a share are arrived at exactly the way a whole receipt's are.
+  const items = payment
+    ? order.items.filter((i) => (i.customerNum ?? 1) === payment.customerNum)
+    : order.items;
+
+  // How it was paid comes from the payment row and nowhere else. `orders` no
+  // longer carries a method or an amount: one column could not describe a split
+  // bill, and the amount meant the tender for cash and the bill for everything
+  // else, so it could never simply be printed.
+  const method = payment?.methodOfPayment ?? null;
+  const tendered = payment?.amountTendered ?? null;
+
+  // A settled receipt is one with a payment behind it. A share is printed the
+  // moment that person pays, which is before the order as a whole is closed, so
+  // this cannot wait for status to become 'paid'; equally, an unpaid bill
+  // printed for the table has no payment row and prints no payment block.
+  const settled = payment !== undefined;
+
   // 1. Synchronized calculation logic
-  const subtotal = order.items.reduce((sum, i) => sum + i.price * i.quantity, 0);
+  const subtotal = items.reduce((sum, i) => sum + i.price * i.quantity, 0);
 
   const safeDiscountPct = Math.min(Math.max(0, order.discount || 0), 100);
   const discountAmount = subtotal * (safeDiscountPct / 100);
@@ -66,7 +93,7 @@ export async function renderCustomerReceipt(
 
   // Grouped by itemKey rather than menuId: custom items all carry a null menu
   // id, so keying on that would print every unrelated one as a single line.
-  const groupedItems = groupItems(order.items);
+  const groupedItems = groupItems(items);
 
   // 2. Print Header
   await p.align(ALIGN.CENTER);
@@ -97,6 +124,20 @@ export async function renderCustomerReceipt(
   await p.align(ALIGN.LEFT);
   await p.text(`Pelanggan: ${order.customerName}\n`);
   await p.text(`Kursi    : ${order.seat}\n`);
+
+  // Says whose share this is, and that it is a share. Without it, three
+  // receipts for one table are three receipts that each look like the whole
+  // bill, only wrong.
+  //
+  // Keyed on the order actually being divided, not on there being a payment:
+  // since payment data moved out of `orders`, an ordinary order has a payment
+  // row too, and this line was printing "Bagian: Pelanggan 1" on every single
+  // receipt.
+  if (payment && isSplit(order)) {
+    await p.text(
+      `Bagian   : ${payment.customerLabel || `Pelanggan ${payment.customerNum}`}\n`
+    );
+  }
 
   // Format Date and Time to Asia/Jakarta (WIB)
   const jktDateTime = now.toLocaleString('id-ID', {
@@ -147,31 +188,60 @@ export async function renderCustomerReceipt(
   // 7. Print Final Total
   await p.column(MONEY_COLS, MONEY_ALIGNS, ['TOTAL', formatRupiah(total)]);
 
-  if (order.status === 'paid') {
+  if (settled) {
+    // A corrected bill. The customer is holding an earlier receipt for a
+    // different figure, so the new one has to account for the gap rather than
+    // silently disagree with the paper in their hand: what was taken before,
+    // and which way the difference went.
+    //
+    // `payment.amount` is the difference itself, negative when money was handed
+    // back — order_payments is append-only, so the row records the movement and
+    // not the new total.
+    if (payment && payment.reopenSeq > 0) {
+      const previous = total - payment.amount;
+
+      await p.column(MONEY_COLS, MONEY_ALIGNS, [
+        'Dibayar Awal',
+        formatRupiah(previous),
+      ]);
+      await p.column(MONEY_COLS, MONEY_ALIGNS, [
+        payment.amount < 0 ? 'Dikembalikan' : 'Tambahan Bayar',
+        formatRupiah(Math.abs(payment.amount)),
+      ]);
+    }
+
     await p.column(MONEY_COLS, MONEY_ALIGNS, [
       'Metode Bayar',
-      PAYMENT_METHOD_PRINT_LABELS[order.methodOfPayment ?? ''] ??
-        `${order.methodOfPayment}`,
+      PAYMENT_METHOD_PRINT_LABELS[method ?? ''] ?? `${method}`,
     ]);
 
-    if (order.methodOfPayment === 'Cash' && moneyGiven != null) {
+    // What this payment was actually for. On an ordinary bill that is the
+    // total; on a correction it is the difference that changed hands, and
+    // working change out against the total instead would have the receipt
+    // promise back money that was never handed over.
+    const charged = payment && payment.reopenSeq > 0 ? payment.amount : total;
+
+    if (method === 'Cash' && tendered != null) {
       await p.column(MONEY_COLS, MONEY_ALIGNS, [
         'Jumlah Bayar',
-        formatRupiah(moneyGiven),
+        formatRupiah(tendered),
       ]);
-      // Change is what the customer gets back — cash given minus the bill. This
-      // was the other way round, so every receipt printed negative change.
+      // Change is what the customer gets back — cash given minus what was
+      // charged. This was the other way round, so every receipt printed
+      // negative change.
       await p.column(MONEY_COLS, MONEY_ALIGNS, [
         'Kembalian',
-        formatRupiah(moneyGiven - total),
+        formatRupiah(tendered - charged),
       ]);
-    } else {
-      // Non-cash settles for exactly the bill, so print the bill rather than
-      // payment_amount. Same number for anything sold today, but orders closed
-      // before the discount fix stored a payment_amount computed from the saved
-      // discount instead of the entered one — reprinting those would show a
-      // figure that never changed hands.
-      await p.column(MONEY_COLS, MONEY_ALIGNS, ['Jumlah Bayar', formatRupiah(total)]);
+    } else if (charged > 0) {
+      // Non-cash settles for exactly what was charged, so print that. Nothing
+      // else is recorded for it: order_payments only carries a tender for cash,
+      // precisely because for every other method the tender IS the bill.
+      //
+      // Skipped entirely when the money went the other way: "Dikembalikan"
+      // above has already said the figure, and printing it again under a label
+      // that calls it a payment is two kinds of wrong on one receipt.
+      await p.column(MONEY_COLS, MONEY_ALIGNS, ['Jumlah Bayar', formatRupiah(charged)]);
     }
   }
 

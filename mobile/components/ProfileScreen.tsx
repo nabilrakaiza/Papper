@@ -6,45 +6,38 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useAuth } from "../context/AuthContext";
-import { useEffect, useState } from "react";
-import { supabase } from "../lib/supabase";
 import { User, Mail, Shield, LogOut } from "lucide-react-native";
 
-type Profile = {
-  email: string;
-  role: string;
-};
-
 export default function ProfileScreen() {
-  const { session, signOut } = useAuth();
-  const [profile, setProfile] = useState<Profile | null>(null);
-  const [loading, setLoading] = useState(true);
+  // Read straight from AuthContext rather than re-querying profiles.
+  //
+  // The old fetch destructured only `{ data }` and ignored the error, so a
+  // failed query produced role "—", which fell through the roleLabel ternary to
+  // "Kasir" — an admin was shown, confidently, as a cashier on their own
+  // profile. It also had `if (!session) return` ahead of setLoading(false) and
+  // no catch, so either a null session or a thrown request left the tab
+  // spinning for good.
+  //
+  // AuthContext already fetched and validated this exact row at sign-in, so the
+  // request was redundant to begin with; dropping it removes the wrong label,
+  // the stuck spinner and a duplicate round-trip in one go.
+  const { session, profile, loading, signOut } = useAuth();
 
-  useEffect(() => {
-    const fetchProfile = async () => {
-      if (!session) return;
+  const roleLabel =
+    profile?.role === "admin"
+      ? "Admin"
+      : profile?.role === "superadmin"
+      ? "Superadmin"
+      : profile?.role === "cashier"
+      ? "Kasir"
+      : "—";
 
-      const { data } = await supabase
-        .from("profiles")
-        .select("role")
-        .eq("id", session.user.id)
-        .single();
-
-      setProfile({
-        email: session.user.email ?? "—",
-        role: data?.role ?? "—",
-      });
-      setLoading(false);
-    };
-
-    fetchProfile();
-  }, [session]);
-
-  const roleLabel = profile?.role === "admin" ? "Admin" : profile?.role === "superadmin" ? "Superadmin" : "Kasir";
   const roleColor =
     profile?.role === "admin" || profile?.role === "superadmin"
       ? "bg-blue-100 text-blue-600"
-      : "bg-green-100 text-green-600";
+      : profile?.role === "cashier"
+      ? "bg-green-100 text-green-600"
+      : "bg-gray-100 text-gray-500";
 
   return (
     <SafeAreaView className="flex-1 bg-gray-100">
@@ -80,7 +73,9 @@ export default function ProfileScreen() {
                 <Text className="text-[10px] font-extrabold text-gray-400 uppercase tracking-widest">
                   Email
                 </Text>
-                <Text className="text-sm font-bold text-gray-800">{profile?.email}</Text>
+                <Text className="text-sm font-bold text-gray-800">
+                  {session?.user.email ?? "—"}
+                </Text>
               </View>
             </View>
 

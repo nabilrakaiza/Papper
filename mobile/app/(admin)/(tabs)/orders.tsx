@@ -29,12 +29,32 @@ type OrderRow = {
   createdAt: Date;
   status: string;
   discount: number;
-  methodOfPayment: string | null;
   isDineIn: boolean | null;
-  paymentAmount: number | null;
+  /**
+   * How it was paid, for the one-line summary: the method for an ordinary
+   * order, "Split" when several people paid, null while it is still open.
+   */
+  methodLabel: string | null;
+  /** True once this order has been reopened and corrected at least once. */
+  corrected: boolean;
+  /** Cash handed over, when a single payer settled in cash. */
+  tendered: number | null;
   subtotal: number;
   total: number;
   items: OrderLine[];
+  /** Per-payer rows on a split bill; empty on an ordinary order. */
+  payments: PaymentLine[];
+};
+
+type PaymentLine = {
+  customerNum: number;
+  customerLabel: string | null;
+  /** Negative on a correction that handed money back. */
+  amount: number;
+  amountTendered: number | null;
+  methodOfPayment: string;
+  /** Which correction round this row settles. 0 is the original payment. */
+  reopenSeq: number;
 };
 
 const PERIODS = ["Hari Ini", "7 Hari", "Bulan Ini", "Bulan Lalu"] as const;
@@ -54,6 +74,7 @@ const METHOD_LABELS: Record<string, string> = {
   "Bank Transfer": "Transfer Bank",
   QRIS: "QRIS",
   Debit: "Debit",
+  Split: "Terpisah",
 };
 
 const STATUS_STYLE: Record<string, { bg: string; text: string; label: string }> = {
@@ -119,79 +140,122 @@ export default function AdminOrdersScreen() {
     setLoading(true);
     setError("");
 
-    const { from, to } = getRange(period);
+    // Every returned-error branch cleared the spinner itself; a thrown request
+    // cleared none of them. One finally covers all four exits.
+    try {
+      const { from, to } = getRange(period);
 
-    // One query for the orders, one for every line item across them — rather
-    // than a nested select, which PostgREST would return per order and which
-    // makes the row shape harder to keep in step with OrderContext.
-    let query = supabase
-      .from("orders")
-      .select("id, customer_name, seat, created_at, status, discount, method_of_payment, is_dine_in, payment_amount")
-      .gte("created_at", from.toISOString())
-      .lt("created_at", to.toISOString())
-      .order("created_at", { ascending: false });
+      // One query for the orders, one for every line item across them — rather
+      // than a nested select, which PostgREST would return per order and which
+      // makes the row shape harder to keep in step with OrderContext.
+      let query = supabase
+        .from("orders")
+        .select("id, customer_name, seat, created_at, status, discount, is_dine_in")
+        .gte("created_at", from.toISOString())
+        .lt("created_at", to.toISOString())
+        .order("created_at", { ascending: false });
 
-    if (status !== "Semua") {
-      query = query.eq("status", STATUS_VALUE[status]);
-    }
+      if (status !== "Semua") {
+        query = query.eq("status", STATUS_VALUE[status]);
+      }
 
-    const { data: orderData, error: orderError } = await query;
+      const { data: orderData, error: orderError } = await query;
 
-    if (orderError) {
+      if (orderError) {
+        setError("Gagal memuat pesanan.");
+        setOrders([]);
+        return;
+      }
+
+      if (!orderData || orderData.length === 0) {
+        setOrders([]);
+        return;
+      }
+
+      const { data: itemData, error: itemError } = await supabase
+        .from("order_items")
+        .select("order_id, name, price, quantity, notes, is_cancelled, menu_id")
+        .in("order_id", orderData.map((o) => o.id));
+
+      if (itemError) {
+        setError("Gagal memuat item pesanan.");
+        setOrders([]);
+        return;
+      }
+
+      // Split bills only. A failure here is not worth blanking the screen for —
+      // the orders themselves are already loaded and correct, and the payer
+      // breakdown is detail on top of them.
+      const { data: paymentData } = await supabase
+        .from("order_payments")
+        .select("order_id, customer_num, customer_label, amount, amount_tendered, method_of_payment, reopen_seq")
+        .in("order_id", orderData.map((o) => o.id));
+
+      setOrders(
+        orderData.map((o) => {
+          const items = (itemData ?? []).filter((i) => i.order_id === o.id);
+          const subtotal = items.reduce((s, i) => s + i.price * i.quantity, 0);
+          const payments: PaymentLine[] = (paymentData ?? [])
+            .filter((p) => p.order_id === o.id)
+            .map((p) => ({
+              customerNum: p.customer_num,
+              reopenSeq: p.reopen_seq ?? 0,
+              customerLabel: p.customer_label,
+              amount: p.amount,
+              amountTendered: p.amount_tendered,
+              methodOfPayment: p.method_of_payment,
+            }))
+            .sort(
+              (a, b) => a.customerNum - b.customerNum || a.reopenSeq - b.reopenSeq
+            );
+
+          // Divided between people, which is a different question from "has
+          // more than one payment row". A corrected order has a second row for
+          // the same payer, and counting rows labelled every correction
+          // "Terpisah" — the payer count is what actually says it was split.
+          const payerCount = new Set(payments.map((p) => p.customerNum)).size;
+          // The original settlement. A correction appends rather than rewriting,
+          // so this is still the row that says how the bill was first paid.
+          const original = payments.find((p) => p.reopenSeq === 0);
+
+          return {
+            id: o.id,
+            customerName: o.customer_name,
+            seat: o.seat,
+            createdAt: new Date(o.created_at),
+            status: o.status,
+            discount: o.discount,
+            isDineIn: o.is_dine_in,
+            // Derived from the payment rows, which are the only record of how an
+            // order was paid. Null means nothing has been paid against it yet.
+            methodLabel:
+              payerCount > 1 ? "Split" : original?.methodOfPayment ?? null,
+            corrected: payments.some((p) => p.reopenSeq > 0),
+            // The cash handed over at the original settlement. Keyed on the
+            // payer count, not the row count, so a corrected cash order does
+            // not silently lose its tender to a second row.
+            tendered: payerCount === 1 ? original?.amountTendered ?? null : null,
+            subtotal,
+            total: orderTotal(subtotal, o.discount),
+            payments,
+            items: items.map((i) => ({
+              name: i.name,
+              price: i.price,
+              quantity: i.quantity,
+              notes: i.notes,
+              is_cancelled: i.is_cancelled,
+              menu_id: i.menu_id,
+            })),
+          };
+        })
+      );
+    } catch (e) {
+      console.error("Failed to fetch orders:", e);
       setError("Gagal memuat pesanan.");
       setOrders([]);
+    } finally {
       setLoading(false);
-      return;
     }
-
-    if (!orderData || orderData.length === 0) {
-      setOrders([]);
-      setLoading(false);
-      return;
-    }
-
-    const { data: itemData, error: itemError } = await supabase
-      .from("order_items")
-      .select("order_id, name, price, quantity, notes, is_cancelled, menu_id")
-      .in("order_id", orderData.map((o) => o.id));
-
-    if (itemError) {
-      setError("Gagal memuat item pesanan.");
-      setOrders([]);
-      setLoading(false);
-      return;
-    }
-
-    setOrders(
-      orderData.map((o) => {
-        const items = (itemData ?? []).filter((i) => i.order_id === o.id);
-        const subtotal = items.reduce((s, i) => s + i.price * i.quantity, 0);
-
-        return {
-          id: o.id,
-          customerName: o.customer_name,
-          seat: o.seat,
-          createdAt: new Date(o.created_at),
-          status: o.status,
-          discount: o.discount,
-          methodOfPayment: o.method_of_payment,
-          isDineIn: o.is_dine_in,
-          paymentAmount: o.payment_amount,
-          subtotal,
-          total: orderTotal(subtotal, o.discount),
-          items: items.map((i) => ({
-            name: i.name,
-            price: i.price,
-            quantity: i.quantity,
-            notes: i.notes,
-            is_cancelled: i.is_cancelled,
-            menu_id: i.menu_id,
-          })),
-        };
-      })
-    );
-
-    setLoading(false);
   }, [period, status]);
 
   useEffect(() => {
@@ -381,8 +445,8 @@ export default function AdminOrdersScreen() {
                       </Text>
                       <Text className="text-xs font-bold text-gray-400 mt-0.5">
                         {formatDateTime(order.createdAt)}
-                        {order.methodOfPayment
-                          ? ` · ${METHOD_LABELS[order.methodOfPayment] ?? order.methodOfPayment}`
+                        {order.methodLabel
+                          ? ` · ${METHOD_LABELS[order.methodLabel] ?? order.methodLabel}`
                           : ""}
                       </Text>
                     </View>
@@ -477,18 +541,57 @@ export default function AdminOrdersScreen() {
                       </Text>
                     </View>
 
-                    {/* Cash is the only method where payment_amount differs from
-                        the bill — it is what the customer handed over. */}
-                    {order.status === "paid" &&
-                      order.methodOfPayment === "Cash" &&
-                      order.paymentAmount != null && (
+                    {/* Who paid what, when the bill was divided. Without this
+                        a split order shows a single "Terpisah" and no way to
+                        reconcile it against the till. */}
+                    {order.payments.length > 1 && (
+                      <View className="pt-1.5">
+                        <Text className="text-xs font-extrabold text-gray-400 mb-1">
+                          {order.corrected
+                            ? "Rincian Pembayaran"
+                            : "Pembayaran Terpisah"}
+                        </Text>
+                        {order.payments.map((p) => (
+                          <View
+                            key={`${p.customerNum}-${p.reopenSeq}`}
+                            className="flex-row justify-between py-0.5"
+                          >
+                            <Text className="text-xs font-bold text-gray-500 flex-1 pr-2">
+                              {/* A correction row is not another person, it is
+                                  the same person settling a difference — say
+                                  that instead of repeating their name. */}
+                              {p.reopenSeq > 0
+                                ? p.amount < 0
+                                  ? "Dikembalikan"
+                                  : "Tambahan bayar"
+                                : p.customerLabel || `Pelanggan ${p.customerNum}`}{" "}
+                              · {METHOD_LABELS[p.methodOfPayment] ?? p.methodOfPayment}
+                              {p.methodOfPayment === "Cash" && p.amountTendered != null
+                                ? ` (bayar ${formatRupiah(p.amountTendered)})`
+                                : ""}
+                            </Text>
+                            <Text
+                              className={`text-xs font-bold ${
+                                p.amount < 0 ? "text-red-600" : "text-gray-700"
+                              }`}
+                            >
+                              {formatRupiah(p.amount)}
+                            </Text>
+                          </View>
+                        ))}
+                      </View>
+                    )}
+
+                    {/* Cash is the only method where what was handed over
+                        differs from the bill. */}
+                    {order.status === "paid" && order.tendered != null && (
                         <>
                           <View className="flex-row justify-between pt-1.5">
                             <Text className="text-xs font-bold text-gray-500">
                               Jumlah Bayar
                             </Text>
                             <Text className="text-xs font-bold text-gray-700">
-                              {formatRupiah(order.paymentAmount)}
+                              {formatRupiah(order.tendered)}
                             </Text>
                           </View>
                           <View className="flex-row justify-between py-0.5">
@@ -496,7 +599,17 @@ export default function AdminOrdersScreen() {
                               Kembalian
                             </Text>
                             <Text className="text-xs font-bold text-gray-700">
-                              {formatRupiah(order.paymentAmount - order.total)}
+                              {/* Against the bill that was actually settled in
+                                  cash, which on a corrected order is not the
+                                  current total — the corrections came after.
+                                  Subtracting them back out recovers it. */}
+                              {formatRupiah(
+                                order.tendered -
+                                  (order.total -
+                                    order.payments
+                                      .filter((p) => p.reopenSeq > 0)
+                                      .reduce((sum, p) => sum + p.amount, 0))
+                              )}
                             </Text>
                           </View>
                         </>
