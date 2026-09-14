@@ -15,8 +15,9 @@ export type OrderItem = {
   price: number;
   quantity: number;
   /**
-   * Only known for items that came from the menu — order_items has no category
-   * column, so this is undefined for anything read back from the database.
+   * The menu's category for this line. order_items has no column for it, so an
+   * order read back from the database gets it through its menu row. Undefined
+   * for a custom off-menu item.
    */
   category?: MenuCategory;
   isSent: boolean;
