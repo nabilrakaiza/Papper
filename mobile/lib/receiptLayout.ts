@@ -371,6 +371,12 @@ export async function renderKitchenTicket(
 
   for (const item of sortByCategory(latestBatchItems)) {
     if (itemSection(item) !== section) {
+      // A blank line between sections, so where one station's list ends and
+      // the next begins is clear at a glance. None above the first: the
+      // divider is already there.
+      if (section !== null) {
+        await p.text('\n');
+      }
       section = itemSection(item);
       await p.text(`-- ${SECTION_TITLES[section]} --\n`);
     }
