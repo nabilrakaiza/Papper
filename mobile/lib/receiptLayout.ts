@@ -334,9 +334,10 @@ export async function renderKitchenTicket(
   // widthtimes/heigthtimes are ESC/POS magnification multipliers where 0 is
   // normal size. Only the title is magnified: it is how a station calls the
   // order out. The ticket is printed for every station, so it is named by the
-  // order rather than by any one of them.
+  // order rather than by any one of them — by the day's number, which is short
+  // enough to call across a room, and by id only if it has none.
   await p.align(ALIGN.CENTER);
-  await p.text(`ORDER #${order.id}\n`, {
+  await p.text(`ORDER #${order.dailyNumber ?? order.id}\n`, {
     encoding: 'GBK',
     codepage: 0,
     widthtimes: 1,

@@ -293,7 +293,7 @@ function OrderCard({
           >
             {/* The number printed at the top of the kitchen ticket, so an
                 order called out by number can be found here. */}
-            #{order.id} · Tempat Duduk: {order.seat}
+            #{order.dailyNumber ?? order.id} · Tempat Duduk: {order.seat}
           </Text>
         </View>
 

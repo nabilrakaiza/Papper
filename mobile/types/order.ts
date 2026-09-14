@@ -97,6 +97,15 @@ export type CustomItemDraft = {
 
 export type Order = {
   id: number;
+  /**
+   * The short number people use for this order: 1 for the first order of the
+   * day, restarting at midnight Jakarta time. Assigned by the database, never
+   * by the client, and repeats every day — so it is only a label, and `id`
+   * stays the identifier. Null only for an order the database has not
+   * numbered (a build pointed at a database without the column); show `id`
+   * then.
+   */
+  dailyNumber: number | null;
   customerName: string;
   seat: string;
   items: OrderItem[];

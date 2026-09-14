@@ -9,7 +9,7 @@ type OrderContextType = {
   menu: MenuItem[];
   loading: boolean;
   error: string | null;
-  addOrder: (order: Omit<Order, "id" | "createdAt" | "payments">, force?: boolean) => Promise<{ error: string | null; stockWarning?: string }>;
+  addOrder: (order: Omit<Order, "id" | "dailyNumber" | "createdAt" | "payments">, force?: boolean) => Promise<{ error: string | null; stockWarning?: string }>;
   updateOrder: (id: number, order: Partial<Order>, force?: boolean) => Promise<{ error: string | null; stockWarning?: string }>;
   cancelOrderWithPin: (orderId: number, pin: string) => Promise<{ success: boolean; error: string | null }>;
   reopenOrderWithPin: (orderId: number, pin: string) => Promise<{ success: boolean; error: string | null }>;
@@ -119,6 +119,7 @@ export function OrderProvider({ children }: { children: ReactNode }) {
       setOrders(
         combined.map((o) => ({
           id: o.id,
+          dailyNumber: o.daily_number ?? null,
           customerName: o.customer_name,
           seat: o.seat,
           discount: o.discount,
@@ -215,7 +216,7 @@ export function OrderProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const addOrder = async (
-    order: Omit<Order, "id" | "createdAt" | "payments">,
+    order: Omit<Order, "id" | "dailyNumber" | "createdAt" | "payments">,
     force = false
   ): Promise<{ error: string | null; stockWarning?: string }> => {
 

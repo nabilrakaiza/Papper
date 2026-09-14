@@ -51,6 +51,7 @@ const NOW = new Date('2026-08-23T12:34:00+07:00');
  */
 const order: Order = {
   id: 1042,
+  dailyNumber: 14,
   customerName: 'Budi Santoso',
   seat: 'A4',
   discount: 10,
@@ -207,6 +208,7 @@ const tableOrder: Order = (() => {
   return {
     ...order,
     id: 1043,
+    dailyNumber: 15,
     customerName: 'Keluarga Rahma',
     seat: 'B2',
     discount: 0,
