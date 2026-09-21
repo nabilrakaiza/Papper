@@ -1,7 +1,7 @@
 // Helpers shared by every place that has to treat menu-backed and custom
 // (off-menu) line items alike.
 import { OrderItem } from "../types/order";
-import { BAR_CATEGORIES, CATEGORIES } from "../data/menu";
+import { BAR_CATEGORIES, CATEGORIES, OTHER_CATEGORIES } from "../data/menu";
 
 export function isCustomItem(item: Pick<OrderItem, "menuId">): boolean {
   return item.menuId == null;
@@ -46,6 +46,10 @@ export type ItemSection = "kitchen" | "bar" | "custom";
 
 export function itemSection(item: Pick<OrderItem, "menuId" | "category">): ItemSection {
   if (isCustomItem(item)) return "custom";
+  // "Lain Lain" and anything else that belongs to no station print under
+  // CUSTOM MENU: a real menu row, but not one the kitchen or the bar owns, so
+  // sending it to a station would put it on a list nobody is cooking from.
+  if (item.category && OTHER_CATEGORIES.includes(item.category)) return "custom";
   // A menu item whose category is somehow unknown goes to the kitchen rather
   // than being dropped or shown as custom: it is still a real dish.
   return item.category && BAR_CATEGORIES.includes(item.category) ? "bar" : "kitchen";

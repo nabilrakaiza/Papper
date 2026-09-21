@@ -139,8 +139,9 @@ export type Order = {
 };
 
 export type MenuCategory = "Ayam" | "Nasi" | "Sapi" | "Udang"|
-    "Ikan"| "Steak"| "Burger"| "Pasta"| "Additions"| "Snacks"|
-    "Coffee"| "Drinks"| "Milkshake"| "Juice"| "Dessert"| "Pastry";
+    "Ikan"| "Steak"| "Burger"| "Pasta"| "Paketan"| "Additions"| "Snacks"|
+    "Coffee"| "Drinks"| "Milkshake"| "Juice"| "Dessert"| "Pastry"|
+    "Lain Lain";
 
 export type MenuItem = {
   id: number;
