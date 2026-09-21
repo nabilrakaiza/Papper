@@ -9,7 +9,7 @@ type OrderContextType = {
   menu: MenuItem[];
   loading: boolean;
   error: string | null;
-  addOrder: (order: Omit<Order, "id" | "createdAt" | "payments">, force?: boolean) => Promise<{ error: string | null; stockWarning?: string }>;
+  addOrder: (order: Omit<Order, "id" | "dailyNumber" | "createdAt" | "payments">, force?: boolean) => Promise<{ error: string | null; stockWarning?: string }>;
   updateOrder: (id: number, order: Partial<Order>, force?: boolean) => Promise<{ error: string | null; stockWarning?: string }>;
   cancelOrderWithPin: (orderId: number, pin: string) => Promise<{ success: boolean; error: string | null }>;
   reopenOrderWithPin: (orderId: number, pin: string) => Promise<{ success: boolean; error: string | null }>;
@@ -90,16 +90,20 @@ export function OrderProvider({ children }: { children: ReactNode }) {
       tomorrow.setDate(tomorrow.getDate() + 1);
 
       // Fetch all unpaid orders
+      //
+      // The category comes through the menu, because order_items has no column
+      // for it: tickets and receipts sort by it, and the in-memory menu only
+      // holds active dishes, so a dish retired mid-shift would lose its place.
       const { data: unpaidData, error: unpaidError } = await supabase
         .from("orders")
-        .select("*, order_items(*), order_payments(*)")
+        .select("*, order_items(*, menus(category)), order_payments(*)")
         .eq("status", "unpaid")
         .order("created_at", { ascending: false });
 
       // Fetch today's paid orders only
       const { data: paidData, error: paidError } = await supabase
         .from("orders")
-        .select("*, order_items(*), order_payments(*)")
+        .select("*, order_items(*, menus(category)), order_payments(*)")
         .eq("status", "paid")
         .gte("created_at", today.toISOString())
         .lt("created_at", tomorrow.toISOString())
@@ -115,6 +119,7 @@ export function OrderProvider({ children }: { children: ReactNode }) {
       setOrders(
         combined.map((o) => ({
           id: o.id,
+          dailyNumber: o.daily_number ?? null,
           customerName: o.customer_name,
           seat: o.seat,
           discount: o.discount,
@@ -157,6 +162,8 @@ export function OrderProvider({ children }: { children: ReactNode }) {
             name: i.name,
             price: i.price,
             quantity: i.quantity,
+            // Undefined for a custom item, which has no menu row behind it.
+            category: i.menus?.category ?? undefined,
             // Updated to map from DB snake_case to app camelCase
             isSent: i.is_sent ?? false,
             isCancelled: i.is_cancelled ?? false,
@@ -209,7 +216,7 @@ export function OrderProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const addOrder = async (
-    order: Omit<Order, "id" | "createdAt" | "payments">,
+    order: Omit<Order, "id" | "dailyNumber" | "createdAt" | "payments">,
     force = false
   ): Promise<{ error: string | null; stockWarning?: string }> => {
 

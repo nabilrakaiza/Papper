@@ -1,6 +1,7 @@
 // Helpers shared by every place that has to treat menu-backed and custom
 // (off-menu) line items alike.
 import { OrderItem } from "../types/order";
+import { BAR_CATEGORIES, CATEGORIES, OTHER_CATEGORIES } from "../data/menu";
 
 export function isCustomItem(item: Pick<OrderItem, "menuId">): boolean {
   return item.menuId == null;
@@ -38,4 +39,41 @@ export function groupItems<T extends Pick<OrderItem, "menuId" | "name" | "price"
   }
 
   return [...grouped.values()];
+}
+
+/** Where a line belongs on paper: which station makes it, or off the menu. */
+export type ItemSection = "kitchen" | "bar" | "custom";
+
+export function itemSection(item: Pick<OrderItem, "menuId" | "category">): ItemSection {
+  if (isCustomItem(item)) return "custom";
+  // "Lain Lain" and anything else that belongs to no station print under
+  // CUSTOM MENU: a real menu row, but not one the kitchen or the bar owns, so
+  // sending it to a station would put it on a list nobody is cooking from.
+  if (item.category && OTHER_CATEGORIES.includes(item.category)) return "custom";
+  // A menu item whose category is somehow unknown goes to the kitchen rather
+  // than being dropped or shown as custom: it is still a real dish.
+  return item.category && BAR_CATEGORIES.includes(item.category) ? "bar" : "kitchen";
+}
+
+const SECTION_ORDER: Record<ItemSection, number> = { kitchen: 0, bar: 1, custom: 2 };
+
+/**
+ * Items in the order they are printed: kitchen first, then bar, then custom
+ * items, and within each station grouped by category in menu order.
+ *
+ * Stable, so lines in the same category keep the order they were entered in.
+ * Returns a new array; the order's own items are left alone.
+ */
+export function sortByCategory<T extends Pick<OrderItem, "menuId" | "category">>(items: T[]): T[] {
+  const rank = (item: T) => {
+    const section = itemSection(item);
+    const categoryIndex = item.category ? CATEGORIES.indexOf(item.category) : -1;
+    // Unknown categories sort to the end of their section.
+    return [SECTION_ORDER[section], categoryIndex === -1 ? CATEGORIES.length : categoryIndex];
+  };
+
+  return items
+    .map((item, index) => ({ item, index, rank: rank(item) }))
+    .sort((a, b) => a.rank[0] - b.rank[0] || a.rank[1] - b.rank[1] || a.index - b.index)
+    .map(({ item }) => item);
 }

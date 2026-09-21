@@ -56,6 +56,7 @@ ON DELETE CASCADE. `quantity` is stock units consumed per one menu item.
 | Column | Type | Notes |
 | --- | --- | --- |
 | `id` | bigint PK | identity |
+| `daily_number` | integer | 1, 2, 3… restarting at midnight Asia/Jakarta. Set by the `orders_assign_daily_number` trigger on insert and never changed after. Unique per Jakarta date. See [Daily order number](#daily-order-number) |
 | `customer_name`, `seat` | text | |
 | `discount` | integer | percentage, 0–100 |
 | `status` | text | `'unpaid'` (default), `'paid'`, `'cancelled'` |
@@ -79,6 +80,26 @@ the columns were dropped. **`20260906100100` is the one migration in this projec
 that is not backwards compatible**: builds predating the split-bill release write
 both columns in `markPaid`, so any tablet still on such a build cannot take
 payment against this schema.
+
+#### Daily order number
+
+The short number printed on the kitchen ticket (`ORDER #15`) and shown on the
+order cards. `id` never resets, so it is still the identifier everywhere else;
+`daily_number` repeats every day and only means something next to the date.
+
+It is assigned in the database, not the app, from `order_daily_counters` (one
+row per Jakarta date holding the last number handed out). The trigger's upsert
+on that row takes a lock, so orders created at the same moment get consecutive
+numbers. The counter only moves forward, so a number is never reused.
+
+**Gaps are expected.** Cancelling with the PIN deletes the order, and a save
+that fails after the order row is written deletes it too; either way its number
+is already spent. It is stored rather than computed on read for the same
+reason: numbering on read would renumber the rest of the day after every
+deletion, and tickets already in the kitchen would stop matching the screen.
+
+`order_daily_counters` has RLS on and no policies, and `anon`/`authenticated`
+hold no privileges on it. Only the `SECURITY DEFINER` trigger function touches it.
 
 ### `order_items`
 | Column | Type | Notes |
@@ -433,6 +454,7 @@ Retire v1 once every device is on a current build.
 | `enforce_payments_locked_after_payment` | `order_payments` | `prevent_locked_order_payment_change` |
 | `derive_stock_deducted_flag` | `order_items` | `derive_stock_deducted_flag` |
 | `stamp_correction_approver` | `order_payments` | `stamp_correction_approver` |
+| `orders_assign_daily_number` | `orders` | `assign_order_daily_number` |
 
 ## Migrations
 

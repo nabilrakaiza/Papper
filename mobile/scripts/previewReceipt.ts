@@ -21,6 +21,7 @@ import path from 'node:path';
 
 import type { Order } from '../types/order';
 import { renderCustomerReceipt, renderKitchenTicket } from '../lib/receiptLayout';
+import { orderTotal } from '../lib/constants';
 import { createRecorder } from './escposRecorder';
 
 /**
@@ -50,6 +51,7 @@ const NOW = new Date('2026-08-23T12:34:00+07:00');
  */
 const order: Order = {
   id: 1042,
+  dailyNumber: 14,
   customerName: 'Budi Santoso',
   seat: 'A4',
   discount: 10,
@@ -74,10 +76,10 @@ const order: Order = {
     },
   ],
   items: [
-    { menuId: 12, name: 'Es Kopi Susu Gula Aren', price: 25000, quantity: 2, isSent: true, isCancelled: false, printBatch: 1 },
-    { menuId: 3, name: 'Nasi Goreng', price: 35000, quantity: 1, isSent: true, isCancelled: false, printBatch: 1, note: 'pedas' },
+    { menuId: 12, name: 'Es Kopi Susu Gula Aren', category: 'Coffee', price: 25000, quantity: 2, isSent: true, isCancelled: false, printBatch: 1 },
+    { menuId: 3, name: 'Nasi Goreng', category: 'Nasi', price: 35000, quantity: 1, isSent: true, isCancelled: false, printBatch: 1, note: 'pedas' },
     { menuId: null, name: 'Sambal Extra', price: 5000, quantity: 3, isSent: false, isCancelled: false, printBatch: 2 },
-    { menuId: 21, name: 'Croissant', price: 28000, quantity: 1, isSent: false, isCancelled: false, printBatch: 2 },
+    { menuId: 21, name: 'Croissant', category: 'Pastry', price: 28000, quantity: 1, isSent: false, isCancelled: false, printBatch: 2 },
   ],
 };
 
@@ -165,6 +167,68 @@ const correctedOrder: Order = (() => {
   };
 })();
 
+/**
+ * A full table, entered the way a cashier actually taps it in — drinks and food
+ * interleaved, and the same dish twice with different notes.
+ *
+ * The check is the ordering: every kitchen category grouped in menu order under
+ * DAPUR, the bar's under BAR, custom items last under CUSTOM MENU, and the two
+ * Nasi Goreng lines kept apart on the ticket (their notes differ) but merged on
+ * the receipt.
+ */
+const tableOrder: Order = (() => {
+  const line = (
+    menuId: number | null,
+    name: string,
+    category: Order['items'][number]['category'],
+    price: number,
+    quantity: number,
+    note?: string
+  ): Order['items'][number] => ({
+    menuId, name, category, price, quantity, note,
+    isSent: false, isCancelled: false, printBatch: 1,
+  });
+
+  const items = [
+    line(12, 'Es Kopi Susu Gula Aren', 'Coffee', 25000, 2),
+    line(3, 'Nasi Goreng', 'Nasi', 35000, 1, 'pedas'),
+    line(31, 'Jus Alpukat', 'Juice', 22000, 1),
+    line(8, 'Ayam Bakar Madu', 'Ayam', 38000, 2),
+    line(null, 'Sambal Extra', undefined, 5000, 2),
+    line(15, 'Sirloin Steak', 'Steak', 95000, 1, 'medium well'),
+    line(41, 'Kentang Goreng', 'Snacks', 20000, 1),
+    line(3, 'Nasi Goreng', 'Nasi', 35000, 1, 'tidak pedas'),
+    line(26, 'Es Teh Manis', 'Drinks', 10000, 3),
+    line(35, 'Chocolate Lava Cake', 'Dessert', 32000, 1),
+    line(null, 'Air Panas', undefined, 0, 1),
+  ];
+
+  const subtotal = items.reduce((sum, i) => sum + i.price * i.quantity, 0);
+
+  return {
+    ...order,
+    id: 1043,
+    dailyNumber: 15,
+    customerName: 'Keluarga Rahma',
+    seat: 'B2',
+    discount: 0,
+    items,
+    payments: [
+      {
+        id: 3,
+        customerNum: 1,
+        customerLabel: null,
+        amount: orderTotal(subtotal, 0),
+        amountTendered: null,
+        methodOfPayment: 'QRIS',
+        reopenSeq: 0,
+        approvedBy: null,
+        createdAt: NOW,
+      },
+    ],
+  };
+})();
+
 async function capture(
   name: string,
   render: (printer: ReturnType<typeof createRecorder>['printer']) => Promise<void>
@@ -233,6 +297,18 @@ async function main(): Promise<void> {
   };
   await capture('kitchen-ticket-first', (printer) =>
     renderKitchenTicket(printer, firstOrder, NOW)
+  );
+
+  await capture('kitchen-ticket-table', (printer) =>
+    renderKitchenTicket(printer, tableOrder, NOW)
+  );
+  await capture('customer-receipt-table', (printer) =>
+    renderCustomerReceipt(printer, {
+      order: tableOrder,
+      cashierName: 'Nabil',
+      payment: tableOrder.payments[0],
+      now: NOW,
+    })
   );
 
   console.log(`\nWrote previews to ${path.relative(process.cwd(), outDir)}/`);

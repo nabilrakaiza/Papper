@@ -11,7 +11,7 @@ import type { Order, OrderItem, OrderPayment } from '../types/order';
 import { ALIGN, type ReceiptPrinter } from './escpos';
 import { RECEIPT_LOGO_BASE64, RECEIPT_LOGO_WIDTH_DOTS } from './printerLogo';
 import { TAX_RATE, orderTotal } from './constants';
-import { groupItems } from './orderItems';
+import { groupItems, itemSection, sortByCategory, type ItemSection } from './orderItems';
 import { isSplit } from './splitBill';
 
 /** 58mm paper at 203dpi, as 12-dot font A characters. */
@@ -93,7 +93,10 @@ export async function renderCustomerReceipt(
 
   // Grouped by itemKey rather than menuId: custom items all carry a null menu
   // id, so keying on that would print every unrelated one as a single line.
-  const groupedItems = groupItems(items);
+  //
+  // Then listed in the same order as the kitchen ticket — kitchen, bar, custom —
+  // so the customer can check the bill against what arrives at the table.
+  const groupedItems = sortByCategory(groupItems(items));
 
   // 2. Print Header
   await p.align(ALIGN.CENTER);
@@ -295,6 +298,12 @@ export function unprintedLatestBatch(order: Order): OrderItem[] {
   return order.items.filter((i) => i.printBatch === maxBatch && !i.isSent);
 }
 
+const SECTION_TITLES: Record<ItemSection, string> = {
+  kitchen: 'DAPUR',
+  bar: 'BAR',
+  custom: 'CUSTOM MENU',
+};
+
 // Simplified kitchen ticket — no prices
 export async function renderKitchenTicket(
   p: ReceiptPrinter,
@@ -323,13 +332,12 @@ export async function renderKitchenTicket(
   if (latestBatchItems.length === 0) return;
 
   // widthtimes/heigthtimes are ESC/POS magnification multipliers where 0 is
-  // normal size, so every value here used to be one step larger than it read:
-  // the header printed at 3x and the item lines at 2x, against a customer
-  // receipt that passes {} (all zeros). The kitchen still needs to read these
-  // across a room, so items keep double height but drop back to normal width,
-  // which is also what was causing long names to wrap.
+  // normal size. Only the title is magnified: it is how a station calls the
+  // order out. The ticket is printed for every station, so it is named by the
+  // order rather than by any one of them — by the day's number, which is short
+  // enough to call across a room, and by id only if it has none.
   await p.align(ALIGN.CENTER);
-  await p.text('DAPUR\n', {
+  await p.text(`ORDER #${order.dailyNumber ?? order.id}\n`, {
     encoding: 'GBK',
     codepage: 0,
     widthtimes: 1,
@@ -354,14 +362,30 @@ export async function renderKitchenTicket(
   );
   await p.text(DIVIDER);
 
-  // 4. Loop through the filtered array instead of all items
-  for (const item of latestBatchItems) {
-    await p.text(`${item.quantity}x ${item.name}\n`, {
-      fonttype: 1,
-      widthtimes: 0,
-      heigthtimes: 1,
-    });
+  // 4. Items, grouped by the station that makes them.
+  //
+  // Each station reads only its own section, so a section is headed only when
+  // it has something in it. Items print at the same plain size as the lines
+  // above: they used to be double height, which stretched the glyphs until the
+  // whole list read as bold.
+  let section: ItemSection | null = null;
 
+  for (const item of sortByCategory(latestBatchItems)) {
+    if (itemSection(item) !== section) {
+      // A blank line between sections, so where one station's list ends and
+      // the next begins is clear at a glance. None above the first: the
+      // divider is already there.
+      if (section !== null) {
+        await p.text('\n');
+      }
+      section = itemSection(item);
+      await p.text(`-- ${SECTION_TITLES[section]} --\n`);
+    }
+
+    await p.text(`${item.quantity}x ${item.name}\n`);
+
+    // Font B, the smaller one, so a note reads as belonging to the line above
+    // rather than as another item.
     if (item.note) {
       await p.text(`CATATAN: ${item.note}\n`, {
         fonttype: 1,

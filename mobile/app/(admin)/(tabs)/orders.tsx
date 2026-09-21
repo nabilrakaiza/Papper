@@ -24,6 +24,8 @@ type OrderLine = {
 
 type OrderRow = {
   id: number;
+  /** The day's order number, as printed on the kitchen ticket. */
+  dailyNumber: number | null;
   customerName: string;
   seat: string;
   createdAt: Date;
@@ -150,7 +152,7 @@ export default function AdminOrdersScreen() {
       // makes the row shape harder to keep in step with OrderContext.
       let query = supabase
         .from("orders")
-        .select("id, customer_name, seat, created_at, status, discount, is_dine_in")
+        .select("id, daily_number, customer_name, seat, created_at, status, discount, is_dine_in")
         .gte("created_at", from.toISOString())
         .lt("created_at", to.toISOString())
         .order("created_at", { ascending: false });
@@ -220,6 +222,7 @@ export default function AdminOrdersScreen() {
 
           return {
             id: o.id,
+            dailyNumber: o.daily_number ?? null,
             customerName: o.customer_name,
             seat: o.seat,
             createdAt: new Date(o.created_at),
@@ -440,7 +443,10 @@ export default function AdminOrdersScreen() {
                         </View>
                       </View>
                       <Text className="text-xs font-bold text-gray-400">
-                        #{order.id} · {order.seat} ·{" "}
+                        {/* The day's number, matching the kitchen ticket. The
+                            date is on the line below, which is what makes it
+                            unique. */}
+                        #{order.dailyNumber ?? order.id} · {order.seat} ·{" "}
                         {order.isDineIn === false ? "Bawa Pulang" : "Makan di Tempat"}
                       </Text>
                       <Text className="text-xs font-bold text-gray-400 mt-0.5">
