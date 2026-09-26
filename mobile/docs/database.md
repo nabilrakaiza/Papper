@@ -17,7 +17,7 @@ trigger on `auth.users`.
 | Column | Type | Notes |
 | --- | --- | --- |
 | `id` | uuid PK | FK → `auth.users(id)` ON DELETE CASCADE |
-| `role` | text | `'cashier'` (default), `'admin'` or `'superadmin'` — see [security.md](security.md#role-model) |
+| `role` | text | `'cashier'` (default), `'admin'`, `'superadmin'` or `'owner'` — see [security.md](security.md#role-model) |
 | `name` | text | display name |
 | `pin_hash` | text | bcrypt hash of a 6-digit manager PIN; **not client-readable** |
 
@@ -400,6 +400,10 @@ Failed attempts are recorded deliberately — the lockout counts them.
 | `correct_stock(bigint, numeric, integer, text)` | void | sets a `stock` row's quantity/price directly (not additive); superadmin-only; sets `app.stock_correction` so the restock trigger doesn't log it as a purchase |
 | `delete_expense_entry(bigint, text)` | void | hard-deletes an `expenses` row; superadmin-only |
 | `stock_usage_report(timestamptz, timestamptz)` | jsonb | ingredient consumption over a period, reconstructed from `order_items` × `menu_ingredients`; superadmin-only. Returns `{ items, unmapped }` — see below |
+| `owner_sales_report(date, date)` | jsonb | the owner dashboard's sales figures; `owner` and `superadmin`. See [Owner reports](#owner-reports) |
+| `owner_orders(date, date, text, text, int, int)` | jsonb | one page of order headers in a period, filterable by status and name/number; `owner` and `superadmin` |
+| `owner_purchase_report(date, date)` | jsonb | `expenses` per stock item over a period with first/last unit price; `owner` and `superadmin` |
+| `reject_owner_writes()` | trigger | refuses any write by an `owner` account; see [security.md](security.md#role-model) |
 
 All are `SECURITY DEFINER` with a pinned `search_path`. Any function calling
 pgcrypto uses `extensions.crypt(...)` explicitly — a bare `crypt()` fails, see
@@ -443,6 +447,35 @@ channel, so older installs are still running code that does `if (!data)` — and
 jsonb object is always truthy, which would make a rejected PIN read as success.
 Retire v1 once every device is on a current build.
 
+### Owner reports
+
+All three take an **inclusive range of Asia/Jakarta dates** (`'2026-09-01'`,
+`'2026-09-26'`), not timestamps, and bucket by Jakarta time — so a browser in
+another timezone sees the same days as the till.
+
+`owner_sales_report` covers paid orders only, dated by `orders.created_at`, and
+defines its figures as:
+
+| Figure | Definition |
+| --- | --- |
+| `gross` | Σ price × quantity, before discount and tax |
+| `net` | gross less the order's discount %, rounded per order |
+| `tax` | `collected − net`; shown separately, never counted as revenue |
+| `collected` | `orderTotal()` per order — equals the Penjualan screen's total exactly |
+| `cogs` | the HPP screen's figure (recipe at **current** stock prices, or manual) + `ADDITIONAL_COGS_PERCENT` |
+
+`collected` repeats `orderTotal()`'s IEEE double arithmetic in `float8` with
+`floor(x + 0.5)` for `Math.round`, so it cannot drift from the app by a rupiah.
+Lines on menus with no HPP (and custom items) carry a NULL `cogs` and are
+totalled as `costing.uncosted_net`, so the dashboard can say how much of the
+margin is unbacked by a cost. The payment breakdown sums `order_payments` as a
+ledger — correction rows net out — and puts each order's split-bill rounding
+residual on its largest share, as Penjualan does; `count` is original
+settlements only.
+
+`ADDITIONAL_COGS_PERCENT` and `TAX_RATE` are hard-coded in the SQL. Change
+them in `lib/constants.ts` and the migration together.
+
 ## Triggers
 
 | Trigger | Table | Function |
@@ -455,6 +488,7 @@ Retire v1 once every device is on a current build.
 | `derive_stock_deducted_flag` | `order_items` | `derive_stock_deducted_flag` |
 | `stamp_correction_approver` | `order_payments` | `stamp_correction_approver` |
 | `orders_assign_daily_number` | `orders` | `assign_order_daily_number` |
+| `reject_owner_writes` | `orders`, `order_items`, `order_payments`, `menus`, `menu_ingredients`, `stock`, `expenses`, `order_override_log`, `admin_correction_log` | `reject_owner_writes` (statement-level) |
 
 ## Migrations
 

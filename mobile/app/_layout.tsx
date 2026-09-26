@@ -20,7 +20,7 @@ function Spinner() {
 
 type Target = {
   group: string;
-  path: "/(auth)/login" | "/(admin)/(tabs)" | "/(cashier)/(tabs)";
+  path: "/(auth)/login" | "/(admin)/(tabs)" | "/(cashier)/(tabs)" | "/(owner)/ringkasan";
 };
 
 /**
@@ -41,6 +41,9 @@ function targetFor(
     return { group: "(admin)", path: "/(admin)/(tabs)" };
   }
   if (role === "cashier") return { group: "(cashier)", path: "/(cashier)/(tabs)" };
+  // Web only; AuthContext signs an owner out before a profile ever reaches
+  // here on a phone.
+  if (role === "owner") return { group: "(owner)", path: "/(owner)/ringkasan" };
 
   // No profile and no excuse for it -- the account really has no usable role.
   if (!profileError) return { group: "(auth)", path: "/(auth)/login" };

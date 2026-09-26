@@ -30,6 +30,8 @@ export default function ProfileScreen() {
       ? "Superadmin"
       : profile?.role === "cashier"
       ? "Kasir"
+      : profile?.role === "owner"
+      ? "Owner"
       : "—";
 
   const roleColor =

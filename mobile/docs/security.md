@@ -22,13 +22,14 @@ a deliberate act:
 
 ```sql
 update public.profiles set role = 'admin' where id = '<user-uuid>';
--- or 'superadmin'
+-- or 'superadmin', or 'owner'
 ```
 
 `profiles` has no UPDATE policy, so clients cannot change their own role either.
 
-All three roles authenticate as the same Postgres role (`authenticated`). What
-separates them is RLS policies testing `profiles.role`.
+All four roles authenticate as the same Postgres role (`authenticated`). What
+separates them is RLS policies testing `profiles.role`, plus, for `owner`, a
+write-blocking trigger.
 
 ### Role model
 
@@ -37,6 +38,19 @@ separates them is RLS policies testing `profiles.role`.
 | `cashier` | Add/edit/pay orders; cancel or correct with manager PIN (same as everyone); toggle menu availability (via `toggle_menu_availability`, not a direct table write) |
 | `admin` | Everything `cashier` can do, plus: restock existing items (`stock` update), edit menu recipes (`menu_ingredients`), read sales/expense reports |
 | `superadmin` | Everything `admin` can do, plus: create new stock item types, create/soft-delete/restore menu items, edit a menu's cost mode (`cogs_mode` / `manual_cogs`), correct a stock item's quantity/price directly (`correct_stock`), delete a bad `expenses` row (`delete_expense_entry`) |
+
+| `owner` | Reads the money: the `owner_*` report functions, plus the order tables every signed-in account can read. **Writes nothing.** Web only. Holds no PIN and approves no override |
+
+`owner` is not above `superadmin` — the superadmin runs the place, the owner
+looks at the numbers. Its read-only status is enforced by
+`reject_owner_writes`, a statement-level trigger on `orders`, `order_items`,
+`order_payments`, `menus`, `menu_ingredients`, `stock`, `expenses`,
+`order_override_log` and `admin_correction_log`
+(`20260926100000_owner_role.sql`). A trigger rather than RLS because several
+`SECURITY DEFINER` RPCs (`deduct_stock_for_order`, `toggle_menu_availability`)
+bypass RLS and check nothing about the caller's role; the trigger fires on every
+write path, and `auth.uid()` still names the API caller inside a definer
+function. The till's own write policies were left untouched.
 
 `admin` deliberately has **no** write access to `menus` itself — only to
 `menu_ingredients` (recipe rows) and `stock`. Cost mode and menu

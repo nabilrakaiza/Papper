@@ -26,6 +26,7 @@ navigation decision in the app:
 | no session | `/(auth)/login` |
 | session, `profile.role === 'admin'` or `'superadmin'` | `/(admin)/(tabs)` |
 | session, `profile.role === 'cashier'` | `/(cashier)/(tabs)` |
+| session, `profile.role === 'owner'` (web only) | `/(owner)/ringkasan` |
 | session, any other role | `/(auth)/login` |
 
 `admin` and `superadmin` share the same route tree — there is no separate
@@ -34,6 +35,11 @@ menu, editing cost mode, soft-delete/restore) are conditionally rendered
 inside the existing admin screens based on `profile.role === 'superadmin'`
 from `useAuth()`. See [security.md](security.md#role-model) for what each
 tier can actually write.
+
+Which roles may sign in depends on the platform, and `AuthContext` enforces it
+by signing the rejected session out: the web admits `admin`, `superadmin` and
+`owner`; the app admits everyone except `owner`, whose dashboard has no phone
+layout.
 
 Route groups mirror those roles:
 
@@ -57,7 +63,22 @@ app/
     cogs/index.tsx         menu list with cost of goods; superadmin: create/remove menus
     cogs/[id].tsx          per-item recipe editor; id === 'new' is the create-menu form; cost mode is superadmin-only
     profile.tsx
+  (owner)/                 read-only money dashboard, web only; sidebar layout, no tab bar
+    _layout.tsx            sidebar + the shared date range (OwnerReportContext)
+    ringkasan.tsx          sales summary, daily / weekday / hourly charts
+    menu.tsx               per-item sales, HPP and margin; categories; top items per category
+    pembayaran.tsx         payment-method mix
+    pesanan.tsx            every order in the range, with its lines and payments
+    pembelian.tsx          restock spending per stock item, unit price changes
 ```
+
+The owner pages read from the `owner_*` report functions (see
+[database.md](database.md#owner-reports)) rather than aggregating rows on the
+client, and bucket by Asia/Jakarta date whatever clock the browser is on. One
+date range in the header scopes every page; `OwnerReportContext` holds it and
+caches the sales report per range, since three pages read the same one. The
+charts are DOM SVG in `components/owner/charts.web.tsx`, with a no-op
+`charts.tsx` for the native bundle.
 
 The role split is presentational only. An admin and a cashier hold the same
 Postgres role (`authenticated`); what actually separates them is RLS policies
