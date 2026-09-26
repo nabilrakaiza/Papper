@@ -220,6 +220,43 @@ No code fix applied; if it starts happening in real usage rather than during
 rapid manual testing, look at `auth.lock` in `createClient`'s options in
 `lib/supabase.ts`.
 
+### Splash spinner never clears — the profile fetch has no `try`/`catch`
+
+**Known, not yet fixed.** Distinct from the Web Locks hang above: this one is
+in our code and affects every platform, not just web.
+
+The profile-fetch effect in `context/AuthContext.tsx` clears `loading` on each
+of its exit paths explicitly, and has no `catch` and no `finally`:
+
+```ts
+(async () => {
+  const { data, error } = await supabase.from("profiles")...single();
+  ...
+  setLoading(false);   // repeated per exit path
+})();
+```
+
+If that awaited call *throws* rather than returning `{ data, error }`, none of
+those run. `loading` stays `true`, `ready` in `RootNavigator` never flips, and
+`app/_layout.tsx` returns `<Spinner />` forever — no error on screen, no way
+out but restarting the app.
+
+It is a single point of failure: when a session already exists,
+`onAuthStateChange` deliberately does *not* clear `loading` (it must stay
+synchronous to avoid the auth-lock deadlock described in its own comment) and
+defers to this effect. So this one `setLoading(false)` gates the whole splash.
+
+`OrderContext.fetchOrders` documents the identical bug and fixes it with
+`try`/`finally`; that hardening was never applied here.
+
+Two things to fix, not one:
+
+1. `try`/`catch`/`finally` around the effect, so a throw lands on the existing
+   "Tidak bisa memuat profil" retry screen instead of the spinner.
+2. A timeout. A `catch` does nothing if the request simply *hangs* — a captive
+   portal or a network that never rejects never resolves and never throws. That
+   needs a race against a timer.
+
 ### An old debug APK behaves strangely after dependency changes
 
 Debug builds load JS from Metro but keep whatever native modules were compiled
