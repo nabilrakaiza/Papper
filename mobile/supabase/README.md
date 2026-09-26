@@ -53,6 +53,10 @@ update public.profiles set role = 'admin' where id = '<user-uuid>';
 
 `profiles` has no UPDATE policy, so clients cannot change a role themselves.
 
+The same statement with `'owner'` gives someone the read-only money dashboard.
+It works on the web only — the app signs an owner out — and the account can
+write nothing, whatever the client sends.
+
 ## Setting, changing and removing a PIN
 
 Always from the SQL Editor, never from the app — clients cannot write `pin_hash`

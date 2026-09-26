@@ -13,8 +13,7 @@ import { Search, X, Pencil, Plus, Trash2, RotateCcw } from "lucide-react-native"
 import { supabase } from "@/lib/supabase";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import { useAuth } from "../../../../context/AuthContext";
-
-const ADDITIONAL_COGS_PERCENT = 10;
+import { ADDITIONAL_COGS_PERCENT } from "@/lib/constants";
 
 type Ingredient = {
   stockId: number;

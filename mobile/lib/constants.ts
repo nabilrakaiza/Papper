@@ -1,5 +1,17 @@
 // Single source of truth for values shared across order/sales/receipt calculations.
+// owner_sales_report and owner_orders repeat it in SQL
+// (20260926100100_owner_reports.sql); change them together.
 export const TAX_RATE = 0.1;
+
+/**
+ * The flat "Tambahan" the HPP screen adds on top of a menu's ingredient or
+ * manual cost to get its HPP.
+ *
+ * owner_sales_report (supabase/migrations/20260926100100_owner_reports.sql)
+ * applies the same 10% in SQL; change both together or the owner's gross profit
+ * stops agreeing with the HPP screen.
+ */
+export const ADDITIONAL_COGS_PERCENT = 10;
 
 /**
  * What an order actually costs the customer: subtotal, less the discount, plus

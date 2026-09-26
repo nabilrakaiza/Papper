@@ -106,8 +106,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       const prof = data as Profile;
 
-      if (Platform.OS === "web" && prof.role !== "admin" && prof.role !== "superadmin") {
-        setAuthError("Hanya akun admin yang dapat masuk di versi web.");
+      // Each platform admits the roles that have screens on it. The owner
+      // dashboard is built for a desktop browser and has no phone layout, so an
+      // owner account is turned away from the app the same way a cashier is
+      // turned away from the web.
+      const rejection =
+        Platform.OS === "web"
+          ? prof.role !== "admin" && prof.role !== "superadmin" && prof.role !== "owner"
+            ? "Hanya akun admin dan owner yang dapat masuk di versi web."
+            : null
+          : prof.role === "owner"
+          ? "Akun owner hanya dapat digunakan di versi web."
+          : null;
+
+      if (rejection) {
+        setAuthError(rejection);
         setProfile(null);
         setLoading(false);
         // Don't keep the rejected session around. Safe to await here — we are
