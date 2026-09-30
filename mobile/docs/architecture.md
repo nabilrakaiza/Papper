@@ -50,7 +50,7 @@ app/
   (cashier)/
     (tabs)/index.tsx       open + paid order lists
     (tabs)/availability.tsx  toggle menu items in/out of stock
-    (tabs)/sales.tsx
+    (tabs)/sales.tsx       today's takings, plus the owner's figures via daily_sales_report
     (tabs)/profile.tsx
     new-order.tsx
     order/[id].tsx         edit an open order; cancellation entry point
@@ -167,16 +167,21 @@ Menu cost of goods works two ways, chosen per item by `menus.cogs_mode`:
 
 ## Money
 
-`lib/constants.ts` holds `TAX_RATE = 0.1`, the single source of truth shared by
-order totals, the sales screens and receipts. Totals are computed as:
+`orderTotal()` in `lib/constants.ts` is the single formula shared by order
+totals, the sales screens and receipts:
 
 ```
 subtotal = Σ (price × quantity)
-total    = subtotal × (1 − discount/100) × (1 + TAX_RATE)
+total    = subtotal × (1 − discount/100) × (1 + tax/100)
 ```
 
-`orders.discount` is a whole-number percentage constrained to 0–100. All money
-columns are integer Rupiah; there are no fractional currency units.
+`orders.discount` and `orders.tax` are both whole-number percentages
+constrained to 0–100 and set by the cashier on the payment screen. The tax
+starts at `DEFAULT_TAX_PCT` (10), which is also the column's database default;
+every order taken before the rate became editable holds 10. `orderTotal()`
+takes the tax as a required argument, so no screen can quietly fall back to 10%
+for an order charged at something else. All money columns are integer Rupiah;
+there are no fractional currency units.
 
 How an order was paid lives in `order_payments`, never on `orders` — one row for
 an ordinary order, one per payer for a split bill. The two columns that used to
@@ -217,8 +222,9 @@ Points that follow from that shape:
 - **Each share rounds on its own**, through the same `orderTotal`. Shares can
   therefore sum to a rupiah or two away from the whole order's total; each
   figure is what was actually charged to, and printed for, that person.
-- **The discount freezes at the first payment.** Changing it afterwards would
-  mean earlier payers settled on a different basis from later ones.
+- **The discount and tax freeze at the first payment.** Changing either
+  afterwards would mean earlier payers settled on a different basis from later
+  ones.
 - **The order closes on an explicit action**, not on the payments adding up.
   `completeSplitPayment` is enabled only once every payer has settled.
 

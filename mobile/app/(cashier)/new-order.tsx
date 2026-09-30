@@ -15,6 +15,7 @@ import { router } from "expo-router";
 import { ChevronLeft, ChevronRight, Plus, Minus } from "lucide-react-native";
 import { useOrders } from "../../context/OrderContext";
 import { CATEGORIES } from "../../data/menu";
+import { DEFAULT_TAX_PCT } from "../../lib/constants";
 import { CustomItemDraft, MenuCategory, OrderItem } from "../../types/order";
 import { CustomItemSheet, CustomItemList } from "../../components/CustomItemSheet";
 
@@ -114,6 +115,9 @@ export default function NewOrderScreen() {
           seat,
           items: selectedItems,
           discount: 0,
+          // Not written by addOrder: the column's database default is the same
+          // 10, and the cashier sets the real rate on the payment screen.
+          tax: DEFAULT_TAX_PCT,
           status: "unpaid",
           isDineIn: isDineIn,
           // A brand-new order has never been corrected. addOrder does not write

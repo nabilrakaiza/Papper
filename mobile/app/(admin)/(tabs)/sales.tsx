@@ -164,7 +164,7 @@ export default function AdminSalesScreen() {
 
     const { data: orders } = await supabase
       .from("orders")
-      .select("id, created_at, discount")
+      .select("id, created_at, discount, tax")
       .eq("status", "paid")
       .gte("created_at", from)
       .lte("created_at", to);
@@ -189,7 +189,7 @@ export default function AdminSalesScreen() {
       return {
         id: order.id,
         created_at: order.created_at,
-        total: orderTotal(subtotal, order.discount),
+        total: orderTotal(subtotal, order.discount, order.tax),
       };
     });
 
@@ -279,7 +279,7 @@ export default function AdminSalesScreen() {
   const fetchOutstanding = async () => {
     const { data: orders } = await supabase
       .from("orders")
-      .select("id, discount")
+      .select("id, discount, tax")
       .eq("status", "unpaid");
 
     if (!orders || orders.length === 0) {
@@ -312,7 +312,7 @@ export default function AdminSalesScreen() {
         .filter((i) => i.order_id === order.id)
         .reduce((s, i) => s + i.price * i.quantity, 0);
       const owed =
-        orderTotal(subtotal, order.discount) - (collectedByOrder.get(order.id) ?? 0);
+        orderTotal(subtotal, order.discount, order.tax) - (collectedByOrder.get(order.id) ?? 0);
       return sum + Math.max(0, owed);
     }, 0);
 

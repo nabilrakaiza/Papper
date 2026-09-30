@@ -126,4 +126,4 @@ npm ci --include=dev --dry-run
 - Path alias `@/` → project root
 - User-facing strings are Indonesian; code and comments are English
 - Money is integer Rupiah everywhere — no floats, no minor units
-- Shared numbers live in `lib/constants.ts` (currently `TAX_RATE`)
+- Shared numbers live in `lib/constants.ts` (`DEFAULT_TAX_PCT`, `ADDITIONAL_COGS_PERCENT`) along with `orderTotal()`

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { View, Text, TextInput, TouchableOpacity, ScrollView, ActivityIndicator } from "react-native";
 import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Search } from "lucide-react-native";
 import { supabase } from "@/lib/supabase";
-import { orderTotal, TAX_RATE } from "@/lib/constants";
+import { orderTotal } from "@/lib/constants";
 import { formatJakartaDateTime } from "@/lib/jakartaDate";
 import { describeError, useOwnerReport } from "@/context/OwnerReportContext";
 import { ACCENT, Card, Empty, ErrorBanner, Segmented } from "@/components/owner/ui";
@@ -89,7 +89,7 @@ function OrderDetail({ order }: { order: OwnerOrderRow }) {
 
   const subtotal = detail.items.reduce((s, i) => s + i.price * i.quantity, 0);
   const afterDiscount = Math.round(subtotal * (1 - order.discount / 100));
-  const total = orderTotal(subtotal, order.discount);
+  const total = orderTotal(subtotal, order.discount, order.tax);
   const payers = new Set(detail.items.map((i) => i.customer_num)).size;
 
   const line = (label: string, value: string, strong = false) => (
@@ -122,7 +122,7 @@ function OrderDetail({ order }: { order: OwnerOrderRow }) {
         <Text className="text-xs font-extrabold text-gray-400 mb-2">RINCIAN</Text>
         {line("Subtotal", rupiah(subtotal))}
         {order.discount > 0 && line(`Diskon ${order.discount}%`, rupiah(afterDiscount - subtotal))}
-        {line(`Pajak ${Math.round(TAX_RATE * 100)}%`, rupiah(total - afterDiscount))}
+        {line(`Pajak ${order.tax}%`, rupiah(total - afterDiscount))}
         {line("Total", rupiah(total), true)}
 
         {detail.payments.length > 0 && (

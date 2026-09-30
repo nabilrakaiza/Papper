@@ -2,7 +2,7 @@ import { createContext, useContext, useState, useEffect, ReactNode } from "react
 import { Order, MenuItem, OrderItem, OrderPayment } from "../types/order";
 import { supabase } from "../lib/supabase";
 import { isConnectionError, NO_CONNECTION } from "../lib/errors";
-import { orderTotal } from "../lib/constants";
+import { DEFAULT_TAX_PCT, orderTotal } from "../lib/constants";
 
 type OrderContextType = {
   orders: Order[];
@@ -14,7 +14,7 @@ type OrderContextType = {
   cancelOrderWithPin: (orderId: number, pin: string) => Promise<{ success: boolean; error: string | null }>;
   reopenOrderWithPin: (orderId: number, pin: string) => Promise<{ success: boolean; error: string | null }>;
   markItemsSent: (orderId: number, printBatch: number) => Promise<{ error: string | null }>;
-  markPaid: (id: number, discount: number, methodOfPayment: string, paymentAmount: number) => Promise<{ error: string | null }>;
+  markPaid: (id: number, discount: number, tax: number, methodOfPayment: string, paymentAmount: number) => Promise<{ error: string | null }>;
   splitBill: (orderId: number, items: OrderItem[]) => Promise<{ error: string | null }>;
   recordPayment: (
     orderId: number,
@@ -26,8 +26,8 @@ type OrderContextType = {
       methodOfPayment: string;
     }
   ) => Promise<{ error: string | null; payment?: OrderPayment }>;
-  completeSplitPayment: (orderId: number, discount: number) => Promise<{ error: string | null }>;
-  closeCorrectedOrder: (orderId: number, discount: number) => Promise<{ error: string | null }>;
+  completeSplitPayment: (orderId: number, discount: number, tax: number) => Promise<{ error: string | null }>;
+  closeCorrectedOrder: (orderId: number, discount: number, tax: number) => Promise<{ error: string | null }>;
   toggleMenuAvailability: (menuId: number) => Promise<{ error: string | null }>;
   refetch: () => Promise<void>;
 };
@@ -123,6 +123,10 @@ export function OrderProvider({ children }: { children: ReactNode }) {
           customerName: o.customer_name,
           seat: o.seat,
           discount: o.discount,
+          // Every row has one once the column exists — the migration gave every
+          // existing order 10. The fallback only covers a build pointed at a
+          // database that has not been migrated yet.
+          tax: o.tax ?? DEFAULT_TAX_PCT,
           status: o.status,
           createdAt: new Date(o.created_at),
           isDineIn: o.is_dine_in,
@@ -407,6 +411,7 @@ export function OrderProvider({ children }: { children: ReactNode }) {
       ...(updated.customerName && { customer_name: updated.customerName }),
       ...(updated.seat && { seat: updated.seat }),
       ...(updated.discount !== undefined && { discount: updated.discount }),
+      ...(updated.tax !== undefined && { tax: updated.tax }),
       ...(updated.status && { status: updated.status }),
     };
 
@@ -672,15 +677,16 @@ export function OrderProvider({ children }: { children: ReactNode }) {
   const markPaid = async (
     id: number,
     discount: number,
+    tax: number,
     methodOfPayment: string,
     paymentAmount: number
   ): Promise<{ error: string | null }> => {
     try {
-      // The discount has to land before the share is computed against it, and
-      // it is an order-level fact rather than a payment one.
+      // The discount and tax have to land before the share is computed against
+      // them, and they are order-level facts rather than payment ones.
       const { error: discountError } = await supabase
         .from("orders")
-        .update({ discount })
+        .update({ discount, tax })
         .eq("id", id);
 
       if (discountError) {
@@ -699,7 +705,7 @@ export function OrderProvider({ children }: { children: ReactNode }) {
       }
 
       const subtotal = order.items.reduce((sum, i) => sum + i.price * i.quantity, 0);
-      const bill = orderTotal(subtotal, discount);
+      const bill = orderTotal(subtotal, discount, tax);
 
       // On a corrected order the bill has already been part-settled, so what
       // moves now is the difference — positive if the customer owes more,
@@ -913,12 +919,13 @@ export function OrderProvider({ children }: { children: ReactNode }) {
    */
   const completeSplitPayment = async (
     orderId: number,
-    discount: number
+    discount: number,
+    tax: number
   ): Promise<{ error: string | null }> => {
     try {
       const { error } = await supabase
         .from("orders")
-        .update({ status: "paid", discount })
+        .update({ status: "paid", discount, tax })
         .eq("id", orderId);
 
       if (error) {
@@ -940,19 +947,20 @@ export function OrderProvider({ children }: { children: ReactNode }) {
    * Close a corrected order once the difference has been settled.
    *
    * Identical to completeSplitPayment in what it writes — the order row goes to
-   * 'paid' and the discount lands with it — and kept apart because the two mean
+   * 'paid' and the discount and tax land with it — and kept apart because the two mean
    * different things at the call site and would otherwise read as the same
    * thing happening for the same reason. A split closes when the last payer
    * settles; a correction closes when the difference has moved.
    */
   const closeCorrectedOrder = async (
     orderId: number,
-    discount: number
+    discount: number,
+    tax: number
   ): Promise<{ error: string | null }> => {
     try {
       const { error } = await supabase
         .from("orders")
-        .update({ status: "paid", discount })
+        .update({ status: "paid", discount, tax })
         .eq("id", orderId);
 
       if (error) {

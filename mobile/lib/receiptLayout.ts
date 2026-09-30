@@ -10,7 +10,7 @@
 import type { Order, OrderItem, OrderPayment } from '../types/order';
 import { ALIGN, type ReceiptPrinter } from './escpos';
 import { RECEIPT_LOGO_BASE64, RECEIPT_LOGO_WIDTH_DOTS } from './printerLogo';
-import { TAX_RATE, orderTotal } from './constants';
+import { clampPercent, orderTotal } from './constants';
 import { groupItems, itemSection, sortByCategory, type ItemSection } from './orderItems';
 import { isSplit } from './splitBill';
 
@@ -83,13 +83,14 @@ export async function renderCustomerReceipt(
   // 1. Synchronized calculation logic
   const subtotal = items.reduce((sum, i) => sum + i.price * i.quantity, 0);
 
-  const safeDiscountPct = Math.min(Math.max(0, order.discount || 0), 100);
+  const safeDiscountPct = clampPercent(order.discount);
+  const safeTaxPct = clampPercent(order.tax);
   const discountAmount = subtotal * (safeDiscountPct / 100);
-  const taxAmount = (subtotal - discountAmount) * TAX_RATE;
+  const taxAmount = (subtotal - discountAmount) * (safeTaxPct / 100);
 
   // Shared helper — the printed TOTAL is the figure the reports sum, so the
   // receipt in the customer's hand and the books always agree.
-  const total = orderTotal(subtotal, safeDiscountPct);
+  const total = orderTotal(subtotal, safeDiscountPct, safeTaxPct);
 
   // Grouped by itemKey rather than menuId: custom items all carry a null menu
   // id, so keying on that would print every unrelated one as a single line.
@@ -182,7 +183,7 @@ export async function renderCustomerReceipt(
 
   // 6. Print Tax
   await p.column(MONEY_COLS, MONEY_ALIGNS, [
-    `Tax ${TAX_RATE * 100}%`,
+    `Tax ${safeTaxPct}%`,
     formatRupiah(taxAmount),
   ]);
 
