@@ -6,27 +6,18 @@ import {
   IsoDate,
   MONTHS_LONG,
   PRESETS,
-  addDays,
+  WEEKDAY_HEADERS,
   addMonths,
   endOfMonth,
   formatDate,
   formatRange,
+  monthGrid,
   parseIso,
   presetRange,
   startOfMonth,
   todayJakarta,
 } from "@/lib/jakartaDate";
 import { ACCENT } from "./ui";
-
-const WEEKDAY_HEADERS = ["Sen", "Sel", "Rab", "Kam", "Jum", "Sab", "Min"];
-
-/** Six Monday-first weeks covering the month that `month` falls in. */
-function monthGrid(month: IsoDate): IsoDate[] {
-  const first = startOfMonth(month);
-  const lead = (parseIso(first).getUTCDay() + 6) % 7;
-  const start = addDays(first, -lead);
-  return Array.from({ length: 42 }, (_, i) => addDays(start, i));
-}
 
 export function presetLabel(range: DateRange): string {
   return PRESETS.find((p) => p.key === range.preset)?.label ?? "Rentang khusus";

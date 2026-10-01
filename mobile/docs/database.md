@@ -251,6 +251,23 @@ every screen, filter and report that switches on status, and an order in
 mid-correction would be neither paid nor unpaid in any of them. `'unpaid'`
 already means "open, owes money", which is exactly what a correction is.
 
+**Any paid order can be reopened, whatever its age.** `reopen_order_with_pin`
+has no date check, and the cashier app offers Koreksi on today's paid orders
+from the order list and on any day's from Penjualan → the order's detail
+screen. A reopened order is `'unpaid'`, and the order list loads every unpaid
+order regardless of date, which is how the editor and payment screen find one
+from last week.
+
+**Correction money is booked on the order's own day, not the day it moved.**
+Every report — `owner_sales_report`, `daily_sales_report`, the Penjualan cards —
+dates an order and all its payments by `orders.created_at`. A refund handed
+over today on an order from 20 Sep changes 20 Sep's figures and none of
+today's, and while that order is reopened it drops out of 20 Sep's report
+altogether until it is settled again. So today's drawer would not reconcile
+against today's figures; the Penjualan screen lists those rows separately as
+"Koreksi pesanan hari lain" (`reopen_seq > 0`, `order_payments.created_at` on
+the chosen day, order created on another day), with a total per method.
+
 **`order_payments` is append-only.** A correction adds a row; it never rewrites
 or deletes the one already there. Money handed back is a negative `amount`.
 Rewriting the original instead would break reconciliation: paid Rp 100.000 by

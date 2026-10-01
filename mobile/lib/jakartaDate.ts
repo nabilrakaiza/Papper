@@ -27,6 +27,23 @@ export function todayJakarta(): IsoDate {
   return toIso(new Date(Date.now() + WIB_OFFSET_MS));
 }
 
+/** The Jakarta date an instant falls on. */
+export function jakartaDateOf(instant: Date | string): IsoDate {
+  return toIso(new Date(new Date(instant).getTime() + WIB_OFFSET_MS));
+}
+
+/**
+ * One Jakarta day as the half-open pair of instants a `created_at` filter
+ * takes: `gte(from)` and `lt(to)`. The device's own midnight is only the same
+ * while its clock is on WIB.
+ */
+export function jakartaDayBounds(date: IsoDate): { from: string; to: string } {
+  return {
+    from: new Date(`${date}T00:00:00+07:00`).toISOString(),
+    to: new Date(`${addDays(date, 1)}T00:00:00+07:00`).toISOString(),
+  };
+}
+
 export function addDays(date: IsoDate, days: number): IsoDate {
   return toIso(new Date(parseIso(date).getTime() + days * DAY_MS));
 }
@@ -122,6 +139,17 @@ export const MONTHS_LONG = [
   "Juli", "Agustus", "September", "Oktober", "November", "Desember",
 ];
 export const WEEKDAYS_SHORT = ["Min", "Sen", "Sel", "Rab", "Kam", "Jum", "Sab"]; // 0 = Sunday
+
+/** Calendar column headers, Monday first. */
+export const WEEKDAY_HEADERS = ["Sen", "Sel", "Rab", "Kam", "Jum", "Sab", "Min"];
+
+/** Six Monday-first weeks covering the month that `month` falls in. */
+export function monthGrid(month: IsoDate): IsoDate[] {
+  const first = startOfMonth(month);
+  const lead = (parseIso(first).getUTCDay() + 6) % 7;
+  const start = addDays(first, -lead);
+  return Array.from({ length: 42 }, (_, i) => addDays(start, i));
+}
 
 /** "26 Sep 2026" */
 export function formatDate(date: IsoDate): string {

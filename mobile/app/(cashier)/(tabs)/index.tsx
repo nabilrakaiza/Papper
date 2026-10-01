@@ -13,19 +13,20 @@ import { router } from "expo-router";
 import { Printer, Check, RefreshCw, ChefHat, Receipt, Utensils, Pencil, UtensilsCrossed, ShoppingBag, Undo2 } from "lucide-react-native";
 import { useOrders } from "../../../context/OrderContext";
 import { usePrinter, PrinterRole } from "../../../context/PrinterContext";
-import { Order, OrderItem } from "../../../types/order";
+import { Order } from "../../../types/order";
 import PrinterSelector from "../../../components/PrinterSelector";
 import { printReceipt } from "../../../lib/printer";
 import {
   latestPrintBatch,
   unprintedEarlierItems,
-  unprintedLatestBatch,
 } from "../../../lib/receiptLayout";
 import { useUser } from "@/hooks/useUser";
 import { unfinishedPrint, previousTrailText, whenTrailReady } from "../../../lib/printerTrail";
 import { orderTotal as orderTotalOf } from "../../../lib/constants";
 import { amountCollected, isCorrected, isSplit, unpaidPayers } from "../../../lib/splitBill";
-import PinOverrideModal from "@/components/PinOverrideModal";
+import BatchWarningDialog from "../../../components/BatchWarningDialog";
+import { useOrderActions } from "../../../hooks/useOrderActions";
+import { formatDayMonth, jakartaDateOf, todayJakarta } from "../../../lib/jakartaDate";
 
 function formatRupiah(amount: number): string {
   return "Rp " + Math.round(amount).toLocaleString("id-ID");
@@ -72,57 +73,6 @@ function TimerDot({ createdAt }: { createdAt: Date }) {
   );
 }
 
-
-type BatchWarningProps = {
-  order: Order | null;
-  title: string;
-  body: string;
-  items: OrderItem[];
-  hint: string;
-  confirmLabel: string;
-  onCancel: () => void;
-  onConfirm: (order: Order) => void;
-};
-
-function BatchWarningDialog({
-  order, title, body, items, hint, confirmLabel, onCancel, onConfirm,
-}: BatchWarningProps) {
-  return (
-    <Modal visible={order !== null} transparent animationType="fade" onRequestClose={onCancel}>
-      <View className="flex-1 bg-black/40 items-center justify-center px-8">
-        <View className="w-full bg-white rounded-3xl px-6 py-5">
-          <Text className="text-base font-extrabold text-gray-700">{title}</Text>
-          <Text className="text-xs font-bold text-gray-400 mt-2">{body}</Text>
-
-          <View className="bg-amber-50 border border-amber-100 rounded-2xl px-4 py-3 mt-3">
-            {items.map((item, idx) => (
-              <Text
-                key={`${item.menuId ?? "custom"}-${item.printBatch}-${idx}`}
-                className="text-xs font-extrabold text-amber-700"
-              >
-                {item.quantity}x {item.name}
-              </Text>
-            ))}
-          </View>
-
-          <Text className="text-xs font-bold text-gray-400 mt-3">{hint}</Text>
-
-          <View className="flex-row gap-3 mt-5">
-            <TouchableOpacity onPress={onCancel} className="flex-1 bg-gray-100 rounded-2xl py-3 items-center">
-              <Text className="text-sm font-extrabold text-gray-500">Batal</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              onPress={() => { if (order) onConfirm(order); }}
-              className="flex-1 bg-orange-400 rounded-2xl py-3 items-center"
-            >
-              <Text className="text-sm font-extrabold text-white">{confirmLabel}</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </View>
-    </Modal>
-  );
-}
 
 /**
  * The previous session's print trail, on screen. The trail is written for a
@@ -194,6 +144,12 @@ function OrderCard({
   const correcting = isCorrected(order) && !isPaid;
   const alreadyTaken = amountCollected(order);
 
+  // The daily number restarts every morning, so "#12" alone is ambiguous once
+  // an order from an earlier day is on the list — a correction of one, or a
+  // tab nobody closed.
+  const orderDay = jakartaDateOf(order.createdAt);
+  const earlierDay = orderDay !== todayJakarta() ? `${formatDayMonth(orderDay)} · ` : "";
+
   return (
     <View
       className={`rounded-2xl px-4 py-4 mb-3 ${
@@ -207,7 +163,9 @@ function OrderCard({
           <Text className={`text-sm font-bold ${isPaid ? "text-white" : "text-gray-800"}`}>
             Pesanan : {order.customerName}
           </Text>
-          {!isPaid && <TimerDot createdAt={order.createdAt} />}
+          {/* How long the table has been waiting. Not on a correction: the
+              order may be from last week, and the customer is not waiting. */}
+          {!isPaid && !correcting && <TimerDot createdAt={order.createdAt} />}
         </View>
 
         {correcting && (
@@ -293,7 +251,7 @@ function OrderCard({
           >
             {/* The number printed at the top of the kitchen ticket, so an
                 order called out by number can be found here. */}
-            #{order.dailyNumber ?? order.id} · Tempat Duduk: {order.seat}
+            #{order.dailyNumber ?? order.id} · {earlierDay}Tempat Duduk: {order.seat}
           </Text>
         </View>
 
@@ -306,7 +264,7 @@ function OrderCard({
 }
 
 export default function CashierHomeScreen() {
-  const { orders, loading, error, refetch, markItemsSent, reopenOrderWithPin } = useOrders();
+  const { orders, loading, error, refetch, markItemsSent } = useOrders();
   const { cashierPrinter, kitchenPrinter, setPrinter } = usePrinter();
 
   const [printerSelectorVisible, setPrinterSelectorVisible] = useState(false);
@@ -336,48 +294,8 @@ export default function CashierHomeScreen() {
   // and the warning comes back.
   const [acknowledgedSkips, setAcknowledgedSkips] = useState<Set<string>>(new Set());
 
-  // Set when opening an order to edit would strand the newest batch.
-  const [unprintedEditOrder, setUnprintedEditOrder] = useState<Order | null>(null);
-
-  // Set when an order has a payer who has already settled, so its lines are no
-  // longer freely editable.
-  const [partiallyPaidEditOrder, setPartiallyPaidEditOrder] = useState<Order | null>(null);
-
-  // The paid order a cashier is asking to reopen, held while the manager PIN is
-  // entered. Null closes the modal.
-  const [correctingOrder, setCorrectingOrder] = useState<Order | null>(null);
-
-  const openOrderEditor = (order: Order) => router.push(`/(cashier)/order/${order.id}`);
-
-  // Reopening is gated in the database, not here — the PIN modal is where the
-  // superadmin's approval is actually collected and checked.
-  const handleCorrect = (order: Order) => setCorrectingOrder(order);
-
-  // Adding items creates a batch above the current one, and a kitchen ticket
-  // only ever covers the newest batch — so anything still unprinted here would
-  // be stranded the moment the cashier saves. This is the point where the
-  // mistake can still be prevented rather than merely reported.
-  const handleEdit = (order: Order) => {
-    // Someone on this order has already paid, which freezes their lines in the
-    // database. An edit could still succeed against the payers who haven't —
-    // but a line added here lands on payer 1 by default, and if payer 1 is one
-    // of the settled ones the save is refused halfway through the editor, after
-    // the cashier has done the work. Say it here instead.
-    //
-    // Only the current round counts. A corrected order still carries the rows
-    // recording what was originally paid, and matching on those would refuse to
-    // open the editor for the correction the cashier was just given a PIN for.
-    if (order.payments.some((p) => p.reopenSeq === order.reopenSeq)) {
-      setPartiallyPaidEditOrder(order);
-      return;
-    }
-
-    if (unprintedLatestBatch(order).length > 0) {
-      setUnprintedEditOrder(order);
-      return;
-    }
-    openOrderEditor(order);
-  };
+  // Edit and Koreksi, shared with the order detail screen.
+  const { edit: handleEdit, correct: handleCorrect, dialogs: orderActionDialogs } = useOrderActions();
 
   const unpaid = orders.filter((o) => o.status === "unpaid");
   const paid = orders.filter((o) => o.status === "paid");
@@ -681,52 +599,7 @@ export default function CashierHomeScreen() {
         </View>
       )}
 
-      {/* Adding items would strand the newest batch — prevent it here. */}
-      <BatchWarningDialog
-        order={unprintedEditOrder}
-        title="Tambahan terakhir belum dicetak"
-        body="Kalau menambah pesanan sekarang, item berikut tidak akan pernah masuk struk dapur:"
-        items={unprintedEditOrder ? unprintedLatestBatch(unprintedEditOrder) : []}
-        hint="Cetak struk dapur dulu, lalu tambah pesanannya."
-        confirmLabel="Tetap tambah"
-        onCancel={() => setUnprintedEditOrder(null)}
-        onConfirm={(order) => {
-          setUnprintedEditOrder(null);
-          openOrderEditor(order);
-        }}
-      />
-
-      {/* Part of this bill is already settled, so its lines are no longer ours
-          to rearrange. Unlike the batch warnings there is no "carry on anyway"
-          — the database refuses it, so offering the choice would be a lie. */}
-      <Modal
-        visible={partiallyPaidEditOrder !== null}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setPartiallyPaidEditOrder(null)}
-      >
-        <View className="flex-1 bg-black/40 items-center justify-center px-8">
-          <View className="w-full bg-white rounded-3xl px-6 py-5">
-            <Text className="text-base font-extrabold text-gray-700">
-              Sebagian tagihan sudah dibayar
-            </Text>
-            <Text className="text-xs font-bold text-gray-400 mt-2">
-              {partiallyPaidEditOrder?.payments.filter(
-                (p) => p.reopenSeq === partiallyPaidEditOrder.reopenSeq
-              ).length ?? 0}{" "}
-              pelanggan sudah
-              membayar bagiannya, jadi pesanan ini tidak bisa diubah lagi.
-              Selesaikan pembayaran yang tersisa dulu.
-            </Text>
-            <TouchableOpacity
-              onPress={() => setPartiallyPaidEditOrder(null)}
-              className="bg-gray-100 rounded-2xl py-3 items-center mt-5"
-            >
-              <Text className="text-sm font-extrabold text-gray-500">Mengerti</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
+      {orderActionDialogs}
 
       {/* An earlier batch was already stranded — report it before printing. */}
       <BatchWarningDialog
@@ -770,30 +643,6 @@ export default function CashierHomeScreen() {
         onConnected={handlePrinterConnected}
       />
 
-      {/* Reopening a settled bill. The PIN is checked in the database by
-          reopen_order_with_pin, which is also what writes the audit row naming
-          the superadmin who approved it — nothing here is trusted. */}
-      {correctingOrder && (
-        <PinOverrideModal
-          visible
-          orderId={correctingOrder.id}
-          title="Koreksi Pesanan"
-          message="Masukkan PIN manager untuk membuka pesanan ini"
-          onSubmit={async (pin) => {
-            const { success, error } = await reopenOrderWithPin(correctingOrder.id, pin);
-            if (!success) return { success: false, error: error ?? undefined };
-
-            // Straight into the editor: reopening on its own achieves nothing,
-            // and an order sitting open with money already taken against it is
-            // the one state nobody should be left holding by accident.
-            const id = correctingOrder.id;
-            setCorrectingOrder(null);
-            router.push(`/(cashier)/order/${id}`);
-            return { success: true };
-          }}
-          onClose={() => setCorrectingOrder(null)}
-        />
-      )}
     </SafeAreaView>
   );
 }

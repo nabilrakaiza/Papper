@@ -1,4 +1,6 @@
-import { useState, useEffect, useRef, ReactNode } from "react";
+import { useState, useEffect, useRef, useCallback, ReactNode } from "react";
+import { router } from "expo-router";
+import { ChevronRight } from "lucide-react-native";
 import {
   View,
   Text,
@@ -10,18 +12,48 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { supabase } from "../../../lib/supabase";
 import { orderTotal } from "../../../lib/constants";
 import { isConnectionError, NO_CONNECTION } from "../../../lib/errors";
-import { addDays, todayJakarta } from "../../../lib/jakartaDate";
+import {
+  IsoDate,
+  formatDate,
+  formatDayMonth,
+  jakartaDateOf,
+  jakartaDayBounds,
+  todayJakarta,
+} from "../../../lib/jakartaDate";
 import { count, methodLabel, percent, rupiah } from "../../../components/owner/format";
+import DayPicker from "../../../components/DayPicker";
 import { DailySalesReport } from "../../../types/owner";
+import { OrderStatus } from "../../../types/order";
 
 type OrderRow = {
   id: number;
+  dailyNumber: number | null;
   customerName: string;
   seat: string;
+  createdAt: string;
   total: number;
-  status: "paid" | "unpaid";
+  status: OrderStatus;
   /** Already handed over on a split bill; 0 on an ordinary order. */
   collected: number;
+  /** Reopened at least once to correct it. */
+  corrected: boolean;
+};
+
+/**
+ * Money that moved on the chosen day to correct an order taken on an earlier
+ * one. Every report books it on the order's own day, so it is in none of the
+ * figures above — but it went into or out of today's drawer all the same.
+ */
+type CorrectionRow = {
+  id: number;
+  orderId: number;
+  dailyNumber: number | null;
+  customerName: string;
+  orderDay: IsoDate;
+  method: string;
+  /** Negative when money was handed back. */
+  amount: number;
+  createdAt: string;
 };
 
 // Every method is listed, in this order, even on a day it took nothing — "Debit
@@ -42,16 +74,6 @@ function categoryLabel(category: string): string {
 function hourLabel(hour: number): string {
   const h = String(hour).padStart(2, "0");
   return `${h}.00 – ${h}.59`;
-}
-
-/** Today in Jakarta as the pair of instants the orders query filters on. */
-function todayBounds(): { day: string; from: string; to: string } {
-  const day = todayJakarta();
-  return {
-    day,
-    from: new Date(`${day}T00:00:00+07:00`).toISOString(),
-    to: new Date(`${addDays(day, 1)}T00:00:00+07:00`).toISOString(),
-  };
 }
 
 function Section({
@@ -116,7 +138,7 @@ function Line({
 const Divider = () => <View className="h-px bg-gray-100 my-1.5" />;
 
 /**
- * The owner dashboard's figures for today, as numbers: Ringkasan, Pembayaran
+ * The owner dashboard's figures for one day, as numbers: Ringkasan, Pembayaran
  * and Menu, plus the hourly table. No cost, profit or margin — the database
  * does not send them to this screen at all.
  */
@@ -157,7 +179,7 @@ function DailyDetail({ report }: { report: DailySalesReport }) {
 
   return (
     <>
-      <Section title="Ringkasan" subtitle="Pesanan yang sudah lunas hari ini">
+      <Section title="Ringkasan" subtitle="Pesanan yang dibuat pada tanggal ini dan sudah lunas">
         <Line label="Penjualan kotor" value={rupiah(summary.gross)} note="Sebelum diskon dan pajak" />
         <Line label="Diskon" value={rupiah(-summary.discount)} />
         <Line label="Penjualan bersih" value={rupiah(summary.net)} />
@@ -264,51 +286,196 @@ function DailyDetail({ report }: { report: DailySalesReport }) {
   );
 }
 
+/**
+ * Correction money that moved on this day for orders from other days, with a
+ * total per method so the drawer can be counted against it.
+ */
+function OtherDayCorrections({ rows }: { rows: CorrectionRow[] }) {
+  const byMethod = new Map<string, number>();
+  for (const r of rows) byMethod.set(r.method, (byMethod.get(r.method) ?? 0) + r.amount);
+  const total = rows.reduce((sum, r) => sum + r.amount, 0);
+
+  return (
+    <Section
+      title="Koreksi Pesanan Hari Lain"
+      subtitle="Uang yang diterima atau dikembalikan pada tanggal ini untuk pesanan dari hari lain. Tidak termasuk dalam angka di atas — laporan mencatatnya pada tanggal pesanan."
+    >
+      {rows.map((r) => (
+        <TouchableOpacity
+          key={r.id}
+          onPress={() => router.push(`/(cashier)/history/${r.orderId}`)}
+          className="flex-row items-center py-1.5"
+        >
+          <View className="flex-1 pr-3">
+            <Text className="text-sm font-bold text-gray-800" numberOfLines={1}>
+              #{r.dailyNumber ?? r.orderId} · {r.customerName}
+            </Text>
+            <Text className="text-[11px] font-bold text-gray-400">
+              Pesanan {formatDate(r.orderDay)} · {methodLabel(r.method)}
+            </Text>
+          </View>
+          <Text
+            className={`text-sm font-extrabold ${r.amount < 0 ? "text-red-500" : "text-gray-800"}`}
+            style={num}
+          >
+            {rupiah(r.amount)}
+          </Text>
+        </TouchableOpacity>
+      ))}
+      <Divider />
+      {[...byMethod.entries()].map(([method, amount]) => (
+        <Line key={method} label={methodLabel(method)} value={rupiah(amount)} />
+      ))}
+      <Line label="Total" value={rupiah(total)} note="Negatif berarti uang keluar dari kasir" strong />
+    </Section>
+  );
+}
+
+/** One order on the day's lists. Tapping it opens the order. */
+function OrderListRow({
+  order,
+  tone,
+  amount,
+  note,
+}: {
+  order: OrderRow;
+  tone: "paid" | "unpaid" | "cancelled";
+  amount: string;
+  note?: string;
+}) {
+  const bg = tone === "unpaid" ? "bg-yellow-100" : tone === "cancelled" ? "bg-gray-50" : "bg-white";
+  const amountColor =
+    tone === "unpaid" ? "text-yellow-600" : tone === "cancelled" ? "text-gray-300 line-through" : "text-green-600";
+
+  return (
+    <TouchableOpacity
+      onPress={() => router.push(`/(cashier)/history/${order.id}`)}
+      className={`${bg} rounded-2xl px-4 py-3 mb-2 flex-row justify-between items-center shadow-sm`}
+    >
+      <View className="flex-1 pr-3">
+        <View className="flex-row items-center gap-2">
+          <Text className="text-sm font-bold text-gray-800" numberOfLines={1}>
+            {order.customerName}
+          </Text>
+          {order.corrected && (
+            <View className="bg-orange-100 rounded-lg px-2 py-0.5">
+              <Text className="text-[10px] font-extrabold text-orange-700">Koreksi</Text>
+            </View>
+          )}
+        </View>
+        <Text className="text-xs font-bold text-gray-400">
+          #{order.dailyNumber ?? order.id} · {formatJakartaTime(order.createdAt)} · Tempat Duduk{" "}
+          {order.seat}
+        </Text>
+        {note ? (
+          <Text className="text-[10px] font-extrabold text-blue-600 mt-0.5">{note}</Text>
+        ) : null}
+      </View>
+      <Text className={`text-sm font-extrabold ${amountColor}`}>{amount}</Text>
+      <ChevronRight size={16} color="#d1d5db" style={{ marginLeft: 6 }} />
+    </TouchableOpacity>
+  );
+}
+
+/** "14.05" on Jakarta's clock. */
+function formatJakartaTime(timestamp: string): string {
+  const shifted = new Date(new Date(timestamp).getTime() + 7 * 60 * 60 * 1000);
+  return `${String(shifted.getUTCHours()).padStart(2, "0")}.${String(shifted.getUTCMinutes()).padStart(2, "0")}`;
+}
+
 export default function CashierSalesScreen() {
+  // Null follows today, so a screen left open past midnight moves on to the new
+  // day by itself, as it did before there was a choice. A picked date stays put.
+  const [pickedDay, setPickedDay] = useState<IsoDate | null>(null);
+  const day = pickedDay ?? todayJakarta();
+  const isToday = day === todayJakarta();
+
+  // The realtime callback is set up once, so it reads the choice from here
+  // rather than from the render it was created in — and works "today" out when
+  // it runs, so a refresh after midnight loads the new day.
+  const pickedRef = useRef(pickedDay);
+  pickedRef.current = pickedDay;
+
   const [totalSales, setTotalSales] = useState(0);
   const [totalPaid, setTotalPaid] = useState(0);
   const [totalUnpaid, setTotalUnpaid] = useState(0);
   const [orders, setOrders] = useState<OrderRow[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [corrections, setCorrections] = useState<CorrectionRow[]>([]);
+  // Which day the figures on screen belong to. Until the chosen day's figures
+  // arrive the old ones are hidden, not shown under the new date.
+  const [loadedDay, setLoadedDay] = useState<IsoDate | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const [report, setReport] = useState<DailySalesReport | null>(null);
   const [reportError, setReportError] = useState<string | null>(null);
-  // Only the newest report request may land. A payment fires a change on
-  // order_payments and then another on orders, and the two fetches can come
-  // back in either order.
+  // Only the newest request of each kind may land. A payment fires a change on
+  // order_payments and then another on orders, and the fetches can come back in
+  // either order — and stepping through days quickly would otherwise let a slow
+  // answer for the day before overwrite the one now chosen.
+  const latestSales = useRef(0);
   const latestReport = useRef(0);
 
-  const fetchTodaySales = async () => {
+  const fetchSales = useCallback(async () => {
+    const request = ++latestSales.current;
+    const forDay = pickedRef.current ?? todayJakarta();
     setError(null);
 
     try {
-      // Today in Jakarta, the same day the report below covers — not the
-      // device's own midnight, which is only the same while its clock is on WIB.
-      const { from, to } = todayBounds();
+      // The chosen day in Jakarta, the same day the report below covers — not
+      // the device's own midnight, which is only the same while its clock is on
+      // WIB.
+      const { from, to } = jakartaDayBounds(forDay);
 
-      // Fetch all of today's orders (both paid and unpaid)
+      // Fetch all of the day's orders, whatever their status
       const { data: ordersData, error: ordersError } = await supabase
         .from("orders")
-        .select("id, customer_name, seat, discount, tax, status")
+        .select("id, daily_number, customer_name, seat, created_at, discount, tax, status, reopen_seq")
         .gte("created_at", from)
         .lt("created_at", to)
         .order("created_at", { ascending: false });
 
+      // Correction rows written on this day. The ones for this day's own orders
+      // are already in its figures and are dropped below.
+      const { data: correctionData, error: correctionError } = await supabase
+        .from("order_payments")
+        .select("id, order_id, amount, method_of_payment, created_at, orders(daily_number, customer_name, created_at)")
+        .gt("reopen_seq", 0)
+        .gte("created_at", from)
+        .lt("created_at", to)
+        .order("created_at", { ascending: true });
+
+      if (request !== latestSales.current) return;
+
       // A failed request used to be indistinguishable from a quiet day: the
       // error was never destructured, so everything reset to zero and the cashier
-      // was shown "Rp 0" for today's sales as though that were the real figure.
-      if (ordersError) {
-        console.error("Failed to fetch today's sales:", ordersError.message);
-        setError("Gagal memuat penjualan hari ini. Periksa koneksi Anda.");
+      // was shown "Rp 0" for the day's sales as though that were the real figure.
+      if (ordersError || correctionError) {
+        console.error("Failed to fetch sales:", (ordersError ?? correctionError)?.message);
+        setError("Gagal memuat penjualan. Periksa koneksi Anda.");
         return;
       }
+
+      setCorrections(
+        (correctionData ?? [])
+          .map((p: any) => ({
+            id: p.id,
+            orderId: p.order_id,
+            dailyNumber: p.orders?.daily_number ?? null,
+            customerName: p.orders?.customer_name ?? "",
+            orderDay: p.orders ? jakartaDateOf(p.orders.created_at) : forDay,
+            method: p.method_of_payment,
+            amount: p.amount,
+            createdAt: p.created_at,
+          }))
+          .filter((r) => r.orderDay !== forDay)
+      );
 
       if (!ordersData || ordersData.length === 0) {
         setTotalSales(0);
         setTotalPaid(0);
         setTotalUnpaid(0);
         setOrders([]);
+        setLoadedDay(forDay);
         return;
       }
 
@@ -327,6 +494,8 @@ export default function CashierSalesScreen() {
         .from("order_payments")
         .select("order_id, amount")
         .in("order_id", orderIds);
+
+      if (request !== latestSales.current) return;
 
       const collectedByOrder = new Map<number, number>();
       for (const p of payments ?? []) {
@@ -354,11 +523,14 @@ export default function CashierSalesScreen() {
 
         return {
           id: order.id,
+          dailyNumber: order.daily_number ?? null,
           customerName: order.customer_name,
           seat: order.seat,
+          createdAt: order.created_at,
           total,
           status: order.status,
           collected,
+          corrected: (order.reopen_seq ?? 0) > 0,
         };
       });
 
@@ -366,23 +538,23 @@ export default function CashierSalesScreen() {
       setTotalSales(paidTotal + unpaidTotal);
       setTotalPaid(paidTotal);
       setTotalUnpaid(unpaidTotal);
+      setLoadedDay(forDay);
       setError(null);
     } catch (e) {
-      console.error("Failed to fetch today's sales:", e);
-      setError("Gagal memuat penjualan hari ini. Periksa koneksi Anda.");
-    } finally {
-      setLoading(false);
+      if (request !== latestSales.current) return;
+      console.error("Failed to fetch sales:", e);
+      setError("Gagal memuat penjualan. Periksa koneksi Anda.");
     }
-  };
+  }, []);
 
   // Fetched apart from the cards above and failing on its own: the cards are
   // what the cashier works from, and a missing breakdown should not take them
   // down with it.
-  const fetchReport = async () => {
+  const fetchReport = useCallback(async () => {
     const request = ++latestReport.current;
     try {
       const { data, error: rpcError } = await supabase.rpc("daily_sales_report", {
-        p_date: todayBounds().day,
+        p_date: pickedRef.current ?? todayJakarta(),
       });
       if (request !== latestReport.current) return;
 
@@ -407,15 +579,22 @@ export default function CashierSalesScreen() {
       console.error("Failed to fetch daily sales report:", e);
       setReportError("Gagal memuat rincian penjualan. Periksa koneksi Anda.");
     }
-  };
+  }, []);
+
+  // A new day: drop the old day's breakdown at once rather than leave it under
+  // the new date until the fetch lands.
+  useEffect(() => {
+    setReport(null);
+    setReportError(null);
+    fetchSales();
+    fetchReport();
+  }, [day, fetchSales, fetchReport]);
 
   useEffect(() => {
     const refresh = () => {
-      fetchTodaySales();
+      fetchSales();
       fetchReport();
     };
-
-    refresh();
 
     // order_payments as well as orders: one payer settling their share of a
     // split bill writes only a payment row, and the figures here move with it.
@@ -428,21 +607,12 @@ export default function CashierSalesScreen() {
     return () => {
       supabase.removeChannel(subscription);
     };
-  }, []);
+  }, [fetchSales, fetchReport]);
 
-  // Only the first load blanks the screen. A refetch triggered by a payment
-  // used to swap everything for a spinner, which with two tables now being
-  // watched would flash on every sale.
-  if (loading) {
-    return (
-      <SafeAreaView className="flex-1 bg-gray-100 items-center justify-center">
-        <ActivityIndicator size="large" color="#3a7bd5" />
-      </SafeAreaView>
-    );
-  }
-
+  const loaded = loadedDay === day;
   const paidOrders = orders.filter((o) => o.status === "paid");
   const unpaidOrders = orders.filter((o) => o.status === "unpaid");
+  const cancelledOrders = orders.filter((o) => o.status === "cancelled");
 
   return (
     <SafeAreaView className="flex-1 bg-gray-100">
@@ -450,15 +620,33 @@ export default function CashierSalesScreen() {
         <Text className="text-2xl font-black text-gray-900">Penjualan Harian</Text>
       </View>
 
+      <View
+        className="px-4 pb-3"
+        style={{ width: "100%", maxWidth: 720, alignSelf: "center" }}
+      >
+        <DayPicker
+          value={day}
+          onChange={(d) => setPickedDay(d === todayJakarta() ? null : d)}
+        />
+      </View>
+
       {!!error && (
         <TouchableOpacity
-          onPress={() => setError(null)}
+          onPress={() => {
+            setError(null);
+            fetchSales();
+          }}
           className="mx-4 mb-2 bg-red-50 border border-red-200 rounded-2xl px-4 py-3"
         >
-          <Text className="text-xs font-bold text-red-600">{error}</Text>
+          <Text className="text-xs font-bold text-red-600">{error} Ketuk untuk mencoba lagi.</Text>
         </TouchableOpacity>
       )}
 
+      {!loaded ? (
+        <View className="flex-1 items-center justify-center">
+          {!error && <ActivityIndicator size="large" color="#3a7bd5" />}
+        </View>
+      ) : (
       <ScrollView
         contentContainerStyle={{
           paddingHorizontal: 16,
@@ -495,7 +683,9 @@ export default function CashierSalesScreen() {
 
         {/* Total */}
         <View className="bg-gray-900 rounded-2xl px-4 py-3 mb-4 flex-row justify-between items-center">
-          <Text className="text-sm font-extrabold text-white/70">Total Hari Ini</Text>
+          <Text className="text-sm font-extrabold text-white/70">
+            {isToday ? "Total Hari Ini" : `Total ${formatDayMonth(day)}`}
+          </Text>
           <Text className="text-base font-black text-white">
             {formatRupiah(totalSales)}
           </Text>
@@ -512,7 +702,9 @@ export default function CashierSalesScreen() {
           </TouchableOpacity>
         )}
 
-        {report && <DailyDetail report={report} />}
+        {report && <DailyDetail key={day} report={report} />}
+
+        {corrections.length > 0 && <OtherDayCorrections rows={corrections} />}
 
         {/* Unpaid orders */}
         {unpaidOrders.length > 0 && (
@@ -520,26 +712,20 @@ export default function CashierSalesScreen() {
             <Text className="text-xs font-extrabold text-gray-400 uppercase tracking-widest mb-3 px-1">
               Pesanan Belum Selesai
             </Text>
+            {/* What is still owed, not the whole bill — part of this one may
+                already be in the till. */}
             {unpaidOrders.map((order) => (
-              <View
+              <OrderListRow
                 key={order.id}
-                className="bg-yellow-100 rounded-2xl px-4 py-3 mb-2 flex-row justify-between items-center shadow-sm"
-              >
-                <View>
-                  <Text className="text-sm font-bold text-gray-800">{order.customerName}</Text>
-                  <Text className="text-xs font-bold text-gray-400">Tempat Duduk {order.seat}</Text>
-                  {order.collected > 0 && (
-                    <Text className="text-[10px] font-extrabold text-blue-600 mt-0.5">
-                      Sudah dibayar sebagian · {formatRupiah(order.collected)}
-                    </Text>
-                  )}
-                </View>
-                {/* What is still owed, not the whole bill — part of this one may
-                    already be in the till. */}
-                <Text className="text-sm font-extrabold text-yellow-600">
-                  {formatRupiah(Math.max(0, order.total - order.collected))}
-                </Text>
-              </View>
+                order={order}
+                tone="unpaid"
+                amount={formatRupiah(Math.max(0, order.total - order.collected))}
+                note={
+                  order.collected > 0
+                    ? `Sudah dibayar sebagian · ${formatRupiah(order.collected)}`
+                    : undefined
+                }
+              />
             ))}
           </>
         )}
@@ -550,25 +736,37 @@ export default function CashierSalesScreen() {
         </Text>
         {paidOrders.length === 0 ? (
           <Text className="text-center text-gray-300 font-bold mb-4">
-            Belum ada pesanan selesai hari ini
+            {isToday ? "Belum ada pesanan selesai hari ini" : "Tidak ada pesanan selesai"}
           </Text>
         ) : (
           paidOrders.map((order) => (
-            <View
+            <OrderListRow
               key={order.id}
-              className="bg-white rounded-2xl px-4 py-3 mb-2 flex-row justify-between items-center shadow-sm"
-            >
-              <View>
-                <Text className="text-sm font-bold text-gray-800">{order.customerName}</Text>
-                <Text className="text-xs font-bold text-gray-400">Tempat Duduk {order.seat}</Text>
-              </View>
-              <Text className="text-sm font-extrabold text-green-600">
-                {formatRupiah(order.total)}
-              </Text>
-            </View>
+              order={order}
+              tone="paid"
+              amount={formatRupiah(order.total)}
+            />
           ))
         )}
+
+        {/* Cancelled orders, so one can still be looked up. */}
+        {cancelledOrders.length > 0 && (
+          <>
+            <Text className="text-xs font-extrabold text-gray-400 uppercase tracking-widest mb-3 px-1 mt-2">
+              Dibatalkan
+            </Text>
+            {cancelledOrders.map((order) => (
+              <OrderListRow
+                key={order.id}
+                order={order}
+                tone="cancelled"
+                amount={formatRupiah(order.total)}
+              />
+            ))}
+          </>
+        )}
       </ScrollView>
+      )}
     </SafeAreaView>
   );
 }
