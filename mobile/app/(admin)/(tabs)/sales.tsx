@@ -14,6 +14,20 @@ import { VictoryBar, VictoryChart, VictoryAxis, VictoryTheme } from "victory-nat
 import { supabase } from "../../../lib/supabase";
 import { SalesPeriod } from "../../../types/sales";
 import { orderTotal } from "../../../lib/constants";
+import {
+  IsoDate,
+  MONTHS_SHORT,
+  WEEKDAYS_SHORT,
+  addDays,
+  addMonths,
+  formatDayMonth,
+  jakartaDateOf,
+  jakartaDayBounds,
+  parseIso,
+  startOfMonth,
+  startOfWeek,
+  todayJakarta,
+} from "../../../lib/jakartaDate";
 
 type SalesDataPoint = { label: string; total: number };
 type TopMenuItem = { name: string; quantity: number };
@@ -35,10 +49,13 @@ const METHOD_LABELS: Record<string, string> = {
 // Fixed order so the card doesn't reshuffle between periods.
 const METHOD_ORDER = ["Cash", "QRIS", "Debit", "Bank Transfer"];
 
-function formatRupiah(amount: number): string {
-  if (amount >= 1_000_000) return "Rp " + (amount / 1_000_000).toFixed(1) + "M";
-  if (amount >= 1_000) return "Rp " + (amount / 1_000).toFixed(0) + "K";
-  return "Rp " + amount.toLocaleString("id-ID");
+/** Axis ticks, as the owner dashboard writes them: "1,5 jt", "500 rb". */
+function formatAxisRupiah(amount: number): string {
+  if (amount >= 1_000_000) {
+    return (amount / 1_000_000).toLocaleString("id-ID", { maximumFractionDigits: 1 }) + " jt";
+  }
+  if (amount >= 1_000) return Math.round(amount / 1_000).toLocaleString("id-ID") + " rb";
+  return amount.toLocaleString("id-ID");
 }
 
 function formatRupiahFull(amount: number): string {
@@ -79,66 +96,72 @@ function PeriodToggle({
   );
 }
 
-// Get date range based on period
-function getDateRange(period: SalesPeriod): { from: string; to: string } {
-  const now = new Date();
-  const to = now.toISOString();
-
+// The bars a period is drawn with, oldest first, as Jakarta dates: one per day
+// for the last 7 days, one per Monday-start week for the last 4 weeks (this
+// week included), one per month for the last 5 months (this month included).
+//
+// Built from the calendar rather than from the orders, so the bars always come
+// in date order and a day with no sales shows as an empty bar instead of
+// vanishing. They used to be keyed by whichever order the database returned
+// rows in, which put the days out of order ("Sun, Fri, Mon, ...").
+function buckets(period: SalesPeriod): { start: IsoDate; label: string }[] {
+  const today = todayJakarta();
   if (period === "daily") {
-    // Last 7 days
-    const from = new Date(now);
-    from.setDate(from.getDate() - 6);
-    from.setHours(0, 0, 0, 0);
-    return { from: from.toISOString(), to };
-  } else if (period === "weekly") {
-    // Last 4 weeks
-    const from = new Date(now);
-    from.setDate(from.getDate() - 27);
-    from.setHours(0, 0, 0, 0);
-    return { from: from.toISOString(), to };
-  } else {
-    // Last 5 months
-    const from = new Date(now);
-    from.setMonth(from.getMonth() - 4);
-    from.setDate(1);
-    from.setHours(0, 0, 0, 0);
-    return { from: from.toISOString(), to };
+    return Array.from({ length: 7 }, (_, i) => {
+      const day = addDays(today, i - 6);
+      return { start: day, label: WEEKDAYS_SHORT[parseIso(day).getUTCDay()] };
+    });
   }
+  if (period === "weekly") {
+    return Array.from({ length: 4 }, (_, i) => {
+      const week = addDays(startOfWeek(today), (i - 3) * 7);
+      return { start: week, label: formatDayMonth(week) };
+    });
+  }
+  return Array.from({ length: 5 }, (_, i) => {
+    const month = addMonths(startOfMonth(today), i - 4);
+    return { start: month, label: MONTHS_SHORT[parseIso(month).getUTCMonth()] };
+  });
 }
 
-// Group orders into chart data points
+// From the start of the first bar, Jakarta time, to now.
+function getDateRange(period: SalesPeriod): { from: string; to: string } {
+  return {
+    from: jakartaDayBounds(buckets(period)[0].start).from,
+    to: new Date().toISOString(),
+  };
+}
+
+// Add each order's total to the bar its Jakarta date falls in.
 function groupOrders(
   orders: { created_at: string; total: number }[],
   period: SalesPeriod
 ): SalesDataPoint[] {
-  const map: Record<string, number> = {};
-
-  orders.forEach(({ created_at, total }) => {
-    const date = new Date(created_at);
-    let key = "";
-
-    if (period === "daily") {
-      key = date.toLocaleDateString("en-US", { weekday: "short" });
-    } else if (period === "weekly") {
-      // Week number label
-      const weekStart = new Date(date);
-      weekStart.setDate(date.getDate() - date.getDay());
-      key = weekStart.toLocaleDateString("en-US", { month: "short", day: "numeric" });
-    } else {
-      key = date.toLocaleDateString("en-US", { month: "short" });
+  const bars = buckets(period).map((b) => ({ ...b, total: 0 }));
+  for (const { created_at, total } of orders) {
+    const day = jakartaDateOf(created_at);
+    // The last bar whose start is on or before the order's day.
+    for (let i = bars.length - 1; i >= 0; i--) {
+      if (bars[i].start <= day) {
+        bars[i].total += total;
+        break;
+      }
     }
-
-    map[key] = (map[key] ?? 0) + total;
-  });
-
-  return Object.entries(map).map(([label, total]) => ({ label, total }));
+  }
+  return bars.map(({ label, total }) => ({ label, total }));
 }
+
+const CHART_PADDING = { top: 20, bottom: 40, left: 56, right: 16 };
 
 export default function AdminSalesScreen() {
   // Hook, not Dimensions.get at module scope: that captured the width once at
   // import time, so the chart kept the launch orientation's width after a
   // rotation and either overflowed or left a gap.
   const { width } = useWindowDimensions();
+  // The chart card's own width once laid out. The screen width minus a guess at
+  // the margins was close enough on a phone, but in a desktop browser it is the
+  // card that sets the width, and the bars were sized for neither.
+  const [chartWidth, setChartWidth] = useState<number | null>(null);
 
   // 1. Split state into two independent periods
   const [salesPeriod, setSalesPeriod] = useState<SalesPeriod>("daily");
@@ -396,6 +419,12 @@ export default function AdminSalesScreen() {
     setTopSellingPeriod(p);
   };
 
+  // Bars no wider than 48px, and the edge padding at least half a bar, so the
+  // first and last bars stay inside the card however wide it is.
+  const chartW = chartWidth ?? width - 64;
+  const plotW = chartW - CHART_PADDING.left - CHART_PADDING.right;
+  const barWidth = Math.max(10, Math.min(48, (plotW / Math.max(chartData.length, 1)) * 0.5));
+
   // Show full screen loader only if BOTH are loading on initial render
   const isInitialLoading = loadingSales && loadingTopSelling && chartData.length === 0 && topMenu.length === 0;
 
@@ -426,7 +455,10 @@ export default function AdminSalesScreen() {
               <Text className="text-lg font-black text-gray-900">Total Penjualan</Text>
             </View>
 
-            <View className="bg-cyan-100 rounded-2xl overflow-hidden min-h-[200px]">
+            <View
+              className="bg-cyan-100 rounded-2xl overflow-hidden min-h-[200px]"
+              onLayout={(e) => setChartWidth(Math.round(e.nativeEvent.layout.width))}
+            >
               {loadingSales ? (
                  <View className="h-40 items-center justify-center">
                    <ActivityIndicator size="small" color="#3a7bd5" />
@@ -435,11 +467,11 @@ export default function AdminSalesScreen() {
                 <View collapsable={false}>
                   <VictoryChart
                     key={salesPeriod}
-                    width={width - 64}
+                    width={chartW}
                     height={200}
                     theme={VictoryTheme.material}
-                    domainPadding={{ x: 20 }}
-                    padding={{ top: 20, bottom: 40, left: 48, right: 16 }}
+                    domainPadding={{ x: barWidth / 2 + 12 }}
+                    padding={CHART_PADDING}
                   >
                     <VictoryAxis
                       style={{
@@ -450,7 +482,7 @@ export default function AdminSalesScreen() {
                     />
                     <VictoryAxis
                       dependentAxis
-                      tickFormat={(t) => formatRupiah(t)}
+                      tickFormat={(t) => formatAxisRupiah(t)}
                       style={{
                         tickLabels: { fontSize: 8, fontWeight: "600", fill: "#888" },
                         axis: { stroke: "transparent" },
@@ -459,6 +491,7 @@ export default function AdminSalesScreen() {
                     />
                     <VictoryBar
                       data={chartData.map((d) => ({ x: d.label, y: d.total }))}
+                      barWidth={barWidth}
                       style={{ data: { fill: "#4caf50", rx: 6 } }}
                       animate={{ duration: 400, onLoad: { duration: 400 } }}
                     />
