@@ -1,0 +1,127 @@
+<pengantar>
+  <div class="catatan">
+    <b>Tentang panduan ini</b>
+    Akun owner hanya bisa dipakai di versi web Papper, dibuka di browser komputer atau laptop. Akun owner tidak bisa
+    masuk di aplikasi HP. Semua halaman owner hanya untuk dilihat; tidak ada data yang bisa diubah dari sini.
+  </div>
+  <div class="catatan">
+    <b>Waktu</b>
+    Semua tanggal dan jam memakai waktu Jakarta (WIB), di komputer mana pun laporan dibuka.
+  </div>
+</pengantar>
+
+<h2>Masuk dan keluar</h2>
+<ol class="langkah">
+  <li>Buka alamat web Papper di browser.</li>
+  <li>Isi <span class="t">Nama Pengguna</span> dan <span class="t">Kata Sandi</span> akun owner.</li>
+  <li>Tekan <span class="t">Masuk</span>. Halaman <b>Ringkasan</b> terbuka.</li>
+</ol>
+<p>Menu ada di sisi kiri: <span class="t">Ringkasan</span>, <span class="t">Menu</span>, <span class="t">Pembayaran</span>,
+<span class="t">Pesanan</span>, dan <span class="t">Pembelian</span>. Untuk keluar, tekan <span class="t">Keluar</span> di bawah
+nama Anda di sisi kiri.</p>
+<foto id="O-01" lebar="lebar">Tampilan dasbor owner dengan menu di sisi kiri</foto>
+
+<h2>Memilih periode</h2>
+<p>Semua halaman memakai periode yang sama, dipilih dari tombol tanggal di bagian atas. Periode tetap sama saat
+berpindah halaman.</p>
+<ol class="langkah">
+  <li>Tekan tombol periode di bagian atas.</li>
+  <li>Pilih salah satu pintasan: Hari ini, Kemarin, Minggu ini, Minggu lalu, Bulan ini, Bulan lalu, Tahun ini, atau
+    Tahun lalu.</li>
+  <li>Atau pilih sendiri di kalender: klik tanggal awal, klik tanggal akhir, lalu tekan <span class="t">Terapkan</span>.</li>
+</ol>
+<foto id="O-02" lebar="lebar">Pemilih periode dengan pintasan dan kalender</foto>
+<div class="catatan">
+  <b>Pesanan mana yang dihitung?</b>
+  Laporan menghitung pesanan yang sudah <b>lunas</b>, menurut tanggal pesanan itu dibuat. Pesanan yang belum dibayar
+  atau dibatalkan tidak ikut dihitung.
+</div>
+
+<h2>Ringkasan</h2>
+<p>Gambaran utama penjualan pada periode yang dipilih.</p>
+<foto id="O-03" lebar="lebar">Ringkasan: grafik harian, per hari dalam seminggu, dan per jam</foto>
+<table>
+  <tr><th>Angka</th><th>Arti</th></tr>
+  <tr><td>Penjualan kotor</td><td>Total harga item yang terjual, sebelum diskon dan pajak.</td></tr>
+  <tr><td>Penjualan bersih</td><td>Penjualan kotor dikurangi diskon.</td></tr>
+  <tr><td>Laba kotor</td><td>Penjualan bersih dikurangi HPP (biaya bahan ditambah 10% biaya lain-lain).</td></tr>
+  <tr><td>Margin kotor</td><td>Laba kotor dibagi penjualan bersih, dalam persen.</td></tr>
+  <tr><td>Transaksi</td><td>Jumlah pesanan lunas.</td></tr>
+  <tr><td>Rata-rata per transaksi</td><td>Penjualan bersih dibagi jumlah transaksi.</td></tr>
+  <tr><td>Pajak</td><td>Pajak yang dipungut. Dicatat terpisah, bukan bagian penjualan.</td></tr>
+  <tr><td>Total diterima</td><td>Uang yang masuk: penjualan bersih ditambah pajak.</td></tr>
+</table>
+<p>Di bawahnya ada tiga grafik: <b>Penjualan kotor harian</b>, <b>Per hari dalam seminggu</b> (hari apa yang paling ramai),
+dan <b>Per jam</b> (jam berapa yang paling ramai).</p>
+<div class="catatan">
+  <b>Item tanpa HPP</b>
+  Menu yang HPP-nya belum diatur, dan item kustom dari kasir, dihitung tanpa biaya. Akibatnya laba kotor terlihat lebih
+  besar dari sebenarnya. Jika ada item seperti itu, Ringkasan menampilkan pesan berapa penjualan yang berasal darinya.
+  Minta admin melengkapi resep menu tersebut.
+</div>
+
+<h2>Menu</h2>
+<p>Penjualan per menu dan per kategori.</p>
+<ul>
+  <li><b>Semua item</b>: tabel setiap menu yang terjual, dengan jumlah, penjualan, HPP, laba kotor, dan margin.
+    Klik judul kolom untuk mengurutkan, misalnya menurut laba kotor terbesar.</li>
+  <li><b>Kategori menurut jumlah terjual</b> dan <b>Kategori menurut penjualan</b>: porsi setiap kategori.</li>
+  <li><b>Item terlaris per kategori</b>.</li>
+</ul>
+<foto id="O-04" lebar="lebar">Halaman Menu</foto>
+<p>Tulisan <b>belum diatur</b> di kolom HPP berarti menu itu belum punya resep atau HPP.</p>
+
+<h2>Pembayaran</h2>
+<p>Uang yang diterima menurut metode pembayaran (Tunai, QRIS, Debit, Transfer Bank).</p>
+<ul>
+  <li><b>Total diterima</b>: termasuk pajak.</li>
+  <li><b>Pembayaran</b>: jumlah pembayaran. Split bill dihitung per pembayar, jadi angka ini bisa lebih besar dari
+    jumlah transaksi.</li>
+  <li><b>Metode terbanyak</b>.</li>
+  <li><b>Rincian</b>: tabel per metode dengan jumlah pembayaran, total, porsi, dan rata-rata.</li>
+</ul>
+<foto id="O-05" lebar="lebar">Halaman Pembayaran</foto>
+<p>Uang yang dikembalikan saat koreksi pesanan sudah dikurangi dari angka ini.</p>
+
+<h2>Pesanan</h2>
+<p>Daftar setiap pesanan pada periode yang dipilih.</p>
+<ol class="langkah">
+  <li>Saring menurut status: <span class="t">Semua</span>, <span class="t">Lunas</span>, <span class="t">Belum bayar</span>,
+    atau <span class="t">Dibatalkan</span>.</li>
+  <li>Cari dengan nama pelanggan atau nomor pesanan.</li>
+  <li>Klik pesanan untuk melihat isinya: item, rincian harga, dan pembayaran.</li>
+  <li>Pindah halaman dengan tombol halaman sebelumnya dan berikutnya di bawah tabel.</li>
+</ol>
+<foto id="O-06" lebar="lebar">Halaman Pesanan dengan satu pesanan dibuka</foto>
+<ul>
+  <li><b>No.</b> adalah nomor harian; nomor ini mulai dari 1 lagi setiap hari.</li>
+  <li>Tanda <b>DIKOREKSI</b> berarti pesanan pernah dibuka kembali setelah lunas, dengan persetujuan PIN superadmin.
+    Bagian pembayaran menunjukkan setiap koreksi, termasuk uang yang dikembalikan.</li>
+  <li>Metode <b>Terpisah</b> berarti pesanan dibayar beberapa orang (split bill).</li>
+</ul>
+
+<h2>Pembelian</h2>
+<p>Belanja bahan, dari setiap penambahan stok yang dicatat admin.</p>
+<ul>
+  <li><b>Total pembelian</b> dan <b>Jumlah pembelian</b>.</li>
+  <li><b>Pembelian ÷ penjualan bersih</b>: berapa persen dari penjualan yang dipakai untuk belanja bahan.</li>
+  <li><b>Pembelian harian</b>: grafik belanja per hari.</li>
+  <li><b>Paling banyak dibelanjakan</b>: 10 barang dengan total belanja terbesar.</li>
+  <li><b>Semua barang yang dibeli</b>: tabel setiap barang, dengan harga per satuan pada pembelian pertama dan terakhir
+    di periode itu (<b>Harga awal → akhir</b>) dan <b>Perubahan</b>-nya. Gunakan ini untuk melihat kenaikan harga bahan.</li>
+</ul>
+<foto id="O-07" lebar="lebar">Halaman Pembelian</foto>
+<p>Pembelian dihitung menurut tanggal pembelian, bukan tanggal dicatat. Angka ini hanya belanja bahan, belum termasuk
+biaya lain seperti gaji, sewa, atau listrik.</p>
+
+<h2>Jika ada masalah</h2>
+<table>
+  <tr><th>Masalah</th><th>Yang harus dilakukan</th></tr>
+  <tr><td>"Akun owner hanya dapat digunakan di versi web"</td><td>Buka Papper di browser, bukan di aplikasi HP.</td></tr>
+  <tr><td>Angka tidak muncul atau gagal dimuat</td><td>Periksa koneksi internet, lalu muat ulang halaman browser.</td></tr>
+  <tr><td>Angka hari ini berbeda dari kasir</td><td>Laporan hanya menghitung pesanan lunas. Pesanan yang masih terbuka
+    baru masuk setelah dibayar.</td></tr>
+  <tr><td>Angka hari lalu berubah</td><td>Ada koreksi pesanan dari hari itu. Cek tanda DIKOREKSI di halaman Pesanan.</td></tr>
+  <tr><td>Laba kotor terlihat terlalu besar</td><td>Ada item tanpa HPP (menu yang HPP-nya belum diatur, atau item kustom).
+    Cek pesan di Ringkasan dan tulisan "belum diatur" di halaman Menu.</td></tr>
+</table>

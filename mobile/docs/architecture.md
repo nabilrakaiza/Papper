@@ -48,11 +48,12 @@ app/
   _layout.tsx              root: providers + role-based redirect
   (auth)/login.tsx
   (cashier)/
-    (tabs)/index.tsx       open + paid order lists
+    (tabs)/index.tsx       every open order + today's paid ones
     (tabs)/availability.tsx  toggle menu items in/out of stock
-    (tabs)/sales.tsx       today's takings, plus the owner's figures via daily_sales_report
+    (tabs)/sales.tsx       one chosen day's takings and orders, the owner's figures via daily_sales_report, and correction money for other days' orders
     (tabs)/profile.tsx
     new-order.tsx
+    history/[id].tsx       one order of any day, read-only; reprint, Koreksi (PIN), or edit/pay if open
     order/[id].tsx         edit an open order; cancellation entry point
     split/[id].tsx         divide an open order's lines between payers
     payment/[id].tsx       take payment, close the order
