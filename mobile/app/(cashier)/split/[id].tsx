@@ -488,14 +488,14 @@ export default function SplitBillScreen() {
                   {subtotal === 0 ? " — kosong" : ""}
                 </Text>
                 <Text className="text-sm font-extrabold text-gray-900">
-                  {formatRupiah(orderTotal(subtotal, order.discount))}
+                  {formatRupiah(orderTotal(subtotal, order.discount, order.tax))}
                 </Text>
               </View>
             );
           })}
 
           <Text className="text-[10px] font-bold text-gray-400 mt-1">
-            Sudah termasuk pajak{order.discount > 0 ? ` dan diskon ${order.discount}%` : ""}.
+            Sudah termasuk pajak {order.tax}%{order.discount > 0 ? ` dan diskon ${order.discount}%` : ""}.
           </Text>
         </View>
 

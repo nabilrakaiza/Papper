@@ -11,7 +11,7 @@ import { router } from "expo-router";
 import { ChevronLeft, ChevronRight, ArrowUpRight, ArrowDownRight } from "lucide-react-native";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "../../../context/AuthContext";
-import { TAX_RATE, orderTotal } from "../../../lib/constants";
+import { orderTotal } from "../../../lib/constants";
 
 type MonthTotals = {
   purchases: number;
@@ -121,7 +121,7 @@ export default function ComparisonScreen() {
     // screen and the receipt use, so the numbers reconcile across screens.
     const { data: orders, error: orderError } = await supabase
       .from("orders")
-      .select("id, discount")
+      .select("id, discount, tax")
       .eq("status", "paid")
       .gte("created_at", from.toISOString())
       .lt("created_at", to.toISOString());
@@ -141,7 +141,7 @@ export default function ComparisonScreen() {
         const subtotal = (items ?? [])
           .filter((i) => i.order_id === order.id)
           .reduce((s, i) => s + i.price * i.quantity, 0);
-        return sum + orderTotal(subtotal, order.discount);
+        return sum + orderTotal(subtotal, order.discount, order.tax);
       }, 0);
     }
 
@@ -409,8 +409,8 @@ export default function ComparisonScreen() {
           <Text className="text-[11px] font-bold text-gray-400 leading-4 mt-4 px-1">
             Pembelian diambil dari tanggal pembelian (bukan tanggal input), jadi
             restock yang dibackdate masuk ke bulan yang benar. Penjualan dihitung
-            dari pesanan berstatus lunas, setelah diskon dan termasuk pajak{" "}
-            {TAX_RATE * 100}%. Selisih ini belum dikurangi biaya lain di luar
+            dari pesanan berstatus lunas, setelah diskon dan termasuk pajak
+            masing-masing pesanan. Selisih ini belum dikurangi biaya lain di luar
             pembelian stok.
           </Text>
         )}

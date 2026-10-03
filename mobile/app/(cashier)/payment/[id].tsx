@@ -13,7 +13,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { router, useLocalSearchParams } from "expo-router";
 import { ChevronLeft, Users, Pencil, Check, Printer } from "lucide-react-native";
 import { useOrders } from "../../../context/OrderContext";
-import { TAX_RATE, orderTotal } from "../../../lib/constants";
+import { clampPercent, orderTotal } from "../../../lib/constants";
 import { groupItems } from "../../../lib/orderItems";
 import { unprintedLatestBatch } from "../../../lib/receiptLayout";
 import {
@@ -56,6 +56,19 @@ const formatRupiahInput = (digits: string) => {
 function formatRupiah(amount: number): string {
   return "Rp " + Math.round(amount).toLocaleString("id-ID");
 }
+
+/**
+ * What a percentage field keeps of what was typed: digits only, no leading
+ * zeros, and never above 100. Shared by the discount and the tax, which are
+ * both CHECK (0..100) in the database — a figure outside that range would be
+ * refused on save, after the cashier had already been shown a total built on it.
+ */
+const percentInput = (text: string): string => {
+  // Digits only, so a minus sign or a decimal point never gets in.
+  const digitsOnly = text.replace(/[^0-9]/g, "").replace(/^0+(?=\d)/, "");
+  if (digitsOnly === "") return "";
+  return parseInt(digitsOnly, 10) > 100 ? "100" : digitsOnly;
+};
 
 function MethodPicker({
   value,
@@ -109,6 +122,7 @@ function PayerCard({
   order,
   customerNum,
   discountPct,
+  taxPct,
   busy,
   onPay,
   onReprint,
@@ -116,6 +130,7 @@ function PayerCard({
   order: Order;
   customerNum: number;
   discountPct: number;
+  taxPct: number;
   busy: boolean;
   onPay: (args: {
     customerNum: number;
@@ -127,7 +142,7 @@ function PayerCard({
   onReprint: (customerNum: number) => void;
 }) {
   const paid = paymentFor(order, customerNum);
-  const share = payerTotal(order, customerNum, discountPct);
+  const share = payerTotal(order, customerNum, discountPct, taxPct);
   const items = groupItems(itemsForPayer(order, customerNum));
 
   // On a correction this payer has already handed something over, so what moves
@@ -346,6 +361,10 @@ export default function PaymentScreen() {
   const order = orders.find((o) => o.id === Number(id));
 
   const [discount, setDiscount] = useState("");
+  // Null until the cashier touches the field, meaning "whatever the order
+  // already says" — 10 for a fresh order. It cannot be seeded from the order
+  // here: hooks run before the order is known to exist.
+  const [tax, setTax] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [methodOfPayment, setMethodOfPayment] = useState<PaymentMethod>("Cash");
@@ -374,25 +393,29 @@ export default function PaymentScreen() {
   const discountPct = parseFloat(discount) || 0;
 
   // Prevent discount from exceeding 100% or dropping below 0%
-  const safeDiscountPct = Math.min(Math.max(0, discountPct), 100);
+  const safeDiscountPct = clampPercent(discountPct);
+
+  // An emptied field is 0%, the same as an empty discount.
+  const safeTaxPct = clampPercent(tax === null ? order.tax : parseInt(tax, 10));
 
   const split = isSplit(order);
   const collected = amountCollected(order);
   const correcting = isCorrected(order);
 
-  // Once someone has paid, the discount they were charged against is fixed —
-  // changing it now would mean earlier payers settled on a different basis than
-  // the ones still to pay. From that point the saved figure is the only one
-  // that counts, and the field is closed.
+  // Once someone has paid, the discount and tax they were charged against are
+  // fixed — changing either now would mean earlier payers settled on a
+  // different basis than the ones still to pay. From that point the saved
+  // figures are the only ones that count, and both fields are closed.
   //
-  // A correction does not reopen it. The original payer settled against this
-  // discount and has their receipt; altering it now would rewrite the basis of
-  // a bill that has already been handed over.
-  const discountLocked = order.payments.length > 0;
-  const effectiveDiscount = discountLocked ? order.discount : safeDiscountPct;
+  // A correction does not reopen them. The original payer settled against
+  // these rates and has their receipt; altering them now would rewrite the
+  // basis of a bill that has already been handed over.
+  const ratesLocked = order.payments.length > 0;
+  const effectiveDiscount = ratesLocked ? order.discount : safeDiscountPct;
+  const effectiveTax = ratesLocked ? order.tax : safeTaxPct;
 
   // Whether the line items are actually frozen, which is a different question
-  // from whether the discount is. The database locks a payer's lines only while
+  // from whether the discount and tax are. The database locks a payer's lines only while
   // they have settled in the order's CURRENT round, so a corrected order has a
   // locked discount and perfectly editable lines — which is the entire point of
   // reopening it.
@@ -400,7 +423,7 @@ export default function PaymentScreen() {
 
   // Shared with every report and the receipt, so what the cashier is shown here
   // is exactly what the books will say later.
-  const total = orderTotal(subtotal, effectiveDiscount);
+  const total = orderTotal(subtotal, effectiveDiscount, effectiveTax);
 
   // The net already taken in earlier rounds. Zero unless this order is being
   // corrected, so `dueNow` is the plain total for everything else.
@@ -416,7 +439,7 @@ export default function PaymentScreen() {
   // open. Only applied to corrections: on a first settlement a bill of nothing
   // is still a bill somebody has to be recorded as having paid.
   const stillOwed = unpaidPayers(order).filter(
-    (n) => !correcting || outstandingForPayer(order, n, effectiveDiscount) !== 0
+    (n) => !correcting || outstandingForPayer(order, n, effectiveDiscount, effectiveTax) !== 0
   );
 
   const cashGiven = parseInt(paymentAmount, 10) || 0;
@@ -446,13 +469,15 @@ export default function PaymentScreen() {
       // order, then re-showed the stale message and never navigated back.
       //
       // The non-cash branch also recorded orderTotal(order), which recomputes
-      // from the *saved* discount and so ignored whatever was typed here.
+      // from the *saved* discount and so ignored whatever was typed here. The
+      // tax is passed for the same reason.
       // markPaid works the difference out for itself from the order's own
       // payment rows — what is passed here is only the cash tendered, which it
       // needs to record change and cannot derive.
       const { error: saveError } = await markPaid(
         order.id,
         effectiveDiscount,
+        effectiveTax,
         methodOfPayment,
         methodOfPayment === "Cash" ? cashGiven : dueNow
       );
@@ -479,9 +504,9 @@ export default function PaymentScreen() {
   /**
    * Record one payer's share, then print it.
    *
-   * The discount is persisted before the first payment lands, because from that
-   * moment it is frozen and every remaining share is computed from the saved
-   * figure rather than from whatever is still typed on this screen.
+   * The discount and tax are persisted before the first payment lands, because
+   * from that moment they are frozen and every remaining share is computed from
+   * the saved figures rather than from whatever is still typed on this screen.
    */
   const handlePayerPaid = async (args: {
     customerNum: number;
@@ -500,15 +525,16 @@ export default function PaymentScreen() {
     let payment;
 
     try {
-      if (!discountLocked && safeDiscountPct !== order.discount) {
-        const { error: discountError } = await updateOrder(
-          order.id,
-          { discount: safeDiscountPct },
-          true
-        );
+      const ratesPatch = {
+        ...(safeDiscountPct !== order.discount && { discount: safeDiscountPct }),
+        ...(safeTaxPct !== order.tax && { tax: safeTaxPct }),
+      };
 
-        if (discountError) {
-          setError(discountError);
+      if (!ratesLocked && Object.keys(ratesPatch).length > 0) {
+        const { error: ratesError } = await updateOrder(order.id, ratesPatch, true);
+
+        if (ratesError) {
+          setError(ratesError);
           return;
         }
       }
@@ -544,11 +570,19 @@ export default function PaymentScreen() {
     // still the pre-refetch array inside this closure, so looking the payment
     // up there would find nothing and the receipt would silently never print.
     // The order's own items are unaffected by a payment, so the copy in hand is
-    // the right one to filter.
+    // the right one to filter. Its discount and tax are not: on the first
+    // payer they are still the figures from before this screen saved them, so
+    // the ones this share was actually charged at are laid over the top —
+    // otherwise the receipt would print a total that disagrees with the payment.
     //
     // A print failure is surfaced on its own: the money is recorded either way,
     // and reporting the payment as failed would have the cashier take it twice.
-    if (payment) await printCustomerReceipt(order, payment);
+    if (payment) {
+      await printCustomerReceipt(
+        { ...order, discount: effectiveDiscount, tax: effectiveTax },
+        payment
+      );
+    }
   };
 
   const printShare = async (customerNum: number) => {
@@ -568,7 +602,7 @@ export default function PaymentScreen() {
       // difference has moved.
       const close = correcting ? closeCorrectedOrder : completeSplitPayment;
 
-      const { error: closeError } = await close(order.id, effectiveDiscount);
+      const { error: closeError } = await close(order.id, effectiveDiscount, effectiveTax);
 
       if (closeError) {
         setError(closeError);
@@ -599,24 +633,6 @@ export default function PaymentScreen() {
     openEditor();
   };
 
-  const handleDiscountChange = (text: string) => {
-    let digitsOnly = text.replace(/[^0-9]/g, "");
-
-    // Strip leading zeros (e.g. "05" -> "5"), but allow a lone "0"
-    digitsOnly = digitsOnly.replace(/^0+(?=\d)/, "");
-
-    if (digitsOnly === "") {
-      setDiscount("");
-      return;
-    }
-
-    const num = parseInt(digitsOnly, 10);
-    if (num > 100) {
-      setDiscount("100");
-    } else {
-      setDiscount(digitsOnly);
-    }
-  };
 
   // Grouped by itemKey rather than menuId: custom items all carry a null menu
   // id, so keying on that would fold every unrelated one into a single row.
@@ -732,33 +748,42 @@ export default function PaymentScreen() {
             </View>
             <TextInput
               className={`border-2 border-gray-100 rounded-xl px-3 py-1.5 font-bold text-sm w-20 text-center ${
-                discountLocked ? "bg-gray-100 text-gray-400" : "bg-white text-gray-900"
+                ratesLocked ? "bg-gray-100 text-gray-400" : "bg-white text-gray-900"
               }`}
-              value={discountLocked ? String(order.discount) : discount}
-              onChangeText={handleDiscountChange}
+              value={ratesLocked ? String(order.discount) : discount}
+              onChangeText={(text) => setDiscount(percentInput(text))}
               keyboardType="numeric"
               placeholder="0"
               placeholderTextColor="#ccc"
-              editable={!busy && !discountLocked}
+              editable={!busy && !ratesLocked}
             />
             <Text className="text-sm font-bold text-gray-500">%</Text>
           </View>
-
-          {discountLocked && (
-            <Text className="text-[10px] font-bold text-gray-400 mb-3 -mt-1">
-              Terkunci — sudah ada pelanggan yang membayar dengan diskon ini.
-            </Text>
-          )}
 
           {/* Tax */}
           <View className="flex-row items-center gap-3 mb-3">
             <View className="border-2 border-gray-200 rounded-xl px-3 py-1.5 bg-white/60">
               <Text className="text-sm font-bold text-gray-600">Pajak</Text>
             </View>
-           <View className="border-2 border-gray-200 rounded-xl px-3 py-1.5 bg-white/60">
-              <Text className="text-sm font-bold text-gray-600">{TAX_RATE * 100} %</Text>
-            </View>
+            <TextInput
+              className={`border-2 border-gray-100 rounded-xl px-3 py-1.5 font-bold text-sm w-20 text-center ${
+                ratesLocked ? "bg-gray-100 text-gray-400" : "bg-white text-gray-900"
+              }`}
+              value={ratesLocked ? String(order.tax) : tax ?? String(order.tax)}
+              onChangeText={(text) => setTax(percentInput(text))}
+              keyboardType="numeric"
+              placeholder="0"
+              placeholderTextColor="#ccc"
+              editable={!busy && !ratesLocked}
+            />
+            <Text className="text-sm font-bold text-gray-500">%</Text>
           </View>
+
+          {ratesLocked && (
+            <Text className="text-[10px] font-bold text-gray-400 mb-3 -mt-1">
+              Terkunci — sudah ada pelanggan yang membayar dengan diskon dan pajak ini.
+            </Text>
+          )}
 
           {/* Total */}
           <View className="border-2 border-gray-200 rounded-xl px-3 py-2 bg-white/60 self-start">
@@ -812,6 +837,7 @@ export default function PaymentScreen() {
                 order={order}
                 customerNum={num}
                 discountPct={effectiveDiscount}
+                taxPct={effectiveTax}
                 busy={busy}
                 onPay={handlePayerPaid}
                 onReprint={printShare}

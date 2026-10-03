@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, ReactNode } from "react";
 import {
   View,
   Text,
@@ -9,6 +9,10 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { supabase } from "../../../lib/supabase";
 import { orderTotal } from "../../../lib/constants";
+import { isConnectionError, NO_CONNECTION } from "../../../lib/errors";
+import { addDays, todayJakarta } from "../../../lib/jakartaDate";
+import { count, methodLabel, percent, rupiah } from "../../../components/owner/format";
+import { DailySalesReport } from "../../../types/owner";
 
 type OrderRow = {
   id: number;
@@ -20,37 +24,275 @@ type OrderRow = {
   collected: number;
 };
 
-type TopMenuItem = { name: string; quantity: number };
+// Every method is listed, in this order, even on a day it took nothing — "Debit
+// Rp 0" is an answer, and a row that only appears some days is not.
+const METHOD_ORDER = ["Cash", "QRIS", "Debit", "Bank Transfer"];
+
+// How many items the menu list shows before "Tampilkan semua".
+const ITEMS_SHOWN = 10;
 
 function formatRupiah(amount: number): string {
   return "Rp " + Math.round(amount).toLocaleString("id-ID");
+}
+
+function categoryLabel(category: string): string {
+  return category === "Custom" ? "Item kustom" : category;
+}
+
+function hourLabel(hour: number): string {
+  const h = String(hour).padStart(2, "0");
+  return `${h}.00 – ${h}.59`;
+}
+
+/** Today in Jakarta as the pair of instants the orders query filters on. */
+function todayBounds(): { day: string; from: string; to: string } {
+  const day = todayJakarta();
+  return {
+    day,
+    from: new Date(`${day}T00:00:00+07:00`).toISOString(),
+    to: new Date(`${addDays(day, 1)}T00:00:00+07:00`).toISOString(),
+  };
+}
+
+function Section({
+  title,
+  subtitle,
+  children,
+}: {
+  title: string;
+  subtitle?: string;
+  children: ReactNode;
+}) {
+  return (
+    <View className="bg-white rounded-3xl px-4 pt-4 pb-3 mb-4 shadow-sm">
+      <View className="border-2 border-gray-200 rounded-xl px-3 py-1.5 self-start bg-gray-50">
+        <Text className="text-sm font-bold text-gray-700">{title}</Text>
+      </View>
+      {subtitle ? (
+        <Text className="text-[11px] font-bold text-gray-400 mt-2">{subtitle}</Text>
+      ) : null}
+      <View className="mt-3">{children}</View>
+    </View>
+  );
+}
+
+const num = { fontVariant: ["tabular-nums" as const] };
+
+/**
+ * A label and a figure on one line, with an optional note under both. The note
+ * gets the full width: squeezed beside the figure, a phone wraps it mid-amount.
+ */
+function Line({
+  label,
+  value,
+  note,
+  strong = false,
+}: {
+  label: string;
+  value: string;
+  note?: string;
+  strong?: boolean;
+}) {
+  return (
+    <View className="py-1.5">
+      <View className="flex-row justify-between items-start">
+        <Text
+          className={`flex-1 pr-3 text-sm ${strong ? "font-black text-gray-900" : "font-bold text-gray-600"}`}
+        >
+          {label}
+        </Text>
+        <Text
+          className={`text-sm ${strong ? "font-black text-gray-900" : "font-extrabold text-gray-800"}`}
+          style={num}
+        >
+          {value}
+        </Text>
+      </View>
+      {note ? <Text className="text-[11px] font-bold text-gray-400 mt-0.5">{note}</Text> : null}
+    </View>
+  );
+}
+
+const Divider = () => <View className="h-px bg-gray-100 my-1.5" />;
+
+/**
+ * The owner dashboard's figures for today, as numbers: Ringkasan, Pembayaran
+ * and Menu, plus the hourly table. No cost, profit or margin — the database
+ * does not send them to this screen at all.
+ */
+function DailyDetail({ report }: { report: DailySalesReport }) {
+  const [showAllItems, setShowAllItems] = useState(false);
+  const { summary } = report;
+
+  const average = summary.transactions > 0 ? summary.net / summary.transactions : 0;
+
+  // Payments: the fixed four first, then anything else the report has — in
+  // practice only "not recorded", for a paid order with no payment row.
+  const byMethod = new Map(report.payments.map((p) => [p.method, p]));
+  const methods = [
+    ...METHOD_ORDER.map((m) => byMethod.get(m) ?? { method: m, count: 0, amount: 0 }),
+    ...report.payments.filter((p) => p.method === null || !METHOD_ORDER.includes(p.method)),
+  ];
+  const paymentsTotal = methods.reduce((s, p) => s + p.amount, 0);
+  const paymentsCount = methods.reduce((s, p) => s + p.count, 0);
+
+  const categories = [
+    ...report.items
+      .reduce((map, item) => {
+        const entry = map.get(item.category) ?? { qty: 0, gross: 0 };
+        entry.qty += item.qty;
+        entry.gross += item.gross;
+        return map.set(item.category, entry);
+      }, new Map<string, { qty: number; gross: number }>())
+      .entries(),
+  ]
+    .map(([category, v]) => ({ category, ...v }))
+    .sort((a, b) => b.gross - a.gross);
+  const itemsGross = categories.reduce((s, c) => s + c.gross, 0);
+
+  // Already sorted by quantity sold, then by sales, in the database.
+  const items = showAllItems ? report.items : report.items.slice(0, ITEMS_SHOWN);
+
+  const hours = report.hourly.filter((h) => h.orders > 0);
+
+  return (
+    <>
+      <Section title="Ringkasan" subtitle="Pesanan yang sudah lunas hari ini">
+        <Line label="Penjualan kotor" value={rupiah(summary.gross)} note="Sebelum diskon dan pajak" />
+        <Line label="Diskon" value={rupiah(-summary.discount)} />
+        <Line label="Penjualan bersih" value={rupiah(summary.net)} />
+        <Line label="Pajak" value={rupiah(summary.tax)} />
+        <Divider />
+        <Line label="Total diterima" value={rupiah(summary.collected)} note="Penjualan bersih + pajak" strong />
+        <Divider />
+        <Line label="Transaksi" value={count(summary.transactions)} />
+        <Line label="Rata-rata per transaksi" value={rupiah(average)} note="Penjualan bersih ÷ transaksi" />
+      </Section>
+
+      <Section
+        title="Metode Bayar"
+        subtitle="Termasuk pajak. Split bill dihitung per pembayar; uang yang dikembalikan saat koreksi sudah dikurangi."
+      >
+        {methods.map((p) => (
+          <Line
+            key={p.method ?? "none"}
+            label={methodLabel(p.method)}
+            value={rupiah(p.amount)}
+            note={
+              p.count > 0
+                ? `${count(p.count)} pembayaran · ${
+                    paymentsTotal > 0 ? percent(p.amount / paymentsTotal) : "0%"
+                  } · rata-rata ${rupiah(p.amount / p.count)}`
+                : "Belum ada pembayaran"
+            }
+          />
+        ))}
+        <Divider />
+        <Line label="Total" value={rupiah(paymentsTotal)} note={`${count(paymentsCount)} pembayaran`} strong />
+        {byMethod.has(null) && (
+          <Text className="text-[11px] font-bold text-amber-700 mt-1">
+            Ada pesanan lunas yang tidak mencatat metode bayar.
+          </Text>
+        )}
+      </Section>
+
+      <Section title="Menu Terjual" subtitle="Penjualan kotor, sebelum diskon dan pajak">
+        {report.items.length === 0 ? (
+          <Text className="text-sm font-bold text-gray-300 text-center py-2">Belum ada item terjual</Text>
+        ) : (
+          <>
+            <Text className="text-xs font-extrabold text-gray-400 uppercase tracking-widest mb-1">
+              Per kategori
+            </Text>
+            {categories.map((c) => (
+              <Line
+                key={c.category}
+                label={categoryLabel(c.category)}
+                value={rupiah(c.gross)}
+                note={`${count(c.qty)} terjual · ${itemsGross > 0 ? percent(c.gross / itemsGross) : "0%"}`}
+              />
+            ))}
+
+            <Divider />
+            <Text className="text-xs font-extrabold text-gray-400 uppercase tracking-widest mt-2 mb-1">
+              Per item
+            </Text>
+            {items.map((item, index) => (
+              <View key={`${item.menu_id ?? "custom"}-${item.name}`} className="flex-row items-center py-1.5">
+                <View className="w-6 h-6 rounded-full bg-cyan-100 items-center justify-center mr-3">
+                  <Text className="text-xs font-black text-gray-500">{index + 1}</Text>
+                </View>
+                <View className="flex-1 pr-3">
+                  <Text className="text-sm font-bold text-gray-800" numberOfLines={1}>
+                    {item.name}
+                  </Text>
+                  <Text className="text-[11px] font-bold text-gray-400">
+                    {categoryLabel(item.category)} · {count(item.qty)} pcs
+                  </Text>
+                </View>
+                <Text className="text-sm font-extrabold text-gray-800" style={num}>
+                  {rupiah(item.gross)}
+                </Text>
+              </View>
+            ))}
+            {report.items.length > ITEMS_SHOWN && (
+              <TouchableOpacity onPress={() => setShowAllItems((v) => !v)} className="py-2 items-center">
+                <Text className="text-xs font-extrabold text-blue-600">
+                  {showAllItems ? "Tampilkan lebih sedikit" : `Tampilkan semua (${report.items.length} item)`}
+                </Text>
+              </TouchableOpacity>
+            )}
+          </>
+        )}
+      </Section>
+
+      <Section title="Per Jam" subtitle="Menurut jam pesanan dibuat (WIB), penjualan kotor">
+        {hours.length === 0 ? (
+          <Text className="text-sm font-bold text-gray-300 text-center py-2">Belum ada transaksi</Text>
+        ) : (
+          hours.map((h) => (
+            <Line
+              key={h.hour}
+              label={hourLabel(h.hour)}
+              value={rupiah(h.gross)}
+              note={`${count(h.orders)} transaksi`}
+            />
+          ))
+        )}
+      </Section>
+    </>
+  );
 }
 
 export default function CashierSalesScreen() {
   const [totalSales, setTotalSales] = useState(0);
   const [totalPaid, setTotalPaid] = useState(0);
   const [totalUnpaid, setTotalUnpaid] = useState(0);
-  const [topItems, setTopItems] = useState<TopMenuItem[]>([]);
   const [orders, setOrders] = useState<OrderRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  const [report, setReport] = useState<DailySalesReport | null>(null);
+  const [reportError, setReportError] = useState<string | null>(null);
+  // Only the newest report request may land. A payment fires a change on
+  // order_payments and then another on orders, and the two fetches can come
+  // back in either order.
+  const latestReport = useRef(0);
+
   const fetchTodaySales = async () => {
-    setLoading(true);
     setError(null);
 
     try {
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      const tomorrow = new Date(today);
-      tomorrow.setDate(tomorrow.getDate() + 1);
+      // Today in Jakarta, the same day the report below covers — not the
+      // device's own midnight, which is only the same while its clock is on WIB.
+      const { from, to } = todayBounds();
 
       // Fetch all of today's orders (both paid and unpaid)
       const { data: ordersData, error: ordersError } = await supabase
         .from("orders")
-        .select("id, customer_name, seat, discount, status")
-        .gte("created_at", today.toISOString())
-        .lt("created_at", tomorrow.toISOString())
+        .select("id, customer_name, seat, discount, tax, status")
+        .gte("created_at", from)
+        .lt("created_at", to)
         .order("created_at", { ascending: false });
 
       // A failed request used to be indistinguishable from a quiet day: the
@@ -66,7 +308,6 @@ export default function CashierSalesScreen() {
         setTotalSales(0);
         setTotalPaid(0);
         setTotalUnpaid(0);
-        setTopItems([]);
         setOrders([]);
         return;
       }
@@ -75,7 +316,7 @@ export default function CashierSalesScreen() {
       const orderIds = ordersData.map((o) => o.id);
       const { data: items } = await supabase
         .from("order_items")
-        .select("order_id, name, price, quantity")
+        .select("order_id, price, quantity")
         .in("order_id", orderIds);
 
       // What each order has already taken from a split bill. An order stays
@@ -99,7 +340,7 @@ export default function CashierSalesScreen() {
       const orderRows: OrderRow[] = ordersData.map((order) => {
         const orderItems = (items ?? []).filter((i) => i.order_id === order.id);
         const subtotal = orderItems.reduce((sum, i) => sum + i.price * i.quantity, 0);
-        const total = orderTotal(subtotal, order.discount);
+        const total = orderTotal(subtotal, order.discount, order.tax);
         const collected = collectedByOrder.get(order.id) ?? 0;
 
         if (order.status === "paid") {
@@ -125,27 +366,6 @@ export default function CashierSalesScreen() {
       setTotalSales(paidTotal + unpaidTotal);
       setTotalPaid(paidTotal);
       setTotalUnpaid(unpaidTotal);
-
-      // Top menu items (from paid orders only)
-      const paidOrderIds = ordersData
-        .filter((o) => o.status === "paid")
-        .map((o) => o.id);
-
-      const itemCount: Record<string, { name: string; qty: number }> = {};
-      (items ?? [])
-        .filter((i) => paidOrderIds.includes(i.order_id))
-        .forEach((item) => {
-          if (!itemCount[item.name]) {
-            itemCount[item.name] = { name: item.name, qty: 0 };
-          }
-          itemCount[item.name].qty += item.quantity;
-        });
-
-      const top = Object.values(itemCount)
-        .sort((a, b) => b.qty - a.qty)
-        .slice(0, 5)
-        .map((i) => ({ name: i.name, quantity: i.qty }));
-      setTopItems(top);
       setError(null);
     } catch (e) {
       console.error("Failed to fetch today's sales:", e);
@@ -155,23 +375,64 @@ export default function CashierSalesScreen() {
     }
   };
 
-    useEffect(() => {
-        fetchTodaySales();
+  // Fetched apart from the cards above and failing on its own: the cards are
+  // what the cashier works from, and a missing breakdown should not take them
+  // down with it.
+  const fetchReport = async () => {
+    const request = ++latestReport.current;
+    try {
+      const { data, error: rpcError } = await supabase.rpc("daily_sales_report", {
+        p_date: todayBounds().day,
+      });
+      if (request !== latestReport.current) return;
 
-        const subscription = supabase
-            .channel("sales-channel")
-            .on(
-            "postgres_changes",
-            { event: "*", schema: "public", table: "orders" },
-            () => fetchTodaySales()
-            )
-            .subscribe();
+      if (rpcError) {
+        console.error("Failed to fetch daily sales report:", rpcError.message);
+        setReportError(
+          isConnectionError(rpcError)
+            ? NO_CONNECTION
+            : // PostgREST's "no such function": this build is running against a
+              // database the daily_sales_report migration has not reached yet.
+              rpcError.code === "PGRST202"
+              ? "Rincian penjualan belum tersedia — database belum diperbarui."
+              : "Gagal memuat rincian penjualan."
+        );
+        return;
+      }
 
-        return () => {
-            supabase.removeChannel(subscription);
-        };
-    }, []);
+      setReport(data as DailySalesReport);
+      setReportError(null);
+    } catch (e) {
+      if (request !== latestReport.current) return;
+      console.error("Failed to fetch daily sales report:", e);
+      setReportError("Gagal memuat rincian penjualan. Periksa koneksi Anda.");
+    }
+  };
 
+  useEffect(() => {
+    const refresh = () => {
+      fetchTodaySales();
+      fetchReport();
+    };
+
+    refresh();
+
+    // order_payments as well as orders: one payer settling their share of a
+    // split bill writes only a payment row, and the figures here move with it.
+    const subscription = supabase
+      .channel("sales-channel")
+      .on("postgres_changes", { event: "*", schema: "public", table: "orders" }, refresh)
+      .on("postgres_changes", { event: "*", schema: "public", table: "order_payments" }, refresh)
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(subscription);
+    };
+  }, []);
+
+  // Only the first load blanks the screen. A refetch triggered by a payment
+  // used to swap everything for a spinner, which with two tables now being
+  // watched would flash on every sale.
   if (loading) {
     return (
       <SafeAreaView className="flex-1 bg-gray-100 items-center justify-center">
@@ -199,7 +460,15 @@ export default function CashierSalesScreen() {
       )}
 
       <ScrollView
-        contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 24 }}
+        contentContainerStyle={{
+          paddingHorizontal: 16,
+          paddingBottom: 24,
+          // Readable columns on a landscape tablet rather than figures stranded
+          // at opposite edges of the screen.
+          width: "100%",
+          maxWidth: 720,
+          alignSelf: "center",
+        }}
         showsVerticalScrollIndicator={false}
       >
         {/* Summary cards */}
@@ -232,34 +501,18 @@ export default function CashierSalesScreen() {
           </Text>
         </View>
 
-        {/* Top selling */}
-        {topItems.length > 0 && (
-          <View className="bg-yellow-100 rounded-3xl px-4 pt-4 pb-5 mb-4 shadow-sm">
-            <View className="border-2 border-gray-200 rounded-xl px-3 py-1.5 self-start mb-4 bg-white/60">
-              <Text className="text-sm font-bold text-gray-700">Terlaris</Text>
-            </View>
-            <View className="bg-cyan-100 rounded-2xl px-4 py-2">
-              {topItems.map((item, index) => (
-                <View key={item.name}>
-                  <View className="flex-row items-center justify-between py-3">
-                    <View className="flex-row items-center gap-3">
-                      <View className="w-6 h-6 rounded-full bg-white/80 items-center justify-center">
-                        <Text className="text-xs font-black text-gray-500">
-                          {index + 1}
-                        </Text>
-                      </View>
-                      <Text className="text-sm font-bold text-gray-800">{item.name}</Text>
-                    </View>
-                    <Text className="text-sm font-extrabold text-gray-600">
-                      {item.quantity} pcs
-                    </Text>
-                  </View>
-                  {index < topItems.length - 1 && <View className="h-px bg-cyan-200" />}
-                </View>
-              ))}
-            </View>
-          </View>
+        {!!reportError && (
+          <TouchableOpacity
+            onPress={fetchReport}
+            className="mb-4 bg-amber-50 border border-amber-200 rounded-2xl px-4 py-3"
+          >
+            <Text className="text-xs font-bold text-amber-800">
+              {reportError} Ketuk untuk mencoba lagi.
+            </Text>
+          </TouchableOpacity>
         )}
+
+        {report && <DailyDetail report={report} />}
 
         {/* Unpaid orders */}
         {unpaidOrders.length > 0 && (

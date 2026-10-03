@@ -59,6 +59,7 @@ ON DELETE CASCADE. `quantity` is stock units consumed per one menu item.
 | `daily_number` | integer | 1, 2, 3… restarting at midnight Asia/Jakarta. Set by the `orders_assign_daily_number` trigger on insert and never changed after. Unique per Jakarta date. See [Daily order number](#daily-order-number) |
 | `customer_name`, `seat` | text | |
 | `discount` | integer | percentage, 0–100 |
+| `tax` | integer | NOT NULL, default 10 — percentage, 0–100. Set on the payment screen and frozen with the discount at the first payment. 10 on every order taken before it became editable |
 | `status` | text | `'unpaid'` (default), `'paid'`, `'cancelled'` |
 | `is_dine_in` | boolean | false = takeaway |
 | `created_at` | timestamptz | |
@@ -403,6 +404,8 @@ Failed attempts are recorded deliberately — the lockout counts them.
 | `owner_sales_report(date, date)` | jsonb | the owner dashboard's sales figures; `owner` and `superadmin`. See [Owner reports](#owner-reports) |
 | `owner_orders(date, date, text, text, int, int)` | jsonb | one page of order headers in a period, filterable by status and name/number; `owner` and `superadmin` |
 | `owner_purchase_report(date, date)` | jsonb | `expenses` per stock item over a period with first/last unit price; `owner` and `superadmin` |
+| `daily_sales_report(date)` | jsonb | `owner_sales_report` for one Jakarta day without `costing`, `cogs`, `daily` or `weekday`; any staff account. Feeds the cashier's Penjualan Harian screen |
+| `sales_report_data(date, date)` | jsonb | the body both sales reports share. No role check, so execute is revoked from every API role; only the two wrappers call it |
 | `reject_owner_writes()` | trigger | refuses any write by an `owner` account; see [security.md](security.md#role-model) |
 
 All are `SECURITY DEFINER` with a pinned `search_path`. Any function calling
@@ -473,8 +476,17 @@ ledger — correction rows net out — and puts each order's split-bill rounding
 residual on its largest share, as Penjualan does; `count` is original
 settlements only.
 
-`ADDITIONAL_COGS_PERCENT` and `TAX_RATE` are hard-coded in the SQL. Change
-them in `lib/constants.ts` and the migration together.
+`collected` and `owner_orders.total` use each order's own `tax`, in the same
+operation order as `orderTotal()`. At 10 the factor is the same double as the
+old hard-coded `1 + 0.1`, so no total recorded before the rate became editable
+moved when it did.
+
+`ADDITIONAL_COGS_PERCENT` is hard-coded in the SQL. Change it in
+`lib/constants.ts` and the migration together.
+
+`owner_sales_report` and `daily_sales_report` are both thin wrappers over
+`sales_report_data`, so the cashier's figures for a day always match the
+owner's for the same day. The cashier's version drops every cost figure.
 
 ## Triggers
 

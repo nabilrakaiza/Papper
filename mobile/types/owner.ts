@@ -58,6 +58,20 @@ export type SalesReport = {
   payments: PaymentMethodSales[];
 };
 
+/**
+ * daily_sales_report (20260929100100_daily_sales_report.sql): the same report
+ * for one Jakarta day, for the cashier's Penjualan Harian screen. Worked out by
+ * the same SQL as SalesReport, so the figures match the owner's for that day
+ * exactly — less every cost figure, and the per-day and per-weekday series,
+ * which mean nothing over a single day.
+ */
+export type DailySalesReport = {
+  summary: SalesSummary;
+  hourly: HourlySales[];
+  items: Omit<ItemSales, "cogs">[];
+  payments: PaymentMethodSales[];
+};
+
 export type OrderStatus = "unpaid" | "paid" | "cancelled";
 
 export type OwnerOrderRow = {
@@ -69,6 +83,8 @@ export type OwnerOrderRow = {
   is_dine_in: boolean | null;
   status: OrderStatus;
   discount: number;
+  /** Tax percentage, 0–100. */
+  tax: number;
   /** Times the order was reopened to correct it after payment. 0 = never. */
   reopen_seq: number;
   item_count: number;

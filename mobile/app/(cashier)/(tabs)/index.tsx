@@ -33,7 +33,7 @@ function formatRupiah(amount: number): string {
 
 function orderTotal(order: Order): number {
   const subtotal = order.items.reduce((sum, i) => sum + i.price * i.quantity, 0);
-  return orderTotalOf(subtotal, order.discount);
+  return orderTotalOf(subtotal, order.discount, order.tax);
 }
 
 type OrderCardProps = {

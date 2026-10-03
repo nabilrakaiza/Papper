@@ -110,6 +110,12 @@ export type Order = {
   seat: string;
   items: OrderItem[];
   discount: number;
+  /**
+   * Tax as a whole-number percentage, 0–100. 10 unless the cashier changed it
+   * on the payment screen, and — like the discount — frozen once anyone has
+   * paid, because every payer has to be charged at the same rate.
+   */
+  tax: number;
   status: OrderStatus;
   createdAt: Date;
   isDineIn: boolean;

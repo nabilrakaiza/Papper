@@ -60,9 +60,10 @@ export function payerSubtotal(order: Order, customerNum: number): number {
 export function payerTotal(
   order: Order,
   customerNum: number,
-  discountPct: number
+  discountPct: number,
+  taxPct: number
 ): number {
-  return orderTotal(payerSubtotal(order, customerNum), discountPct);
+  return orderTotal(payerSubtotal(order, customerNum), discountPct, taxPct);
 }
 
 /**
@@ -134,10 +135,11 @@ export function isCorrected(order: Order): boolean {
 export function outstandingForPayer(
   order: Order,
   customerNum: number,
-  discountPct: number
+  discountPct: number,
+  taxPct: number
 ): number {
   return (
-    payerTotal(order, customerNum, discountPct) -
+    payerTotal(order, customerNum, discountPct, taxPct) -
     collectedFromPayer(order, customerNum)
   );
 }

@@ -11,7 +11,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { router } from "expo-router";
 import { ChevronLeft, ChevronDown, ChevronUp, Search, X } from "lucide-react-native";
 import { supabase } from "@/lib/supabase";
-import { orderTotal, TAX_RATE } from "../../../lib/constants";
+import { orderTotal } from "../../../lib/constants";
 
 type OrderLine = {
   name: string;
@@ -31,6 +31,8 @@ type OrderRow = {
   createdAt: Date;
   status: string;
   discount: number;
+  /** Tax percentage, 0–100. */
+  tax: number;
   isDineIn: boolean | null;
   /**
    * How it was paid, for the one-line summary: the method for an ordinary
@@ -152,7 +154,7 @@ export default function AdminOrdersScreen() {
       // makes the row shape harder to keep in step with OrderContext.
       let query = supabase
         .from("orders")
-        .select("id, daily_number, customer_name, seat, created_at, status, discount, is_dine_in")
+        .select("id, daily_number, customer_name, seat, created_at, status, discount, tax, is_dine_in")
         .gte("created_at", from.toISOString())
         .lt("created_at", to.toISOString())
         .order("created_at", { ascending: false });
@@ -228,6 +230,7 @@ export default function AdminOrdersScreen() {
             createdAt: new Date(o.created_at),
             status: o.status,
             discount: o.discount,
+            tax: o.tax,
             isDineIn: o.is_dine_in,
             // Derived from the payment rows, which are the only record of how an
             // order was paid. Null means nothing has been paid against it yet.
@@ -239,7 +242,7 @@ export default function AdminOrdersScreen() {
             // not silently lose its tender to a second row.
             tendered: payerCount === 1 ? original?.amountTendered ?? null : null,
             subtotal,
-            total: orderTotal(subtotal, o.discount),
+            total: orderTotal(subtotal, o.discount, o.tax),
             payments,
             items: items.map((i) => ({
               name: i.name,
@@ -531,11 +534,11 @@ export default function AdminOrdersScreen() {
 
                     <View className="flex-row justify-between py-0.5">
                       <Text className="text-xs font-bold text-gray-500">
-                        Pajak {TAX_RATE * 100}%
+                        Pajak {order.tax}%
                       </Text>
                       <Text className="text-xs font-bold text-gray-700">
                         {formatRupiah(
-                          order.subtotal * (1 - order.discount / 100) * TAX_RATE
+                          order.subtotal * (1 - order.discount / 100) * (order.tax / 100)
                         )}
                       </Text>
                     </View>
