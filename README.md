@@ -93,7 +93,9 @@ mobile/
 - **Web (admin/superadmin only)**: `npx expo export --platform web` produces a static
   site in `mobile/dist/`, deployed as a normal static host (currently
   Vercel). Supabase env vars are configured in the host's project settings,
-  separately from the local `.env`.
+  separately from the local `.env`. `mobile/public/vercel.json` is copied into
+  `dist/` by the export and sends every path to `index.html`; without it,
+  reloading any page other than `/` returns the host's 404.
 
 More detail: [mobile/docs/development.md](mobile/docs/development.md) and
 [mobile/docs/operations.md](mobile/docs/operations.md).
