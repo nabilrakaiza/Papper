@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, ReactNode } from "react";
 import { supabase } from "@/lib/supabase";
 import { isConnectionError, NO_CONNECTION } from "@/lib/errors";
-import { DateRange, presetRange } from "@/lib/jakartaDate";
+import { DateRange, PRESETS, presetRange } from "@/lib/jakartaDate";
 import { SalesReport } from "@/types/owner";
 
 /**
@@ -30,6 +30,42 @@ type OwnerReportContextType = {
 
 const OwnerReportContext = createContext<OwnerReportContextType | null>(null);
 
+const RANGE_KEY = "owner-report-range";
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * The range chosen before the page was reloaded, if any.
+ *
+ * sessionStorage rather than localStorage: a reload should come back to the
+ * period being read, but a fresh visit tomorrow should open on this month, not
+ * on whatever was last looked at. A preset is stored by name and worked out
+ * again, so "Hari ini" still means today after midnight.
+ */
+function storedRange(): DateRange | null {
+  try {
+    const raw = globalThis.sessionStorage?.getItem(RANGE_KEY);
+    if (!raw) return null;
+
+    const saved = JSON.parse(raw) as Partial<DateRange>;
+    const preset = PRESETS.find((p) => p.key === saved.preset);
+    if (preset) return presetRange(preset.key);
+
+    if (
+      saved.preset === "custom" &&
+      typeof saved.from === "string" &&
+      typeof saved.to === "string" &&
+      ISO_DATE.test(saved.from) &&
+      ISO_DATE.test(saved.to) &&
+      saved.from <= saved.to
+    ) {
+      return { from: saved.from, to: saved.to, preset: "custom" };
+    }
+  } catch {
+    // Unreadable or blocked storage is not worth failing the dashboard over.
+  }
+  return null;
+}
+
 export function describeError(error: { message?: string; code?: string } | null): string {
   if (error && isConnectionError(error)) return NO_CONNECTION;
   // PostgREST's "no such function": the owner_* migrations are not on this
@@ -41,7 +77,7 @@ export function describeError(error: { message?: string; code?: string } | null)
 }
 
 export function OwnerReportProvider({ children }: { children: ReactNode }) {
-  const [range, setRange] = useState<DateRange>(() => presetRange("thisMonth"));
+  const [range, setRange] = useState<DateRange>(() => storedRange() ?? presetRange("thisMonth"));
   const [sales, setSales] = useState<SalesReport | null>(null);
   const [salesLoading, setSalesLoading] = useState(true);
   const [salesError, setSalesError] = useState<string | null>(null);
@@ -86,6 +122,14 @@ export function OwnerReportProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     load(range, false);
   }, [range, load]);
+
+  useEffect(() => {
+    try {
+      globalThis.sessionStorage?.setItem(RANGE_KEY, JSON.stringify(range));
+    } catch {
+      // Same as reading it: losing the range on reload is the worst case.
+    }
+  }, [range]);
 
   const refresh = useCallback(() => {
     // Today's figures move all day; a refresh has to reach the database, and
