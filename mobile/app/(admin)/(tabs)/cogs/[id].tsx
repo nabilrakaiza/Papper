@@ -6,6 +6,7 @@ import {
   TouchableOpacity,
   TextInput,
   ActivityIndicator,
+  Platform,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { router, useLocalSearchParams, useFocusEffect, useNavigation } from "expo-router";
@@ -23,6 +24,12 @@ import { MenuCategory } from "../../../../types/order";
 import ConfirmDialog from "@/components/ConfirmDialog";
 
 type CogsMode = "ingredients" | "manual";
+
+// BottomSheetTextInput exists to keep the sheet clear of the on-screen
+// keyboard, which the web does not have -- and its blur handler calls
+// TextInput.State.currentlyFocusedInput(), which react-native-web does not
+// implement, so on the web every blur of a picker field threw.
+const SheetTextInput = Platform.OS === "web" ? TextInput : BottomSheetTextInput;
 
 type IngredientRow = {
   rowId: number; // positive = existing DB row (menu_ingredients.id); negative = new, not yet saved
@@ -796,7 +803,7 @@ export default function CogsEditScreen() {
         <View className="px-4 mb-2">
           <View className="flex-row items-center bg-gray-50 border-2 border-gray-100 rounded-2xl px-3 gap-2">
             <Search size={16} color="#aaa" />
-            <BottomSheetTextInput
+            <SheetTextInput
               className="flex-1 py-2.5 font-bold text-sm text-gray-900"
               placeholder="Cari stok..."
               value={stockSearch}
@@ -831,7 +838,7 @@ export default function CogsEditScreen() {
               Jumlah ({selectedStock.unit}) untuk {selectedStock.name}
             </Text>
             <View className="flex-row items-center gap-3">
-              <BottomSheetTextInput
+              <SheetTextInput
                 className="flex-1 bg-gray-50 border-2 border-gray-100 rounded-xl px-3 py-2.5 font-bold text-sm text-gray-900"
                 placeholder={`cth. 2 ${selectedStock.unit}`}
                 placeholderTextColor="#ccc"
