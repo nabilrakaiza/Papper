@@ -37,6 +37,9 @@ type IngredientRow = {
   stockName: string;
   unit: string;
   quantity: number;
+  // What the quantity field shows. Kept as typed, because rendering the parsed
+  // number back dropped a trailing "." mid-entry and turned "1.5" into 15.
+  quantityText: string;
   pricePerUnit: number;
 };
 
@@ -49,6 +52,14 @@ type StockOption = {
 
 function formatRupiah(amount: number): string {
   return "Rp " + Math.round(amount).toLocaleString("id-ID");
+}
+
+// Digits and one decimal point. A comma is read as the decimal mark, the way
+// it is written in Indonesian, rather than dropped -- which made "1,5" 15.
+function sanitizeQuantity(text: string): string {
+  const cleaned = text.replace(/,/g, ".").replace(/[^0-9.]/g, "");
+  const [whole, ...rest] = cleaned.split(".");
+  return rest.length > 0 ? `${whole}.${rest.join("")}` : whole;
 }
 
 const StockRow = memo(function StockRow({
@@ -170,6 +181,7 @@ export default function CogsEditScreen() {
           stockName: (i.stock as any).name,
           unit: (i.stock as any).unit,
           quantity: i.quantity,
+          quantityText: String(i.quantity),
           pricePerUnit: (i.stock as any).price_per_unit,
         }))
       );
@@ -295,12 +307,14 @@ export default function CogsEditScreen() {
   };
 
   const handleQuantityChange = (rowId: number, text: string) => {
-    const digitsOnly = text.replace(/[^0-9.]/g, "");
-    const parsed = parseFloat(digitsOnly);
+    const cleaned = sanitizeQuantity(text);
+    const parsed = parseFloat(cleaned);
 
     setIngredients((prev) =>
       prev.map((i) =>
-        i.rowId === rowId ? { ...i, quantity: digitsOnly === "" || isNaN(parsed) ? 0 : parsed } : i
+        i.rowId === rowId
+          ? { ...i, quantityText: cleaned, quantity: isNaN(parsed) ? 0 : parsed }
+          : i
       )
     );
     setIsDirty(true);
@@ -332,6 +346,7 @@ export default function CogsEditScreen() {
         stockName: selectedStock.name,
         unit: selectedStock.unit,
         quantity: parsed,
+        quantityText: parsed.toString(),
         pricePerUnit: selectedStock.pricePerUnit,
       },
     ]);
@@ -477,6 +492,27 @@ export default function CogsEditScreen() {
     return (
       <SafeAreaView className="flex-1 bg-gray-100 items-center justify-center">
         <ActivityIndicator size="large" color="#3a7bd5" />
+      </SafeAreaView>
+    );
+  }
+
+  // The insert policy enforces this too — this is just so a plain admin who
+  // reaches /cogs/new by URL is told why, rather than handed a form whose save
+  // is always refused.
+  if (isNew && !isSuperadmin) {
+    return (
+      <SafeAreaView className="flex-1 bg-gray-100">
+        <View className="flex-row items-center gap-3 px-5 pt-4 pb-3">
+          <TouchableOpacity onPress={() => router.back()}>
+            <ChevronLeft size={24} color="#333" />
+          </TouchableOpacity>
+          <Text className="text-xl font-black text-gray-900">Menu Baru</Text>
+        </View>
+        <View className="flex-1 items-center justify-center px-8">
+          <Text className="text-sm font-bold text-gray-400 text-center">
+            Halaman ini hanya untuk superadmin.
+          </Text>
+        </View>
       </SafeAreaView>
     );
   }
@@ -708,7 +744,7 @@ export default function CogsEditScreen() {
                   <TextInput
                     className="bg-white border-2 border-gray-100 rounded-lg px-2 py-1.5 font-bold text-sm text-gray-900 w-16 text-center mr-2"
                     keyboardType="numeric"
-                    value={row.quantity === 0 ? "" : row.quantity.toString()}
+                    value={row.quantityText}
                     onChangeText={(t) => handleQuantityChange(row.rowId, t)}
                   />
 
@@ -844,7 +880,7 @@ export default function CogsEditScreen() {
                 placeholderTextColor="#ccc"
                 keyboardType="numeric"
                 value={newQuantity}
-                onChangeText={(t) => setNewQuantity(t.replace(/[^0-9.]/g, ""))}
+                onChangeText={(t) => setNewQuantity(sanitizeQuantity(t))}
               />
               <TouchableOpacity
                 onPress={handleAddIngredient}
