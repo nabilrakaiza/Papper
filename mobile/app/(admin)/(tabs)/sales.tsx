@@ -132,15 +132,17 @@ function getDateRange(period: SalesPeriod): { from: string; to: string } {
   };
 }
 
-// Add each order's total to the bar its Jakarta date falls in.
+// Add each order's total to the bar for the Jakarta date it was paid on — not
+// the date it was taken, which for a table that settles the next day is a day
+// whose drawer has already been counted.
 function groupOrders(
-  orders: { created_at: string; total: number }[],
+  orders: { paid_at: string; total: number }[],
   period: SalesPeriod
 ): SalesDataPoint[] {
   const bars = buckets(period).map((b) => ({ ...b, total: 0 }));
-  for (const { created_at, total } of orders) {
-    const day = jakartaDateOf(created_at);
-    // The last bar whose start is on or before the order's day.
+  for (const { paid_at, total } of orders) {
+    const day = jakartaDateOf(paid_at);
+    // The last bar whose start is on or before the day it was paid.
     for (let i = bars.length - 1; i >= 0; i--) {
       if (bars[i].start <= day) {
         bars[i].total += total;
@@ -187,10 +189,10 @@ export default function AdminSalesScreen() {
 
     const { data: orders } = await supabase
       .from("orders")
-      .select("id, created_at, discount, tax")
+      .select("id, paid_at, discount, tax")
       .eq("status", "paid")
-      .gte("created_at", from)
-      .lte("created_at", to);
+      .gte("paid_at", from)
+      .lte("paid_at", to);
 
     if (!orders || orders.length === 0) {
       setChartData([]);
@@ -211,7 +213,7 @@ export default function AdminSalesScreen() {
       const subtotal = orderItems.reduce((sum, i) => sum + i.price * i.quantity, 0);
       return {
         id: order.id,
-        created_at: order.created_at,
+        paid_at: order.paid_at,
         total: orderTotal(subtotal, order.discount, order.tax),
       };
     });
@@ -351,8 +353,8 @@ export default function AdminSalesScreen() {
       .from("orders")
       .select("id")
       .eq("status", "paid")
-      .gte("created_at", from)
-      .lte("created_at", to);
+      .gte("paid_at", from)
+      .lte("paid_at", to);
 
     if (!orders || orders.length === 0) {
       setTopMenu([]);

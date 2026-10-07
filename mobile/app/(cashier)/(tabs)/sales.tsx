@@ -10,6 +10,7 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { supabase } from "../../../lib/supabase";
+import { orderDayFilter, orderInstant } from "../../../lib/orderDay";
 import { orderTotal } from "../../../lib/constants";
 import { isConnectionError, NO_CONNECTION } from "../../../lib/errors";
 import {
@@ -426,19 +427,20 @@ export default function CashierSalesScreen() {
       // WIB.
       const { from, to } = jakartaDayBounds(forDay);
 
-      // Fetch all of the day's orders, whatever their status
+      // Fetch all of the day's orders, whatever their status. A paid order is
+      // the day's if it was paid on it, whenever it was taken — the same rule
+      // the report below uses, so the cards and the breakdown agree.
       const { data: ordersData, error: ordersError } = await supabase
         .from("orders")
         .select("id, daily_number, customer_name, seat, created_at, discount, tax, status, reopen_seq")
-        .gte("created_at", from)
-        .lt("created_at", to)
+        .or(orderDayFilter(from, to))
         .order("created_at", { ascending: false });
 
       // Correction rows written on this day. The ones for this day's own orders
       // are already in its figures and are dropped below.
       const { data: correctionData, error: correctionError } = await supabase
         .from("order_payments")
-        .select("id, order_id, amount, method_of_payment, created_at, orders(daily_number, customer_name, created_at)")
+        .select("id, order_id, amount, method_of_payment, created_at, orders(daily_number, customer_name, created_at, paid_at)")
         .gt("reopen_seq", 0)
         .gte("created_at", from)
         .lt("created_at", to)
@@ -462,7 +464,7 @@ export default function CashierSalesScreen() {
             orderId: p.order_id,
             dailyNumber: p.orders?.daily_number ?? null,
             customerName: p.orders?.customer_name ?? "",
-            orderDay: p.orders ? jakartaDateOf(p.orders.created_at) : forDay,
+            orderDay: p.orders ? jakartaDateOf(orderInstant(p.orders)) : forDay,
             method: p.method_of_payment,
             amount: p.amount,
             createdAt: p.created_at,
