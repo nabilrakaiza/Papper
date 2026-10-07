@@ -140,8 +140,11 @@ export default function AdminOrdersScreen() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  const fetchOrders = useCallback(async () => {
-    setLoading(true);
+  // `silent` reloads behind the list instead of replacing it with the spinner.
+  // The realtime reload below fires on every order any tablet touches, and
+  // blanking the list each time closed whatever was being read.
+  const fetchOrders = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true);
     setError("");
 
     // Every returned-error branch cleared the spinner itself; a thrown request
@@ -272,7 +275,7 @@ export default function AdminOrdersScreen() {
     const subscription = supabase
       .channel("admin-orders-channel")
       .on("postgres_changes", { event: "*", schema: "public", table: "orders" }, () => {
-        fetchOrders();
+        fetchOrders(true);
       })
       .subscribe();
 
