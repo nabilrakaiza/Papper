@@ -62,11 +62,43 @@ ON DELETE CASCADE. `quantity` is stock units consumed per one menu item.
 | `tax` | integer | NOT NULL, default 10 — percentage, 0–100. Set on the payment screen and frozen with the discount at the first payment. 10 on every order taken before it became editable |
 | `status` | text | `'unpaid'` (default), `'paid'`, `'cancelled'` |
 | `is_dine_in` | boolean | false = takeaway |
-| `created_at` | timestamptz | |
+| `created_at` | timestamptz | when the order was taken |
+| `paid_at` | timestamptz | when the order first became `'paid'`; NULL until then. Set by the `orders_stamp_paid_at` trigger with the server's clock, never by the client, and kept through a correction. See [Which day an order counts under](#which-day-an-order-counts-under) |
 | `reopen_seq` | integer | NOT NULL, default 0 — how many times this order has been reopened to correct it. See [Corrections](#corrections) |
 
 `status` has no CHECK constraint — the allowed values are enforced by
 convention and by the `OrderStatus` type in `types/order.ts`.
+
+#### Which day an order counts under
+
+**The day of `coalesce(paid_at, created_at)`** — a paid order on the day it was
+paid, an order still open (or cancelled before it was ever paid) on the day it
+was taken. A table that orders on the 1st and settles on the 2nd is in the
+2nd's figures, which is the day its money went into the drawer.
+
+Every money figure follows this: `owner_sales_report`, `daily_sales_report`,
+the cashier's Penjualan Harian cards and "paid today" list, and the admin's
+Penjualan, Perbandingan and order drill-down. Screens that query `orders`
+directly use `orderDayFilter()` in `lib/orderDay.ts`, so a list of a day's
+orders adds up to the report for that day.
+
+- **A split bill** is one order and becomes `'paid'` when its last payer
+  settles. All of it counts on that day, including a share handed over on an
+  earlier one — so on the earlier day the drawer is over by that share. Until
+  the last payer settles, the part-paid order shows on the day it was taken.
+- **A correction does not move an order.** `paid_at` is stamped once; reopening
+  and settling again leaves it alone.
+- **Busy hours** (`hourly`) are filed under the hour the order was *taken*.
+  Which orders are in the report is still decided by `paid_at`.
+
+Still dated by `created_at`, because they describe when an order was taken
+rather than when money moved: the daily order number, `stock_usage_report`,
+and `owner_orders` (the owner's Pesanan list).
+
+An old app build needs no update for this to be recorded — it marks an order
+paid with a plain update of `status`, and the trigger does the rest. What an
+old build cannot do is *read* by `paid_at`: its own lists keep dating by
+`created_at` until it is replaced.
 
 **There are no payment columns on `orders`.** How an order was paid lives in
 [`order_payments`](#order_payments) and nowhere else. `orders` carried
@@ -258,15 +290,16 @@ screen. A reopened order is `'unpaid'`, and the order list loads every unpaid
 order regardless of date, which is how the editor and payment screen find one
 from last week.
 
-**Correction money is booked on the order's own day, not the day it moved.**
-Every report — `owner_sales_report`, `daily_sales_report`, the Penjualan cards —
-dates an order and all its payments by `orders.created_at`. A refund handed
-over today on an order from 20 Sep changes 20 Sep's figures and none of
-today's, and while that order is reopened it drops out of 20 Sep's report
-altogether until it is settled again. So today's drawer would not reconcile
-against today's figures; the Penjualan screen lists those rows separately as
-"Koreksi pesanan hari lain" (`reopen_seq > 0`, `order_payments.created_at` on
-the chosen day, order created on another day), with a total per method.
+**Correction money is booked on the day the order was first paid, not the day
+it moved.** Every report — `owner_sales_report`, `daily_sales_report`, the
+Penjualan cards — dates an order and all its payments by `orders.paid_at`,
+which a correction does not change. A refund handed over today on an order
+paid on 20 Sep changes 20 Sep's figures and none of today's, and while that
+order is reopened it drops out of 20 Sep's report altogether until it is
+settled again. So today's drawer would not reconcile against today's figures;
+the Penjualan screen lists those rows separately as "Koreksi pesanan hari lain"
+(`reopen_seq > 0`, `order_payments.created_at` on the chosen day, order counted
+under another day), with a total per method.
 
 **`order_payments` is append-only.** A correction adds a row; it never rewrites
 or deletes the one already there. Money handed back is a negative `amount`.
@@ -473,7 +506,8 @@ All three take an **inclusive range of Asia/Jakarta dates** (`'2026-09-01'`,
 `'2026-09-26'`), not timestamps, and bucket by Jakarta time — so a browser in
 another timezone sees the same days as the till.
 
-`owner_sales_report` covers paid orders only, dated by `orders.created_at`, and
+`owner_sales_report` covers paid orders only, dated by `orders.paid_at` (see
+[Which day an order counts under](#which-day-an-order-counts-under)), and
 defines its figures as:
 
 | Figure | Definition |
