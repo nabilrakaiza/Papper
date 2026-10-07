@@ -59,10 +59,21 @@ function RootNavigator() {
 
   // Memoised so the object identity is stable: the redirect effect below
   // depends on it, and a fresh object each render would re-fire it each render.
+  //
+  // Keyed on whether a session exists, not on the session object. supabase-js
+  // hands over a new object for the same login every time the token refreshes
+  // and, on web, every time the browser tab becomes visible again -- and each
+  // one used to re-fire the redirect and throw the user back to their first
+  // screen.
+  const hasSession = !!session;
   const target = useMemo(
-    () => targetFor(session, profile?.role, profileError),
-    [session, profile?.role, profileError]
+    () => targetFor(hasSession, profile?.role, profileError),
+    [hasSession, profile?.role, profileError]
   );
+
+  // Already somewhere this user belongs: a reload on the web lands on the URL
+  // it was on, and redirecting from there would discard it for the first tab.
+  const inTargetGroup = !!target && segments[0] === target.group;
 
   // The tab bars ask for Nunito_700Bold but nothing ever loaded it, so the
   // labels silently fell back to the system font.
@@ -99,10 +110,10 @@ function RootNavigator() {
   }, [loading]);
 
   useEffect(() => {
-    if (!ready || !target) return;
+    if (!ready || !target || inTargetGroup) return;
 
     router.replace(target.path);
-  }, [ready, target]);
+  }, [ready, target, inTargetGroup]);
 
   if (!ready || (!fontsLoaded && !fontError)) {
     return <Spinner />;
@@ -145,7 +156,7 @@ function RootNavigator() {
   // to run its queries with no session, which the database refused out loud
   // once anon lost its grants. A screen the user has no business on should not
   // mount at all, not even briefly.
-  if (!target || segments[0] !== target.group) {
+  if (!target || !inTargetGroup) {
     return <Spinner />;
   }
 

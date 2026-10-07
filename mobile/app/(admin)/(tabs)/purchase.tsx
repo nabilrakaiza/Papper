@@ -237,8 +237,11 @@ export default function ExpensesScreen() {
   const [pendingDeleteId, setPendingDeleteId] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const fetchExpenses = useCallback(async () => {
-    setLoading(true);
+  // `silent` reloads behind the list instead of replacing it with the spinner:
+  // for the reloads nobody asked for (realtime, returning to the tab), where
+  // blanking the screen reads as the page restarting.
+  const fetchExpenses = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true);
     const { start, end } = getDateRange(activeFilter);
 
     // try/finally so a thrown request (dropped connection mid-flight) can't skip
@@ -286,7 +289,7 @@ export default function ExpensesScreen() {
     const subscription = supabase
       .channel("expenses-channel")
       .on("postgres_changes", { event: "*", schema: "public", table: "expenses" }, () => {
-        fetchExpenses();
+        fetchExpenses(true);
       })
       .subscribe();
 
@@ -300,7 +303,7 @@ export default function ExpensesScreen() {
   // is the one people check to confirm a purchase was recorded.
   useFocusEffect(
     useCallback(() => {
-      fetchExpenses();
+      fetchExpenses(true);
     }, [fetchExpenses])
   );
 

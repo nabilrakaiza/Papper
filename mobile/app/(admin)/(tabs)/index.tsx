@@ -33,8 +33,12 @@ export default function StockScreen() {
   const [correctingItem, setCorrectingItem] = useState<StockItem | null>(null);
   const sheetRef = useRef<BottomSheet>(null) as React.RefObject<BottomSheet>;
 
-  const fetchStock = useCallback(async () => {
-    setLoading(true);
+  // `silent` reloads behind the list instead of replacing it with the spinner.
+  // The realtime reload below is one nobody asked for -- every sale deducts
+  // stock -- and blanking the screen for each one threw away the scroll
+  // position mid-read.
+  const fetchStock = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true);
     setError(null);
 
     // setLoading(false) moved into a finally: a returned error was handled, but
@@ -77,7 +81,7 @@ export default function StockScreen() {
     const subscription = supabase
       .channel("stock-channel")
       .on("postgres_changes", { event: "*", schema: "public", table: "stock" }, () => {
-        fetchStock();
+        fetchStock(true);
       })
       .subscribe();
 
@@ -275,7 +279,7 @@ export default function StockScreen() {
       {error && (
         <View className="mx-4 mb-2 bg-red-50 border border-red-100 rounded-2xl px-4 py-3 flex-row items-center justify-between">
           <Text className="text-xs font-bold text-red-500 flex-1">{error}</Text>
-          <TouchableOpacity onPress={fetchStock}>
+          <TouchableOpacity onPress={() => fetchStock()}>
             <RefreshCw size={16} color="#ef4444" />
           </TouchableOpacity>
         </View>
