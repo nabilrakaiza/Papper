@@ -117,14 +117,15 @@ export default function ComparisonScreen() {
       0
     );
 
-    // Revenue: paid orders only, with the same discount/tax formula the sales
-    // screen and the receipt use, so the numbers reconcile across screens.
+    // Revenue: paid orders only, in the month they were paid, with the same
+    // discount/tax formula the sales screen and the receipt use, so the numbers
+    // reconcile across screens.
     const { data: orders, error: orderError } = await supabase
       .from("orders")
       .select("id, discount, tax")
       .eq("status", "paid")
-      .gte("created_at", from.toISOString())
-      .lt("created_at", to.toISOString());
+      .gte("paid_at", from.toISOString())
+      .lt("paid_at", to.toISOString());
 
     if (orderError) throw orderError;
 

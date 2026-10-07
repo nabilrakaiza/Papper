@@ -100,13 +100,16 @@ export function OrderProvider({ children }: { children: ReactNode }) {
         .eq("status", "unpaid")
         .order("created_at", { ascending: false });
 
-      // Fetch today's paid orders only. Earlier days are on the Penjualan screen.
+      // Fetch the orders paid today only, including one taken on an earlier
+      // day and settled today — it is in today's takings, and this list is
+      // where its receipt is reprinted from. Earlier days are on the Penjualan
+      // screen.
       const { data: paidData, error: paidError } = await supabase
         .from("orders")
         .select(ORDER_SELECT)
         .eq("status", "paid")
-        .gte("created_at", from)
-        .lt("created_at", to)
+        .gte("paid_at", from)
+        .lt("paid_at", to)
         .order("created_at", { ascending: false });
 
       if (unpaidError || paidError) {

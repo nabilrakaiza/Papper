@@ -11,6 +11,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { router } from "expo-router";
 import { ChevronLeft, ChevronDown, ChevronUp, Search, X } from "lucide-react-native";
 import { supabase } from "@/lib/supabase";
+import { orderDayFilter } from "@/lib/orderDay";
 import { orderTotal } from "../../../lib/constants";
 
 type OrderLine = {
@@ -155,11 +156,12 @@ export default function AdminOrdersScreen() {
       // One query for the orders, one for every line item across them — rather
       // than a nested select, which PostgREST would return per order and which
       // makes the row shape harder to keep in step with OrderContext.
+      // By the day each order is counted under — paid orders by when they were
+      // paid — so the total here is the one Penjualan shows for the period.
       let query = supabase
         .from("orders")
         .select("id, daily_number, customer_name, seat, created_at, status, discount, tax, is_dine_in")
-        .gte("created_at", from.toISOString())
-        .lt("created_at", to.toISOString())
+        .or(orderDayFilter(from.toISOString(), to.toISOString()))
         .order("created_at", { ascending: false });
 
       if (status !== "Semua") {
