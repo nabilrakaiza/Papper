@@ -139,7 +139,9 @@ export default function CogsEditScreen() {
   const [selectedStock, setSelectedStock] = useState<StockOption | null>(null);
   const [newQuantity, setNewQuantity] = useState("");
 
-  const snapPoints = useMemo(() => ["55%", "92%"], []);
+  // One full-height stop on the web: a mouse wheel scrolls the list but never
+  // drags the sheet up, so at 55% the rows below that line could not be reached.
+  const snapPoints = useMemo(() => (Platform.OS === "web" ? ["92%"] : ["55%", "92%"]), []);
 
   const fetchMenu = useCallback(async () => {
     if (isNew) return;
@@ -280,7 +282,6 @@ export default function CogsEditScreen() {
     setSelectedStock(item);
     setNewQuantity("");
     setError("");
-    pickerRef.current?.snapToIndex(1); // expand fully so quantity input is visible
   }, []);
 
   const alreadyAddedIds = useMemo(
@@ -822,6 +823,10 @@ export default function CogsEditScreen() {
       <BottomSheetModal
         ref={pickerRef}
         snapPoints={snapPoints}
+        // Left on, the list's own length becomes one more stop above 92% and
+        // the content is laid out for that one: at 92% its last 8% sat below
+        // the bottom of the screen.
+        enableDynamicSizing={false}
         enablePanDownToClose
         keyboardBehavior="extend"
         keyboardBlurBehavior="restore"
@@ -849,6 +854,42 @@ export default function CogsEditScreen() {
           </View>
         </View>
 
+        {/* Above the list, not under it. The sheet's content runs past the
+            bottom of the screen on the web, so a panel placed after the list
+            was out of view the moment it appeared. */}
+        {selectedStock && (
+          <View className="px-4 pb-3 mb-2 border-b border-gray-100">
+            <Text className="text-xs font-bold text-gray-500 mb-2">
+              Jumlah ({selectedStock.unit}) untuk {selectedStock.name}
+            </Text>
+            <View className="flex-row items-center gap-3">
+              {/* Keyed by the ingredient so that picking another one remounts
+                  the field and autoFocus puts the cursor back in it. */}
+              <SheetTextInput
+                key={selectedStock.id}
+                autoFocus
+                className="flex-1 bg-gray-50 border-2 border-gray-100 rounded-xl px-3 py-2.5 font-bold text-sm text-gray-900"
+                placeholder={`cth. 2 ${selectedStock.unit}`}
+                placeholderTextColor="#ccc"
+                keyboardType="numeric"
+                returnKeyType="done"
+                value={newQuantity}
+                onChangeText={(t) => setNewQuantity(sanitizeQuantity(t))}
+                onSubmitEditing={handleAddIngredient}
+              />
+              <TouchableOpacity
+                onPress={handleAddIngredient}
+                className="bg-green-400 rounded-xl px-5 py-3"
+              >
+                <Text className="text-sm font-extrabold text-white">Tambah</Text>
+              </TouchableOpacity>
+            </View>
+            {error !== "" && (
+              <Text className="text-xs font-bold text-red-500 mt-2">{error}</Text>
+            )}
+          </View>
+        )}
+
         <BottomSheetFlatList<StockOption>
           data={filteredStockOptions}
           keyExtractor={(s: StockOption) => s.id.toString()}
@@ -867,33 +908,6 @@ export default function CogsEditScreen() {
             </Text>
           }
         />
-
-        {selectedStock && (
-          <View className="px-4 pb-6 pt-3 border-t border-gray-100">
-            <Text className="text-xs font-bold text-gray-500 mb-2">
-              Jumlah ({selectedStock.unit}) untuk {selectedStock.name}
-            </Text>
-            <View className="flex-row items-center gap-3">
-              <SheetTextInput
-                className="flex-1 bg-gray-50 border-2 border-gray-100 rounded-xl px-3 py-2.5 font-bold text-sm text-gray-900"
-                placeholder={`cth. 2 ${selectedStock.unit}`}
-                placeholderTextColor="#ccc"
-                keyboardType="numeric"
-                value={newQuantity}
-                onChangeText={(t) => setNewQuantity(sanitizeQuantity(t))}
-              />
-              <TouchableOpacity
-                onPress={handleAddIngredient}
-                className="bg-green-400 rounded-xl px-5 py-3"
-              >
-                <Text className="text-sm font-extrabold text-white">Tambah</Text>
-              </TouchableOpacity>
-            </View>
-            {error !== "" && (
-              <Text className="text-xs font-bold text-red-500 mt-2">{error}</Text>
-            )}
-          </View>
-        )}
       </BottomSheetModal>
 
       {/* ConfirmDialog rather than Alert.alert: Alert's button callbacks are a
