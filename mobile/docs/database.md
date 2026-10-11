@@ -40,13 +40,33 @@ this is intentional, see [security.md](security.md#pin-storage).
 | Column | Type | Notes |
 | --- | --- | --- |
 | `id` | bigint PK | identity |
-| `name`, `unit` | text | |
+| `name`, `unit` | text | set at creation; changed afterwards only by `correct_stock`. Not unique in the schema, but the app treats the pair as an item's identity — see [Renaming a stock item](#renaming-a-stock-item) |
 | `quantity` | numeric | default 0 |
 | `price_per_unit` | integer | Rupiah |
 | `updated_at`, `last_purchase_date` | timestamptz | |
 | `is_active` | boolean | default `true`; `false` = soft-deleted, hidden from restock/recipe pickers |
 
 Raising `quantity` fires `after_stock_change`, which logs an `expenses` row.
+
+#### Renaming a stock item
+
+`correct_stock` can change `name` and `unit` (superadmin, pencil icon on the
+Stok tab). Everything that refers to the item does so by `stock_id`, so recipes,
+purchases and the correction log follow a rename; `expenses.name` and
+`admin_correction_log.target_name` keep what the item was called at the time.
+
+**A unit change is a relabel, not a conversion.** `quantity`, `price_per_unit`,
+every `menu_ingredients.quantity` and every `expenses` row for the item are
+plain numbers counted in the unit, and none of them is rescaled: "gram" → "kg"
+leaves 500 gram reading as 500 kg. The dialog warns and lists the menus whose
+recipes use the item; the quantity and price can be fixed in the same save, the
+recipes by hand on the HPP tab.
+
+`correct_stock` refuses a name + unit that another row (active or not) already
+has, compared case-insensitively, with SQLSTATE `23505`. Restocking finds the
+row to add to by id, falling back to that pair, so two rows sharing it would let
+a purchase of one land on the other. Only a call that changes the pair is
+checked — a quantity correction still works on a row that already has a twin.
 
 ### `menu_ingredients`
 Recipe join table. `menu_id` → `menus`, `stock_id` → `stock`, both
@@ -402,7 +422,9 @@ FK rejects a correction naming a stock row that does not exist.
 | `action` | text | `stock_correction` or `expense_deleted` |
 | `superadmin_id` | uuid | who made the change |
 | `stock_id` | bigint | → `stock(id)` ON DELETE RESTRICT, nullable — the row the entry is about |
-| `target_name` | text | the stock item's or expense's `name` **at the time**; does not follow a rename |
+| `target_name` | text | the stock item's or expense's `name` **at the time**; does not follow a rename. For a correction that renames, this is the name *before* |
+| `new_name` | text | what a `stock_correction` renamed the item to; null when the name was left alone |
+| `old_unit`, `new_unit` | text | the unit before and after a `stock_correction` relabelled it; both null when the unit was left alone. The quantities and prices on the row are in whichever unit applied at the time — nothing is converted |
 | `old_quantity`, `new_quantity` | numeric | `new_quantity` is null for `expense_deleted` |
 | `old_price_per_unit`, `new_price_per_unit` | integer | `new_price_per_unit` is null for `expense_deleted` |
 | `note` | text | optional, entered by the superadmin |
@@ -448,7 +470,7 @@ Failed attempts are recorded deliberately — the lockout counts them.
 | `override_log_report(timestamptz, timestamptz)` | jsonb | `order_override_log` over a period with cashier and approver names resolved; `admin` and `superadmin`. Exists because `profiles` is own-row-only, so a client reading the log directly gets UUIDs |
 | `delete_order_with_pin(bigint, text)` | boolean | hard delete; not wired to any UI; superadmin PIN only |
 | `toggle_menu_availability(bigint)` | void | flips `menus.available`; callable by any authenticated staff account, since `cashier` has no general write access to `menus` |
-| `correct_stock(bigint, numeric, integer, text)` | void | sets a `stock` row's quantity/price directly (not additive); superadmin-only; sets `app.stock_correction` so the restock trigger doesn't log it as a purchase |
+| `correct_stock(bigint, numeric, integer, text, text, text)` | void | sets a `stock` row's quantity/price directly (not additive), and optionally its name and unit — the last two arguments, null meaning "leave it", which is what a build sending only the first four gets; superadmin-only; sets `app.stock_correction` so the restock trigger doesn't log it as a purchase. See [Renaming a stock item](#renaming-a-stock-item) |
 | `delete_expense_entry(bigint, text)` | void | hard-deletes an `expenses` row; superadmin-only |
 | `stock_usage_report(timestamptz, timestamptz)` | jsonb | ingredient consumption over a period, reconstructed from `order_items` × `menu_ingredients`; superadmin-only. Returns `{ items, unmapped }` — see below |
 | `owner_sales_report(date, date)` | jsonb | the owner dashboard's sales figures; `owner` and `superadmin`. See [Owner reports](#owner-reports) |

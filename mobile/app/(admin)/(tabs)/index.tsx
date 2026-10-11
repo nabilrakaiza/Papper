@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import {
   View,
   Text,
@@ -91,7 +91,7 @@ export default function StockScreen() {
   }, [fetchStock]);
 
   const handleAdd = async (
-    incoming: Omit<StockItem, "id" | "isActive"> & { purchaseDate?: string }
+    incoming: Omit<StockItem, "id" | "isActive"> & { stockId?: number; purchaseDate?: string }
   ) => {
     setSaving(true);
     setError(null);
@@ -99,11 +99,17 @@ export default function StockScreen() {
     // Use the admin's selected date, or default to the exact moment right now
     const expenseDate = incoming.purchaseDate || new Date().toISOString();
 
-    const existing = items.find(
-      (i) =>
-        i.name.toLowerCase() === incoming.name.toLowerCase() &&
-        i.unit.toLowerCase() === incoming.unit.toLowerCase()
-    );
+    // By id when the sheet picked an existing item. Its name can be out of date
+    // -- the item may have been renamed since the sheet loaded its list -- and
+    // matching on it alone would miss the row and create a second one under
+    // the old name.
+    const existing =
+      (incoming.stockId != null ? items.find((i) => i.id === incoming.stockId) : undefined) ??
+      items.find(
+        (i) =>
+          i.name.toLowerCase() === incoming.name.toLowerCase() &&
+          i.unit.toLowerCase() === incoming.unit.toLowerCase()
+      );
 
     if (existing) {
       const { error } = await supabase
@@ -195,14 +201,25 @@ export default function StockScreen() {
     await removeStock(item);
   };
 
-  const handleCorrectStock = async (params: { quantity: number; pricePerUnit: number; note: string }) => {
+  const handleCorrectStock = async (params: {
+    name: string;
+    unit: string;
+    quantity: number;
+    pricePerUnit: number;
+    note: string;
+  }) => {
     if (!correctingItem) return;
 
+    // Name and unit are sent only when they changed: correct_stock reads a
+    // missing one as "leave it", so a plain quantity fix is the same call it
+    // always was.
     const { error } = await supabase.rpc("correct_stock", {
       p_stock_id: correctingItem.id,
       p_quantity: params.quantity,
       p_price_per_unit: params.pricePerUnit,
       p_note: params.note || null,
+      ...(params.name !== correctingItem.name ? { p_name: params.name } : {}),
+      ...(params.unit !== correctingItem.unit ? { p_unit: params.unit } : {}),
     });
 
     if (error) throw error;
@@ -231,6 +248,13 @@ export default function StockScreen() {
   const filtered = items
     .filter((i) => i.isActive && matchesSearch(i))
     .sort((a, b) => a.quantity - b.quantity);
+
+  // Changes only when an item is added, renamed or relabelled -- not on every
+  // sale -- so the add sheet reloads its picker list exactly when it is stale.
+  const definitionsKey = useMemo(
+    () => items.map((i) => `${i.id}:${i.name}:${i.unit}`).join("|"),
+    [items]
+  );
 
   const inactiveFiltered = isSuperadmin
     ? items.filter((i) => !i.isActive && matchesSearch(i)).sort((a, b) => a.name.localeCompare(b.name))
@@ -353,7 +377,12 @@ export default function StockScreen() {
         </View>
       )}
 
-      <AddStockSheet sheetRef={sheetRef} onAdd={handleAdd} canCreateNew={isSuperadmin} />
+      <AddStockSheet
+        sheetRef={sheetRef}
+        onAdd={handleAdd}
+        canCreateNew={isSuperadmin}
+        definitionsKey={definitionsKey}
+      />
 
       <CorrectStockDialog
         item={correctingItem}

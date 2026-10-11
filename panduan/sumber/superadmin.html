@@ -41,15 +41,24 @@ untuk koreksi stok dan <b>tong sampah merah</b> untuk menghapus.</p>
 <foto id="S-02">Membuat item stok baru dari jendela Tambah Stok</foto>
 
 <h3>Koreksi stok</h3>
-<p>Untuk membetulkan angka stok yang salah, misalnya salah ketik saat tambah stok atau hasil hitung fisik berbeda.
-Koreksi <b>mengganti angka langsung</b>, bukan menambah stok, dan tidak tercatat sebagai pengeluaran.</p>
+<p>Untuk membetulkan data stok yang salah, misalnya salah ketik saat tambah stok, hasil hitung fisik berbeda,
+atau nama dan satuan bahan yang keliru.
+Koreksi <b>mengganti data langsung</b>, bukan menambah stok, dan tidak tercatat sebagai pengeluaran.</p>
 <ol class="langkah">
   <li>Tekan ikon <b>pensil biru</b> di kartu bahan.</li>
+  <li>Betulkan <span class="t">Nama</span> atau <span class="t">Satuan</span> bila perlu.</li>
   <li>Isi <span class="t">Jumlah yang benar</span> dan <span class="t">Harga per unit yang benar</span>.</li>
   <li>Tulis alasannya di <span class="t">Catatan</span>, misalnya "salah ketik, harusnya 10 bukan 100".</li>
   <li>Tekan <span class="t">Simpan Koreksi</span>.</li>
 </ol>
 <foto id="S-03">Jendela Koreksi Stok</foto>
+<div class="awas">
+  <b>Mengganti satuan tidak mengonversi angka.</b>
+  Satuan hanya diganti labelnya. Mengganti "gram" menjadi "kg" membuat 500 gram terbaca 500 kg, dan resep yang
+  memakai 20 akan memotong 20 kg. Pakai ini untuk membetulkan penulisan satuan. Jika ukurannya memang berubah,
+  betulkan juga jumlah dan harga di jendela yang sama, lalu jumlah bahan di resep setiap menu yang memakainya
+  (tab <span class="t">HPP</span>). Jendela koreksi menampilkan daftar menunya.
+</div>
 <div class="catatan">
   <b>Salah mengisi tambah stok?</b>
   Perlu dua langkah: koreksi stoknya di sini, lalu hapus entri pengeluarannya (bab 12). Menghapus entri

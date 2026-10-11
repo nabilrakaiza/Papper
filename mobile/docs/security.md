@@ -37,7 +37,7 @@ write-blocking trigger.
 | --- | --- |
 | `cashier` | Add/edit/pay orders; cancel or correct with manager PIN (same as everyone); toggle menu availability (via `toggle_menu_availability`, not a direct table write) |
 | `admin` | Everything `cashier` can do, plus: restock existing items (`stock` update), edit menu recipes (`menu_ingredients`), read sales/expense reports |
-| `superadmin` | Everything `admin` can do, plus: create new stock item types, create/soft-delete/restore menu items, edit a menu's cost mode (`cogs_mode` / `manual_cogs`), correct a stock item's quantity/price directly (`correct_stock`), delete a bad `expenses` row (`delete_expense_entry`) |
+| `superadmin` | Everything `admin` can do, plus: create new stock item types, create/soft-delete/restore menu items, edit a menu's cost mode (`cogs_mode` / `manual_cogs`), correct a stock item's quantity/price directly and rename it or relabel its unit (`correct_stock`), delete a bad `expenses` row (`delete_expense_entry`) |
 
 | `owner` | Reads the money: the `owner_*` report functions, plus the order tables every signed-in account can read. **Writes nothing.** Web only. Holds no PIN and approves no override |
 
@@ -72,8 +72,8 @@ recipes after an item is removed from active use.
 Ordinary restocking is additive and always logs an `expenses` row via the
 `log_stock_expense` trigger — it's designed to represent a real purchase.
 `correct_stock` exists for fixing a data-entry mistake (wrong quantity or
-price), not recording a purchase, so it needs to bypass that side effect
-rather than trigger it.
+price, a misspelt name or unit), not recording a purchase, so it needs to bypass
+that side effect rather than trigger it.
 
 It does this the same way `enforce_cancel_via_rpc` does — a transaction-local
 flag checked inside the trigger (`app.stock_correction`, set via
