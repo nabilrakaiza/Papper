@@ -132,7 +132,7 @@ Recent stock corrections and deleted expense entries — both are
 `superadmin`-only, see [security.md](security.md#stock-corrections):
 
 ```sql
-select l.created_at, l.action, l.target_name, s.name as by,
+select l.created_at, l.action, l.target_name, l.new_name, l.old_unit, l.new_unit, s.name as by,
        l.old_quantity, l.new_quantity, l.old_price_per_unit, l.new_price_per_unit, l.note
 from public.admin_correction_log l
 left join public.profiles s on s.id = l.superadmin_id
@@ -143,6 +143,10 @@ limit 50;
 There's no in-app history view for this, same as `order_override_log` —
 check it here if a stock quantity or an expense total looks off and someone
 mentions "I fixed a typo."
+
+A row with `new_name` set is a rename; one with `old_unit` / `new_unit` set
+relabelled the unit **without converting anything**. If an item's recipes or
+stock figure went wrong by a factor of 1000, look for one of those first.
 
 For one item's history, filter on `stock_id` rather than the name — `target_name`
 is a snapshot of what the item was called at the time, so it misses everything
