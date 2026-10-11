@@ -23,9 +23,12 @@ type StockDefinition = {
 type PriceMode = "total" | "per-unit";
 
 type Props = {
-  onAdd: (item: Omit<StockItem, "id" | "isActive"> & { purchaseDate?: string }) => Promise<void>;
+  onAdd: (
+    item: Omit<StockItem, "id" | "isActive"> & { stockId?: number; purchaseDate?: string }
+  ) => Promise<void>;
   sheetRef: React.RefObject<BottomSheet>;
   canCreateNew?: boolean; // superadmin-only: allow defining a brand-new stock item type
+  definitionsKey?: string; // changes when stock names/units do, so the picker list reloads
 };
 
 const formatRupiah = (digits: string) => {
@@ -33,7 +36,7 @@ const formatRupiah = (digits: string) => {
   return digits.replace(/\B(?=(\d{3})+(?!\d))/g, ".");
 };
 
-export default function AddStockSheet({ onAdd, sheetRef, canCreateNew = false }: Props) {
+export default function AddStockSheet({ onAdd, sheetRef, canCreateNew = false, definitionsKey }: Props) {
   const [definitions, setDefinitions] = useState<StockDefinition[]>([]);
   const [loadingDefs, setLoadingDefs] = useState(true);
   const [search, setSearch] = useState("");
@@ -76,7 +79,7 @@ export default function AddStockSheet({ onAdd, sheetRef, canCreateNew = false }:
       }
     };
     fetchDefinitions();
-  }, []);
+  }, [definitionsKey]);
 
   const filtered = definitions.filter((d) =>
     d.name.toLowerCase().includes(search.toLowerCase())
@@ -163,6 +166,8 @@ export default function AddStockSheet({ onAdd, sheetRef, canCreateNew = false }:
 
     try {
       await onAdd({
+        // -1 is a definition typed in here, not yet a row
+        stockId: selected.id > 0 ? selected.id : undefined,
         name: selected.name,
         quantity: qty,
         unit: selected.unit,
