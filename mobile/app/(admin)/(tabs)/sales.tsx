@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import {
   View,
   Text,
@@ -13,14 +13,20 @@ import { ChevronRight } from "lucide-react-native";
 import { VictoryBar, VictoryChart, VictoryAxis, VictoryTheme } from "victory-native";
 import { supabase } from "../../../lib/supabase";
 import { SalesPeriod } from "../../../types/sales";
+import { SalesReport } from "../../../types/owner";
 import { orderTotal } from "../../../lib/constants";
+import { useAuth } from "../../../context/AuthContext";
+import { PickerModal } from "../../../components/owner/DateRangePicker";
 import {
+  DateRange,
   IsoDate,
   MONTHS_SHORT,
   WEEKDAYS_SHORT,
   addDays,
   addMonths,
+  daysBetween,
   formatDayMonth,
+  formatRange,
   jakartaDateOf,
   jakartaDayBounds,
   parseIso,
@@ -62,25 +68,35 @@ function formatRupiahFull(amount: number): string {
   return "Rp " + Math.round(amount).toLocaleString("id-ID");
 }
 
-const PERIOD_LABELS: { key: SalesPeriod; label: string }[] = [
+// What a card is showing: one of the fixed periods, or — superadmin only — any
+// range of Jakarta dates.
+type Selection = { period: SalesPeriod } | { period: "custom"; range: DateRange };
+
+const PERIOD_LABELS: { key: SalesPeriod | "custom"; label: string }[] = [
   { key: "daily", label: "Harian" },
   { key: "weekly", label: "Mingguan" },
   { key: "monthly", label: "Bulanan" },
+  { key: "custom", label: "Kustom" },
 ];
 
 function PeriodToggle({
-  period,
+  selection,
+  allowCustom,
   onChange,
+  onPickCustom,
 }: {
-  period: SalesPeriod;
+  selection: Selection;
+  allowCustom: boolean;
   onChange: (p: SalesPeriod) => void;
+  onPickCustom: () => void;
 }) {
+  const period = selection.period;
   return (
     <View className="flex-row bg-purple-100 rounded-2xl p-1 gap-1 self-start">
-      {PERIOD_LABELS.map(({ key, label }) => (
+      {PERIOD_LABELS.filter(({ key }) => allowCustom || key !== "custom").map(({ key, label }) => (
         <TouchableOpacity
           key={key}
-          onPress={() => onChange(key)}
+          onPress={() => (key === "custom" ? onPickCustom() : onChange(key))}
           className={`px-3 py-1.5 rounded-xl ${period === key ? "bg-white" : ""}`}
         >
           <Text
@@ -96,6 +112,18 @@ function PeriodToggle({
   );
 }
 
+// The chosen range under a card's toggle, tappable to choose another.
+function CustomRangeLabel({ selection, onPress }: { selection: Selection; onPress: () => void }) {
+  if (selection.period !== "custom") return null;
+  return (
+    <TouchableOpacity onPress={onPress} className="self-start -mt-2 mb-3">
+      <Text className="text-xs font-extrabold text-purple-600">
+        {formatRange(selection.range.from, selection.range.to)} · ubah
+      </Text>
+    </TouchableOpacity>
+  );
+}
+
 // The bars a period is drawn with, oldest first, as Jakarta dates: one per day
 // for the last 7 days, one per Monday-start week for the last 4 weeks (this
 // week included), one per month for the last 5 months (this month included).
@@ -104,7 +132,45 @@ function PeriodToggle({
 // in date order and a day with no sales shows as an empty bar instead of
 // vanishing. They used to be keyed by whichever order the database returned
 // rows in, which put the days out of order ("Sun, Fri, Mon, ...").
-function buckets(period: SalesPeriod): { start: IsoDate; label: string }[] {
+//
+// A custom range is drawn a bar per day up to a month, a bar per week up to
+// about four months, and a bar per month beyond that. Its first bar starts on
+// the range's first day even mid-week or mid-month, so no bar reaches back
+// before what was asked for.
+function customBuckets(range: DateRange): { start: IsoDate; label: string }[] {
+  const { from, to } = range;
+  const span = daysBetween(from, to) + 1;
+  const bars: { start: IsoDate; label: string }[] = [];
+
+  if (span <= 31) {
+    for (let day = from; day <= to; day = addDays(day, 1)) {
+      bars.push({ start: day, label: formatDayMonth(day) });
+    }
+    return bars;
+  }
+
+  if (span <= 112) {
+    for (let week = startOfWeek(from); week <= to; week = addDays(week, 7)) {
+      const start = week < from ? from : week;
+      bars.push({ start, label: formatDayMonth(start) });
+    }
+    return bars;
+  }
+
+  // The year goes on the label once the range spans more than one, or every
+  // January would read the same.
+  const multiYear = from.slice(0, 4) !== to.slice(0, 4);
+  for (let month = startOfMonth(from); month <= to; month = addMonths(month, 1)) {
+    const start = month < from ? from : month;
+    const m = MONTHS_SHORT[parseIso(month).getUTCMonth()];
+    bars.push({ start, label: multiYear ? `${m} ${month.slice(2, 4)}` : m });
+  }
+  return bars;
+}
+
+function buckets(selection: Selection): { start: IsoDate; label: string }[] {
+  if (selection.period === "custom") return customBuckets(selection.range);
+  const period = selection.period;
   const today = todayJakarta();
   if (period === "daily") {
     return Array.from({ length: 7 }, (_, i) => {
@@ -127,22 +193,19 @@ function buckets(period: SalesPeriod): { start: IsoDate; label: string }[] {
 // From the start of the first bar, Jakarta time, to now.
 function getDateRange(period: SalesPeriod): { from: string; to: string } {
   return {
-    from: jakartaDayBounds(buckets(period)[0].start).from,
+    from: jakartaDayBounds(buckets({ period })[0].start).from,
     to: new Date().toISOString(),
   };
 }
 
-// Add each order's total to the bar for the Jakarta date it was paid on — not
-// the date it was taken, which for a table that settles the next day is a day
-// whose drawer has already been counted.
-function groupOrders(
-  orders: { paid_at: string; total: number }[],
-  period: SalesPeriod
+// Add each amount to the bar its Jakarta date falls in.
+function groupByDay(
+  amounts: { day: IsoDate; total: number }[],
+  selection: Selection
 ): SalesDataPoint[] {
-  const bars = buckets(period).map((b) => ({ ...b, total: 0 }));
-  for (const { paid_at, total } of orders) {
-    const day = jakartaDateOf(paid_at);
-    // The last bar whose start is on or before the day it was paid.
+  const bars = buckets(selection).map((b) => ({ ...b, total: 0 }));
+  for (const { day, total } of amounts) {
+    // The last bar whose start is on or before the day.
     for (let i = bars.length - 1; i >= 0; i--) {
       if (bars[i].start <= day) {
         bars[i].total += total;
@@ -151,6 +214,50 @@ function groupOrders(
     }
   }
   return bars.map(({ label, total }) => ({ label, total }));
+}
+
+// A custom range is worked out by owner_sales_report rather than by pulling
+// every order, line and payment in it to the phone: over months those are far
+// more rows than one response carries, and the total would quietly stop short.
+// It is the owner dashboard's own report, so the figures match it exactly.
+async function fetchReport(range: DateRange): Promise<SalesReport | null> {
+  const { data, error } = await supabase.rpc("owner_sales_report", {
+    p_from: range.from,
+    p_to: range.to,
+  });
+  if (error) {
+    console.error("Failed to load sales report:", error.message);
+    return null;
+  }
+  return data as SalesReport;
+}
+
+// Sorted into the fixed method order, with the labels the screen uses.
+function toMethodTotals(totals: Map<string, { count: number; total: number }>): MethodTotal[] {
+  return [...totals.entries()]
+    .map(([method, v]) => ({
+      method,
+      label: METHOD_LABELS[method] ?? "Tidak dicatat",
+      ...v,
+    }))
+    .sort(
+      (a, b) =>
+        (METHOD_ORDER.indexOf(a.method) + 1 || 99) -
+        (METHOD_ORDER.indexOf(b.method) + 1 || 99)
+    );
+}
+
+// More bars than fit a label each — a month of days on a phone — get every
+// nth labelled, the last always among them.
+function tickLabel(data: SalesDataPoint[], index: number): string {
+  const step = Math.ceil(data.length / 8);
+  return (data.length - 1 - index) % step === 0 ? data[index].label : "";
+}
+
+// A week ending today, as a starting point for the first custom pick.
+function defaultCustomRange(): DateRange {
+  const today = todayJakarta();
+  return { from: addDays(today, -6), to: today, preset: "custom" };
 }
 
 const CHART_PADDING = { top: 20, bottom: 40, left: 56, right: 16 };
@@ -164,11 +271,28 @@ export default function AdminSalesScreen() {
   // the margins was close enough on a phone, but in a desktop browser it is the
   // card that sets the width, and the bars were sized for neither.
   const [chartWidth, setChartWidth] = useState<number | null>(null);
+  const { profile } = useAuth();
+  const isSuperadmin = profile?.role === "superadmin";
 
   // 1. Split state into two independent periods
-  const [salesPeriod, setSalesPeriod] = useState<SalesPeriod>("daily");
-  const [topSellingPeriod, setTopSellingPeriod] = useState<SalesPeriod>("daily");
-  
+  const [salesSelection, setSalesSelection] = useState<Selection>({ period: "daily" });
+  const [topSellingSelection, setTopSellingSelection] = useState<Selection>({ period: "daily" });
+  // Which card's range picker is open, if either.
+  const [pickingFor, setPickingFor] = useState<"sales" | "topSelling" | null>(null);
+
+  // What the cards show right now, for the realtime handler: it is subscribed
+  // once, so reading the state directly kept refetching the first period
+  // whatever had been chosen since.
+  const salesSelectionRef = useRef(salesSelection);
+  salesSelectionRef.current = salesSelection;
+  const topSellingSelectionRef = useRef(topSellingSelection);
+  topSellingSelectionRef.current = topSellingSelection;
+
+  // Each fetch's number. A slow custom-range report that finishes after the
+  // user has moved on must not overwrite what they moved on to.
+  const salesFetchSeq = useRef(0);
+  const topSellingFetchSeq = useRef(0);
+
   const [chartData, setChartData] = useState<SalesDataPoint[]>([]);
   const [totalSales, setTotalSales] = useState(0);
   const [topMenu, setTopMenu] = useState<TopMenuItem[]>([]);
@@ -181,11 +305,55 @@ export default function AdminSalesScreen() {
   // Optional: Split loading states so one chart doesn't block the other visually
   const [loadingSales, setLoadingSales] = useState(true);
   const [loadingTopSelling, setLoadingTopSelling] = useState(true);
+  const [salesError, setSalesError] = useState(false);
+  const [topSellingError, setTopSellingError] = useState(false);
+
+  const fetchCustomSalesData = async (selection: Selection & { period: "custom" }, seq: number) => {
+    const report = await fetchReport(selection.range);
+    if (seq !== salesFetchSeq.current) return;
+
+    if (!report) {
+      setSalesError(true);
+      setChartData([]);
+      setTotalSales(0);
+      setByMethod([]);
+      setLoadingSales(false);
+      return;
+    }
+
+    // The report already puts each split bill's rounding residual on its
+    // largest share and nets correction rows out, as the code below does.
+    const methodTotals = new Map<string, { count: number; total: number }>();
+    for (const p of report.payments) {
+      methodTotals.set(p.method ?? "—", { count: p.count, total: p.amount });
+    }
+
+    const hasSales = report.summary.transactions > 0;
+    setByMethod(toMethodTotals(methodTotals));
+    setTotalSales(report.summary.collected);
+    setChartData(
+      hasSales
+        ? groupByDay(
+            report.daily.map((d) => ({ day: d.date, total: d.collected ?? 0 })),
+            selection
+          )
+        : []
+    );
+    setLoadingSales(false);
+  };
 
   // 2. Separate fetch function for Sales Chart
-  const fetchSalesData = async (p: SalesPeriod) => {
+  const fetchSalesData = async (selection: Selection) => {
+    const seq = ++salesFetchSeq.current;
     setLoadingSales(true);
-    const { from, to } = getDateRange(p);
+    setSalesError(false);
+
+    if (selection.period === "custom") {
+      await fetchCustomSalesData(selection, seq);
+      return;
+    }
+
+    const { from, to } = getDateRange(selection.period);
 
     const { data: orders } = await supabase
       .from("orders")
@@ -193,6 +361,8 @@ export default function AdminSalesScreen() {
       .eq("status", "paid")
       .gte("paid_at", from)
       .lte("paid_at", to);
+
+    if (seq !== salesFetchSeq.current) return;
 
     if (!orders || orders.length === 0) {
       setChartData([]);
@@ -226,6 +396,8 @@ export default function AdminSalesScreen() {
       .from("order_payments")
       .select("order_id, amount, method_of_payment")
       .in("order_id", orderIds);
+
+    if (seq !== salesFetchSeq.current) return;
 
     const paymentsByOrder = new Map<number, { amount: number; method: string }[]>();
     for (const p of payments ?? []) {
@@ -279,22 +451,18 @@ export default function AdminSalesScreen() {
       });
     }
 
-    setByMethod(
-      [...methodTotals.entries()]
-        .map(([method, v]) => ({
-          method,
-          label: METHOD_LABELS[method] ?? "Tidak dicatat",
-          ...v,
-        }))
-        .sort(
-          (a, b) =>
-            (METHOD_ORDER.indexOf(a.method) + 1 || 99) -
-            (METHOD_ORDER.indexOf(b.method) + 1 || 99)
-        )
-    );
+    setByMethod(toMethodTotals(methodTotals));
 
     setTotalSales(total);
-    setChartData(groupOrders(ordersWithTotal, p));
+    // Each order goes on the bar for the Jakarta date it was paid on — not the
+    // date it was taken, which for a table that settles the next day is a day
+    // whose drawer has already been counted.
+    setChartData(
+      groupByDay(
+        ordersWithTotal.map((o) => ({ day: jakartaDateOf(o.paid_at), total: o.total })),
+        selection
+      )
+    );
     setLoadingSales(false);
   };
 
@@ -345,9 +513,26 @@ export default function AdminSalesScreen() {
   };
 
   // 3. Separate fetch function for Top Selling Menu
-  const fetchTopSellingData = async (p: SalesPeriod) => {
+  const fetchTopSellingData = async (selection: Selection) => {
+    const seq = ++topSellingFetchSeq.current;
     setLoadingTopSelling(true);
-    const { from, to } = getDateRange(p);
+    setTopSellingError(false);
+
+    // The report's items come sorted by quantity sold, most first. They are
+    // per menu under its current name, where the fixed periods below count by
+    // the name each line was rung up under.
+    if (selection.period === "custom") {
+      const report = await fetchReport(selection.range);
+      if (seq !== topSellingFetchSeq.current) return;
+      if (!report) setTopSellingError(true);
+      setTopMenu(
+        (report?.items ?? []).slice(0, 5).map((i) => ({ name: i.name, quantity: i.qty }))
+      );
+      setLoadingTopSelling(false);
+      return;
+    }
+
+    const { from, to } = getDateRange(selection.period);
 
     const { data: orders } = await supabase
       .from("orders")
@@ -355,6 +540,8 @@ export default function AdminSalesScreen() {
       .eq("status", "paid")
       .gte("paid_at", from)
       .lte("paid_at", to);
+
+    if (seq !== topSellingFetchSeq.current) return;
 
     if (!orders || orders.length === 0) {
       setTopMenu([]);
@@ -367,6 +554,8 @@ export default function AdminSalesScreen() {
       .from("order_items")
       .select("name, quantity")
       .in("order_id", orderIds);
+
+    if (seq !== topSellingFetchSeq.current) return;
 
     const itemCount: Record<string, { name: string; qty: number }> = {};
     (items ?? []).forEach((item) => {
@@ -386,12 +575,12 @@ export default function AdminSalesScreen() {
   };
 
   useEffect(() => {
-    fetchSalesData(salesPeriod);
-  }, [salesPeriod]);
+    fetchSalesData(salesSelection);
+  }, [salesSelection]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    fetchTopSellingData(topSellingPeriod);
-  }, [topSellingPeriod]);
+    fetchTopSellingData(topSellingSelection);
+  }, [topSellingSelection]);
 
   useEffect(() => {
     fetchOutstanding();
@@ -401,8 +590,8 @@ export default function AdminSalesScreen() {
     const subscription = supabase
       .channel("sales-channel")
       .on("postgres_changes", { event: "*", schema: "public", table: "orders" }, () => {
-        fetchSalesData(salesPeriod);
-        fetchTopSellingData(topSellingPeriod);
+        fetchSalesData(salesSelectionRef.current);
+        fetchTopSellingData(topSellingSelectionRef.current);
         fetchOutstanding();
       })
       .subscribe();
@@ -414,11 +603,24 @@ export default function AdminSalesScreen() {
 
   // Handlers for respective Period Toggles
   const handleSalesPeriodChange = (p: SalesPeriod) => {
-    setSalesPeriod(p);
+    setSalesSelection({ period: p });
   };
 
   const handleTopSellingPeriodChange = (p: SalesPeriod) => {
-    setTopSellingPeriod(p);
+    setTopSellingSelection({ period: p });
+  };
+
+  // The picker opens on the card's current range, or on the last week the first
+  // time. Closing it without applying leaves the card on what it was showing.
+  const pickerSelection = pickingFor === "sales" ? salesSelection : topSellingSelection;
+  const pickerInitial =
+    pickerSelection.period === "custom" ? pickerSelection.range : defaultCustomRange();
+
+  const handleApplyRange = (range: DateRange) => {
+    const next: Selection = { period: "custom", range };
+    if (pickingFor === "sales") setSalesSelection(next);
+    else setTopSellingSelection(next);
+    setPickingFor(null);
   };
 
   // Bars no wider than 48px, and the edge padding at least half a bar, so the
@@ -451,11 +653,17 @@ export default function AdminSalesScreen() {
         >
           {/* Sales Graph Card */}
           <View className="bg-yellow-100 rounded-3xl px-4 pt-4 pb-5 mb-4 shadow-sm shadow-yellow-300/30">
-            <View className="flex-row items-center justify-between mb-4">
+            <View className="flex-row flex-wrap items-center justify-between gap-2 mb-4">
               {/* Pass the specific sales state and handler */}
-              <PeriodToggle period={salesPeriod} onChange={handleSalesPeriodChange} />
+              <PeriodToggle
+                selection={salesSelection}
+                allowCustom={isSuperadmin}
+                onChange={handleSalesPeriodChange}
+                onPickCustom={() => setPickingFor("sales")}
+              />
               <Text className="text-lg font-black text-gray-900">Total Penjualan</Text>
             </View>
+            <CustomRangeLabel selection={salesSelection} onPress={() => setPickingFor("sales")} />
 
             <View
               className="bg-cyan-100 rounded-2xl overflow-hidden min-h-[200px]"
@@ -468,14 +676,24 @@ export default function AdminSalesScreen() {
               ) : chartData.length > 0 ? (
                 <View collapsable={false}>
                   <VictoryChart
-                    key={salesPeriod}
+                    key={
+                      salesSelection.period === "custom"
+                        ? `${salesSelection.range.from}:${salesSelection.range.to}`
+                        : salesSelection.period
+                    }
                     width={chartW}
                     height={200}
                     theme={VictoryTheme.material}
                     domainPadding={{ x: barWidth / 2 + 12 }}
                     padding={CHART_PADDING}
                   >
+                    {/* Bars are placed by position and labelled from it, since a
+                        custom range's labels need not be unique to the axis.
+                        From 1, not 0: Victory will not pad the domain below
+                        zero, so a bar at 0 sat on top of the axis labels. */}
                     <VictoryAxis
+                      tickValues={chartData.map((_, i) => i + 1)}
+                      tickFormat={(t) => tickLabel(chartData, t - 1)}
                       style={{
                         tickLabels: { fontSize: 10, fontWeight: "600", fill: "#666" },
                         axis: { stroke: "transparent" },
@@ -492,7 +710,7 @@ export default function AdminSalesScreen() {
                       }}
                     />
                     <VictoryBar
-                      data={chartData.map((d) => ({ x: d.label, y: d.total }))}
+                      data={chartData.map((d, i) => ({ x: i + 1, y: d.total }))}
                       barWidth={barWidth}
                       style={{ data: { fill: "#4caf50", rx: 6 } }}
                       animate={{ duration: 400, onLoad: { duration: 400 } }}
@@ -501,7 +719,11 @@ export default function AdminSalesScreen() {
                 </View>
               ) : (
                 <View className="h-40 items-center justify-center">
-                  <Text className="text-gray-400 font-bold text-sm">Tidak ada data penjualan untuk periode ini</Text>
+                  <Text className="text-gray-400 font-bold text-sm">
+                    {salesError
+                      ? "Gagal memuat penjualan. Periksa koneksi Anda."
+                      : "Tidak ada data penjualan untuk periode ini"}
+                  </Text>
                 </View>
               )}
 
@@ -533,7 +755,7 @@ export default function AdminSalesScreen() {
               </View>
             ) : byMethod.length === 0 ? (
               <Text className="text-gray-400 font-bold text-sm py-4 text-center">
-                Tidak ada data untuk periode ini
+                {salesError ? "Gagal memuat data." : "Tidak ada data untuk periode ini"}
               </Text>
             ) : (
               byMethod.map((m) => {
@@ -646,11 +868,20 @@ export default function AdminSalesScreen() {
 
           {/* Top Selling Menu Card */}
           <View className="bg-yellow-100 rounded-3xl px-4 pt-4 pb-5 shadow-sm shadow-yellow-300/30">
-            <View className="flex-row items-center justify-between mb-4">
+            <View className="flex-row flex-wrap items-center justify-between gap-2 mb-4">
                {/* Pass the specific top selling state and handler */}
-              <PeriodToggle period={topSellingPeriod} onChange={handleTopSellingPeriodChange} />
+              <PeriodToggle
+                selection={topSellingSelection}
+                allowCustom={isSuperadmin}
+                onChange={handleTopSellingPeriodChange}
+                onPickCustom={() => setPickingFor("topSelling")}
+              />
               <Text className="text-lg font-black text-gray-900">Terlaris</Text>
             </View>
+            <CustomRangeLabel
+              selection={topSellingSelection}
+              onPress={() => setPickingFor("topSelling")}
+            />
 
             <View className="bg-cyan-100 rounded-2xl px-4 py-2 min-h-[100px] justify-center">
               {loadingTopSelling ? (
@@ -659,7 +890,9 @@ export default function AdminSalesScreen() {
                 </View>
               ) : topMenu.length === 0 ? (
                 <View className="py-6 items-center">
-                  <Text className="text-gray-400 font-bold text-sm">Tidak ada data untuk periode ini</Text>
+                  <Text className="text-gray-400 font-bold text-sm">
+                    {topSellingError ? "Gagal memuat data." : "Tidak ada data untuk periode ini"}
+                  </Text>
                 </View>
               ) : (
                 topMenu.map((item, index) => (
@@ -684,6 +917,14 @@ export default function AdminSalesScreen() {
             </View>
           </View>
         </ScrollView>
+      )}
+
+      {pickingFor !== null && (
+        <PickerModal
+          initial={pickerInitial}
+          onClose={() => setPickingFor(null)}
+          onApply={handleApplyRange}
+        />
       )}
     </SafeAreaView>
   );

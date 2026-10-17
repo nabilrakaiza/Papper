@@ -62,6 +62,40 @@ function sanitizeQuantity(text: string): string {
   return rest.length > 0 ? `${whole}.${rest.join("")}` : whole;
 }
 
+// The categories a menu may be filed under: the fixed list, never free text,
+// because a category the cashier screens do not know has no tab to show it in.
+function CategoryPicker({
+  value,
+  onChange,
+}: {
+  value: MenuCategory;
+  onChange: (category: MenuCategory) => void;
+}) {
+  return (
+    <ScrollView horizontal showsHorizontalScrollIndicator={false} className="mb-4">
+      <View className="flex-row gap-2">
+        {CATEGORIES.map((cat) => (
+          <TouchableOpacity
+            key={cat}
+            onPress={() => onChange(cat)}
+            className={`px-4 py-2 rounded-xl ${
+              value === cat ? "bg-blue-500" : "bg-white border-2 border-gray-100"
+            }`}
+          >
+            <Text
+              className={`text-xs font-extrabold ${
+                value === cat ? "text-white" : "text-gray-500"
+              }`}
+            >
+              {cat}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+    </ScrollView>
+  );
+}
+
 const StockRow = memo(function StockRow({
   item,
   isAdded,
@@ -123,6 +157,11 @@ export default function CogsEditScreen() {
   const [saving, setSaving] = useState(false);
   const [menuName, setMenuName] = useState("");
   const [sellingPrice, setSellingPrice] = useState(0);
+  // Editable copies of the menu's own fields, superadmin only. The price is
+  // kept as typed so the field can be cleared while retyping it.
+  const [nameInput, setNameInput] = useState("");
+  const [priceInput, setPriceInput] = useState("");
+  const [category, setCategory] = useState<MenuCategory>(CATEGORIES[0]);
 
   const [cogsMode, setCogsMode] = useState<CogsMode>("ingredients");
   const [ingredients, setIngredients] = useState<IngredientRow[]>([]);
@@ -153,7 +192,7 @@ export default function CogsEditScreen() {
     try {
       const { data: menu, error: menuError } = await supabase
         .from("menus")
-        .select("id, name, price, cogs_mode, manual_cogs")
+        .select("id, name, price, category, cogs_mode, manual_cogs")
         .eq("id", menuId)
         .single();
 
@@ -173,6 +212,9 @@ export default function CogsEditScreen() {
 
       setMenuName(menu.name);
       setSellingPrice(menu.price);
+      setNameInput(menu.name);
+      setPriceInput(String(menu.price));
+      setCategory(menu.category as MenuCategory);
       setCogsMode((menu.cogs_mode ?? "ingredients") as CogsMode);
       setManualCogsInput(menu.manual_cogs != null ? menu.manual_cogs.toString() : "");
 
@@ -365,6 +407,22 @@ export default function CogsEditScreen() {
     setNewPriceInput(text.replace(/[^0-9]/g, ""));
   };
 
+  const handleNameChange = (text: string) => {
+    setNameInput(text);
+    setIsDirty(true);
+  };
+
+  const handlePriceChange = (text: string) => {
+    setPriceInput(text.replace(/[^0-9]/g, ""));
+    setIsDirty(true);
+  };
+
+  const handleCategoryChange = (cat: MenuCategory) => {
+    if (cat === category) return;
+    setCategory(cat);
+    setIsDirty(true);
+  };
+
   const handleCreateMenu = async () => {
     setCreateError("");
 
@@ -407,6 +465,20 @@ export default function CogsEditScreen() {
     setError("");
 
     // Validate before touching the DB
+    const price = parseInt(priceInput, 10);
+    if (isSuperadmin) {
+      if (!nameInput.trim()) {
+        setError("Nama menu tidak boleh kosong.");
+        setSaving(false);
+        return;
+      }
+      if (!price || price <= 0) {
+        setError("Harga jual harus lebih besar dari 0.");
+        setSaving(false);
+        return;
+      }
+    }
+
     if (cogsMode === "ingredients") {
       const invalid = ingredients.some((i) => !i.quantity || i.quantity <= 0);
       if (invalid) {
@@ -467,18 +539,26 @@ export default function CogsEditScreen() {
       }
     }
 
-    // 3. Update menu-level fields — cogs_mode / manual_cogs are superadmin-only
-    // (RLS rejects this write from an admin account, so skip it entirely rather
-    // than surface a confusing failure for an admin who only touched ingredients)
+    // 3. Update menu-level fields — name, price, category and cost mode are
+    // superadmin-only (RLS rejects this write from an admin account, so skip it
+    // entirely rather than surface a confusing failure for an admin who only
+    // touched ingredients). Orders already taken keep the name and price they
+    // were rung up at: order_items holds its own copy of both.
     if (isSuperadmin) {
       const manualCogsValue = manualCogsInput === "" ? null : parseFloat(manualCogsInput);
       const { error: menuError } = await supabase
         .from("menus")
-        .update({ cogs_mode: cogsMode, manual_cogs: manualCogsValue })
+        .update({
+          name: nameInput.trim(),
+          price,
+          category,
+          cogs_mode: cogsMode,
+          manual_cogs: manualCogsValue,
+        })
         .eq("id", menuId);
 
       if (menuError) {
-        setError("Gagal menyimpan mode HPP.");
+        setError("Gagal menyimpan perubahan menu.");
         setSaving(false);
         return;
       }
@@ -560,27 +640,7 @@ export default function CogsEditScreen() {
           <Text className="text-[10px] font-extrabold text-gray-400 uppercase tracking-widest mb-1">
             Kategori
           </Text>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} className="mb-4">
-            <View className="flex-row gap-2">
-              {CATEGORIES.map((cat) => (
-                <TouchableOpacity
-                  key={cat}
-                  onPress={() => setNewCategory(cat)}
-                  className={`px-4 py-2 rounded-xl ${
-                    newCategory === cat ? "bg-blue-500" : "bg-white border-2 border-gray-100"
-                  }`}
-                >
-                  <Text
-                    className={`text-xs font-extrabold ${
-                      newCategory === cat ? "text-white" : "text-gray-500"
-                    }`}
-                  >
-                    {cat}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-          </ScrollView>
+          <CategoryPicker value={newCategory} onChange={setNewCategory} />
 
           <Text className="text-[10px] font-extrabold text-gray-400 uppercase tracking-widest mb-1">
             Mode HPP Awal
@@ -650,7 +710,9 @@ export default function CogsEditScreen() {
         <TouchableOpacity onPress={() => router.back()}>
           <ChevronLeft size={24} color="#333" />
         </TouchableOpacity>
-        <Text className="text-xl font-black text-gray-900">Edit HPP</Text>
+        <Text className="text-xl font-black text-gray-900">
+          {isSuperadmin ? "Edit Menu" : "Edit HPP"}
+        </Text>
         <View className="w-6" />
       </View>
 
@@ -667,12 +729,47 @@ export default function CogsEditScreen() {
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
       >
-        <View className="bg-white rounded-2xl px-4 py-3 mb-4">
-          <Text className="text-lg font-black text-gray-900">{menuName}</Text>
-          <Text className="text-xs font-bold text-gray-400 mt-1">
-            Harga jual: {formatRupiah(sellingPrice)}
-          </Text>
-        </View>
+        {isSuperadmin ? (
+          <View className="bg-white rounded-2xl px-4 pt-4 pb-1 mb-4">
+            <Text className="text-[10px] font-extrabold text-gray-400 uppercase tracking-widest mb-1">
+              Nama Menu
+            </Text>
+            <TextInput
+              className="w-full bg-gray-50 border-2 border-gray-100 rounded-xl px-4 py-3 font-bold text-sm text-gray-900 mb-4"
+              placeholder="cth. Nasi Goreng"
+              placeholderTextColor="#ccc"
+              value={nameInput}
+              onChangeText={handleNameChange}
+            />
+
+            <Text className="text-[10px] font-extrabold text-gray-400 uppercase tracking-widest mb-1">
+              Harga Jual
+            </Text>
+            <TextInput
+              className="w-full bg-gray-50 border-2 border-gray-100 rounded-xl px-4 py-3 font-bold text-sm text-gray-900 mb-1"
+              placeholder="cth. 25000"
+              placeholderTextColor="#ccc"
+              keyboardType="numeric"
+              value={priceInput}
+              onChangeText={handlePriceChange}
+            />
+            <Text className="text-[10px] font-bold text-gray-400 mb-4">
+              Pesanan yang sudah tercatat tetap memakai harga lamanya.
+            </Text>
+
+            <Text className="text-[10px] font-extrabold text-gray-400 uppercase tracking-widest mb-1">
+              Kategori
+            </Text>
+            <CategoryPicker value={category} onChange={handleCategoryChange} />
+          </View>
+        ) : (
+          <View className="bg-white rounded-2xl px-4 py-3 mb-4">
+            <Text className="text-lg font-black text-gray-900">{menuName}</Text>
+            <Text className="text-xs font-bold text-gray-400 mt-1">
+              Harga jual: {formatRupiah(sellingPrice)}
+            </Text>
+          </View>
+        )}
 
         <View className={`flex-row bg-gray-200 rounded-2xl p-1 mb-4 ${!isSuperadmin ? "opacity-60" : ""}`}>
           <TouchableOpacity

@@ -23,7 +23,14 @@ export type SalesCosting = {
   uncosted_net: number;
 };
 
-export type DailySales = { date: string; gross: number; net: number; orders: number };
+export type DailySales = {
+  date: string;
+  gross: number;
+  net: number;
+  /** What customers paid that day: Σ orderTotal(). Matches Penjualan's bars. */
+  collected: number;
+  orders: number;
+};
 export type WeekdaySales = { dow: number; gross: number; orders: number };
 export type HourlySales = { hour: number; gross: number; orders: number };
 

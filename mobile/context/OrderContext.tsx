@@ -149,6 +149,12 @@ export function OrderProvider({ children }: { children: ReactNode }) {
       .on("postgres_changes", { event: "*", schema: "public", table: "order_payments" }, () => {
         fetchOrders();
       })
+      // A superadmin renaming, repricing or recategorising a menu. Loaded only
+      // at launch before this, so a tablet kept ringing the item up at its old
+      // price until it was restarted.
+      .on("postgres_changes", { event: "*", schema: "public", table: "menus" }, () => {
+        fetchMenu();
+      })
       .subscribe();
 
     return () => {

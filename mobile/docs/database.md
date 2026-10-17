@@ -549,6 +549,11 @@ ledger — correction rows net out — and puts each order's split-bill rounding
 residual on its largest share, as Penjualan does; `count` is original
 settlements only.
 
+`daily` has one row per date in the range, sales or not, with `gross`, `net`,
+`collected` and `orders`. `collected` is the same per-order figure
+`summary.collected` sums, so the days add up to it exactly; the superadmin's
+custom range on Penjualan draws its bars from it.
+
 `collected` and `owner_orders.total` use each order's own `tax`, in the same
 operation order as `orderTotal()`. At 10 the factor is the same double as the
 old hard-coded `1 + 0.1`, so no total recorded before the rate became editable
