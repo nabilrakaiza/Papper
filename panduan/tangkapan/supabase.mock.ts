@@ -211,6 +211,7 @@ function addOrder({ created, name, seat, dineIn, status = "paid", discount = 0, 
     tax,
     status,
     created_at: created,
+    paid_at: status === "paid" ? created : null,
     reopen_seq: reopen,
     daily_number: null,
     method_of_payment: null,
@@ -640,8 +641,8 @@ function salesReport(from, to, withCost) {
     summary.net += net;
     summary.collected += collected;
     const d = jakartaDay(o.created_at);
-    const dd = daily.get(d) ?? { date: d, gross: 0, net: 0, orders: 0 };
-    dd.gross += gross; dd.net += net; dd.orders++;
+    const dd = daily.get(d) ?? { date: d, gross: 0, net: 0, collected: 0, orders: 0 };
+    dd.gross += gross; dd.net += net; dd.collected += collected; dd.orders++;
     daily.set(d, dd);
     const dow = new RealDate(`${d}T00:00:00Z`).getUTCDay();
     weekday[dow].gross += gross; weekday[dow].orders++;
@@ -680,7 +681,7 @@ function salesReport(from, to, withCost) {
 
   const dailyArr = [];
   for (let d = from; d <= to; d = new RealDate(RealDate.parse(`${d}T00:00:00Z`) + DAY).toISOString().slice(0, 10)) {
-    dailyArr.push(daily.get(d) ?? { date: d, gross: 0, net: 0, orders: 0 });
+    dailyArr.push(daily.get(d) ?? { date: d, gross: 0, net: 0, collected: 0, orders: 0 });
   }
   const itemsArr = [...items.values()]
     .map((i) => ({ ...i, net: Math.round(i.net), cogs: i.cogs == null ? null : Math.round(i.cogs) }))

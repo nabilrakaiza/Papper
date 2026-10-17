@@ -58,7 +58,12 @@ export default function DateRangePicker({
   );
 }
 
-function PickerModal({
+/**
+ * The picker panel on its own, for a screen that opens it from a control of its
+ * own rather than from DateRangePicker's button — the superadmin's "Kustom"
+ * chip on Penjualan.
+ */
+export function PickerModal({
   initial,
   onClose,
   onApply,
